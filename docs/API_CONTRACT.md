@@ -1,148 +1,112 @@
-# Контракт API и подключение ядра
+# Внутренний API сервиса логики
 
-Это согласованный асинхронный контракт HTTP-адаптера для второго разработчика. В ветке реализованы Python-библиотека, CLI и worker; HTTP-маршруты еще не реализованы. Формальные запросы и ответы находятся в [openapi.yaml](openapi.yaml), примеры моделей — в `examples/contracts/`. Изоляция worker и развертывание описаны в [SERVER_RUNTIME.md](SERVER_RUNTIME.md).
+Маршруты реализованы в `nishtyak_service.api`. Машинный контракт: [openapi.yaml](openapi.yaml); он выгружается из работающего FastAPI-приложения и проверяется тестом на расхождение. Серверный запуск и изоляция: [SERVER_RUNTIME.md](SERVER_RUNTIME.md).
 
-## Сессия и владение
+## Граница ответственности
 
-Все маршруты требуют серверную сессию. Cookie `__Host-nishtyak_session` содержит случайный непрозрачный ID; атрибуты: `Secure; HttpOnly; SameSite=Strict; Path=/`, без Domain. Выдача сессии/логин остается за приложением и в эти маршруты не входит. Для POST и DELETE обязателен `X-CSRF-Token`, привязанный к сессии и выданный при загрузке интерфейса; сервер также проверяет Origin. Cookie и токены не передаются worker.
+Сервис логики принимает ZIP, хранит проекты и отчеты, ведет очередь, запускает статический анализ, проверяет владельца и TTL, строит план и ZIP, обращается к DeepSeek. Загруженный код, команды и build hooks не исполняются.
 
-Сервер проверяет владельца каждого проекта и job до чтения данных или запуска действия. Чужой ID дает тот же `404 RESOURCE_NOT_FOUND`, что неизвестный; отсутствие/истечение сессии дает `401 SESSION_REQUIRED`. Непредсказуемый ID не заменяет проверку владельца. Политика доступа распространяется на ZIP, отчеты и AI-ответы.
+Второй backend аутентифицирует пользователя и определяет его постоянный `owner_id`, затем вызывает этот API по внутренней сети. Логин, пользовательская сессия, cookie, CSRF и браузерный API принадлежат второму backend. Сервис логики не предназначен для прямых запросов из браузера; CORS выключен.
 
-## Хранение и доверенные объекты
+Каждый запрос к `/v1/*` содержит:
 
-Сервер связывает `project_id`, `job_id` и владельца с сохраненным ZIP, снимком и результатом анализа. Клиент получает отчет через публичный `report.to_dict()` и отправляет только решения пользователя. Приватный JSON worker нельзя пересылать напрямую. Сервер не принимает клиентские AnalysisReport, PackagePlan, список файлов или хеши как доверенные.
+```text
+Authorization: Bearer <NISHTYAK_SERVICE_TOKEN>
+X-Owner-ID: <идентификатор пользователя из доверенного backend>
+```
 
-В каждом новом анализе получается `analysis_id`. Он меняется при изменении файлов, параметров анализа и снимка среды. Решения содержат этот ID; устаревшее решение требует повторного получения отчета.
+Секрет сервиса: 32–512 печатных ASCII-символов, хранится на серверах и не передается фронтенду. `X-Owner-ID` соответствует `[A-Za-z0-9_.:-]{1,128}`; подходят UUID. Backend получает владельца из своей аутентификации и перезаписывает этот заголовок, не берет его из пользовательского JSON или произвольного входного заголовка. Сервис проверяет владельца каждого проекта и job. Чужой, неизвестный, удаленный или истекший ресурс дает одинаковый `404 RESOURCE_NOT_FOUND`.
 
-## Маршруты
+## Последовательность интеграции
 
-| Метод и путь | Вход | Результат |
+| Шаг | Метод и путь | Вход | Ответ |
+| --- | --- | --- | --- |
+| Загрузить | `POST /v1/projects` | multipart: один `file`, необязательный текст `options` с JSON `AnalysisOptionsDTO` | `202 SubmittedProjectDTO`: `project_id`, `job_id`, `status` |
+| Дождаться анализа | `GET /v1/jobs/{job_id}` | ID job | `200 JobDTO`: статус, время, отчет или ошибка задачи |
+| Получить отчет | `GET /v1/projects/{project_id}` | ID проекта | `200 ProjectReportDTO`: `project_id`, `analysis` |
+| Проверить решения | `POST /v1/projects/{project_id}/plan` | `DecisionsDTO` JSON | `200 PackagePlan`, включая `state` и `findings` |
+| Скачать результат | `POST /v1/projects/{project_id}/bundle` | `{"decisions": {...}, "include_dockerfile": false}` | `200 application/zip`, фиксированное имя `reproducible-project.zip` |
+| Получить совет | `POST /v1/projects/{project_id}/advice` | `{"feature": "explain", "description": "..."}` | `200 AdvisoryResult` |
+| Удалить | `DELETE /v1/projects/{project_id}` | ID проекта | `204` без тела |
+
+`project_id` и `job_id` — отдельные серверные ID из 32 строчных hex-символов. `analysis_id` — 20 hex-символов из полученного отчета. Клиент отправляет решения, сервис использует сохраненный отчет и ZIP. Клиентские `AnalysisReport`, `PackagePlan`, пути сервера или списки файлов как доверенные данные не принимаются.
+
+Жизненный цикл job: `queued → running → succeeded | failed | timed_out | resource_limited`. Опрос достаточно начинать с интервала 2 секунды; успешные ответы не устанавливают `Location` или `Retry-After`. `created_at` и `expires_at` — Unix time в секундах. `JobDTO.analysis` и `JobDTO.error` могут быть `null`: при успехе возвращается отчет, при ошибке задачи — `{code, message}`. Ошибка принятого анализа доступна через `GET job` с HTTP 200. Невалидный непустой ZIP поэтому может получить 202, а затем `failed / ARCHIVE_INVALID`.
+
+`GET project` до завершения дает `409 ANALYSIS_NOT_READY`, после неуспешного анализа — `409 ANALYSIS_UNAVAILABLE`. Операции plan/bundle/advice требуют успешного анализа; до него дают `409 PROJECT_NOT_READY`. `partial` внутри отчета — успешный анализ с предупреждениями, отдельного состояния job для него нет. План имеет `blocked`, `draft` или `ready_to_verify`; `blocked` запрещает экспорт, черновик можно скачать. `ready_to_verify` не означает, что пользовательский проект исполнялся или проверен запуском.
+
+TTL по умолчанию — 3600 секунд с создания проекта. После удаления или TTL проект и его job сразу недоступны: ответ 404, состояния `expired` в API нет. Фоновая очистка отменяет обработку и удаляет данные; неудачная очистка повторяется. Повторный DELETE также дает 404. Поздний результат worker не восстанавливает доступ. Прерванные рестартом running-задачи завершаются ошибкой `WORKER_RESTARTED` после очистки worker; queued-задачи сохраняются.
+
+Пример загрузки из доверенного backend или терминала оператора:
+
+```bash
+LOGIC_URL=http://127.0.0.1:8010
+OWNER_ID=2bafebca-3bf4-4af6-95ad-58a91fc8eda9
+: "${NISHTYAK_SERVICE_TOKEN:?Set the service token in the environment}"
+curl --fail-with-body "$LOGIC_URL/v1/projects" \
+  -H "Authorization: Bearer $NISHTYAK_SERVICE_TOKEN" \
+  -H "X-Owner-ID: $OWNER_ID" \
+  -F 'file=@project.zip;type=application/zip' \
+  -F 'options={"source_roots":["."],"max_files":1000}'
+```
+
+Для следующих запросов сохраняются оба заголовка. Имена загруженных файлов игнорируются; пути и ID назначает сервер.
+
+## Решения и дополнительные функции
+
+Пример запроса `/plan` для проекта с `main.py`; замените `analysis_id` значением из полученного `analysis.analysis_id`:
+
+```json
+{
+  "analysis_id": "00000000000000000000",
+  "run_spec": {"kind": "script", "target": "main.py", "args": [], "working_directory": "."},
+  "python_version": "3.11",
+  "data_confirmed": true,
+  "input_description": "Какие входные данные нужны",
+  "expected_output": "Как проверить результат"
+}
+```
+
+Обязателен только `analysis_id`. Для черновика `run_spec` может быть `null`. Поля `packages` задают отображение импортируемый модуль → подтвержденное PEP 508 требование; `versions` — модуль/дистрибутив → версия или ограничение. Например, `packages={"yaml":"PyYAML>=6"}`, `versions={"pandas":"==2.2.0"}`. Есть `excluded_modules`, `excluded_files`, `description`, `input_description`, `expected_output`, `data_confirmed`. Все неизвестные поля отклоняются; строки, коллекции и типы ограничены схемой. Числа и строки не приводятся автоматически к boolean.
+
+Для `/bundle` тот же объект передается в поле `decisions`. При другом `analysis_id` ответ `409 STALE_ANALYSIS`. Сервис пересчитывает план и проверяет fingerprint сохраненного ZIP, не экспортирует присланный клиентом план.
+
+В `/advice` доступны `feature`: `explain`, `readme`, `packages`. Ключ и модель задаются на сервере: `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`. При отключенном или недоступном провайдере возвращается `AdvisoryResult.status=unavailable`; экспорт остается доступен. Предложения требуют подтверждения и не меняют зависимости автоматически. Сбор среды автора и Conda сейчас доступны через Python/CLI; отдельных HTTP-ручек для них нет.
+
+## Проверки состояния
+
+| Путь | Заголовки | Поведение |
 | --- | --- | --- |
-| `POST /api/projects` | multipart: `file` ZIP, необязательный JSON-текст `options` | 202, `{project_id, job_id, status}`; `Location: /api/jobs/{job_id}` |
-| `GET /api/jobs/{job_id}` | ID своей задачи | 200, `{project_id, job_id, status, analysis?, error?}` |
-| `GET /api/projects/{project_id}` | ID своего проекта | 200, `{project_id, analysis}` после успеха; до завершения 409 |
-| `DELETE /api/projects/{project_id}` | ID своего проекта | 204, отзыв доступа, отмена работы и очистка |
-| `POST /api/projects/{project_id}/plan` | UserDecisions JSON | 200, PackagePlan JSON |
-| `POST /api/projects/{project_id}/bundle` | `{decisions, include_dockerfile}` | 200, `application/zip` |
-| `POST /api/projects/{project_id}/advice` | `{feature, description}` | 200, AdvisoryResult JSON |
+| `GET /healthz` | Не нужны | `200 {"status":"ok"}` — HTTP-процесс работает |
+| `GET /readyz` | Только Bearer | `200 {"status":"ready"}` или `503 {"status":"unavailable"}` по heartbeat диспетчера |
+| `GET /openapi.json` | Только Bearer | Актуальная OpenAPI-схема |
 
-Upload возвращает статус queued или running. Job проходит `queued → running → succeeded/failed/timed_out/resource_limited → expired`; возможен `queued → failed` при ошибке диспетчера. В succeeded поле `analysis` обязательно; в failed/timed_out/resource_limited обязательно очищенное `error={code,message,findings?}`. В остальных состояниях этих полей нет. `Retry-After` на 202 и незавершенном GET job задает рекомендуемую задержку опроса в секундах, по умолчанию 2. Ошибка принятой задачи возвращается внутри GET job с HTTP 200, а не как ошибка нового HTTP-запроса.
+Интерактивные `/docs` и `/redoc` отключены. Readiness не заменяет проверку полного сценария на целевой VM. Ответ 503 readiness имеет `Retry-After: 2`.
 
-GET project, plan, bundle и advice доступны только после succeeded. Для queued/running возвращается `409 ANALYSIS_NOT_READY`; для failed/timed_out/resource_limited — `409 ANALYSIS_UNAVAILABLE`. `partial` — нормальный успешный отчет с предупреждениями. Подготовка возвращает blocked/draft/ready_to_verify вместе с findings. Черновик допускает скачивание; blocked не генерируется. Недоступность AI выражается статусом дополнительной функции и не ломает экспорт.
+## Ошибки и лимиты
 
-DELETE сначала отзывает доступ и отменяет queued/running job. После 204 любые GET/POST и повторный DELETE проекта или его job дают 404; поздний результат worker не восстанавливает доступ. ZIP, отчеты, bundles и AI-данные удаляются; неудачная физическая очистка повторяется внутри сервера. TTL по умолчанию — 1 час. После TTL проект недоступен, а GET job может временно вернуть expired без содержимого, пока сохраняется запись о владельце; после удаления метаданных — 404.
+Ошибки ручек приложения имеют конверт `{code, message}`, без исходного пользовательского ввода, серверных путей и traceback. Имена моделей, поля и ограничения доступны в OpenAPI. Коды результата worker находятся в `JobDTO.error`; их не следует смешивать с ошибкой самого HTTP-запроса. HTTP-сервер или proxy могут отклонить запрос до приложения, поэтому backend также обрабатывает сетевые ошибки и ответы без JSON.
 
-## Локальный вызов ядра на доверенном примере
+| HTTP | Примеры кодов | Действие backend |
+| --- | --- | --- |
+| 400 | `OWNER_REQUIRED`, `INVALID_LENGTH`, `INVALID_MULTIPART`, `ARCHIVE_INVALID` | Исправить запрос |
+| 401 | `UNAUTHORIZED` | Проверить серверный ключ; пользователю ключ не показывать |
+| 404 | `RESOURCE_NOT_FOUND` | Ресурс недоступен этому владельцу |
+| 408 | `BODY_TIMEOUT` | Загрузка не завершена за 30 секунд |
+| 409 | `ANALYSIS_NOT_READY`, `ANALYSIS_UNAVAILABLE`, `PROJECT_NOT_READY`, `PROJECT_BUSY`, `STALE_ANALYSIS`, `PLAN_BLOCKED` | Проверить состояние или решения |
+| 413 | `BODY_TOO_LARGE`, `ARCHIVE_TOO_LARGE`, `OPTIONS_TOO_LARGE`, `BUNDLE_LIMIT` | Уменьшить данные |
+| 422 | `INVALID_REQUEST`, `INVALID_UPLOAD`, `INVALID_OPTIONS`, `DECISIONS_INVALID`, `EXPORT_INVALID` | Исправить поля по схеме |
+| 429 | `HTTP_BUSY`, `RATE_LIMIT`, `OWNER_JOB_LIMIT`, `OWNER_STORAGE_LIMIT` | Повторить с задержкой, учитывать квоты владельца |
+| 500 | `INTERNAL_ERROR`, `REPORT_UNAVAILABLE`, `STORAGE_UNAVAILABLE` | Зафиксировать код и обратиться к оператору |
+| 503 | `QUEUE_FULL`, `WORKER_BUSY`, `STORAGE_UNAVAILABLE` | Повторить с задержкой |
+| 507 | `STORAGE_LIMIT` | Общая квота хранилища исчерпана |
 
-Следующий пример предназначен для локальных доверенных данных. Публичную загрузку сначала анализирует изолированный worker по [SERVER_RUNTIME.md](SERVER_RUNTIME.md). HTTP-адаптер использует сохраненный сервером отчет и тот же ZIP с проверкой fingerprint.
+Ответы 429 и 503 с конвертом ошибки содержат `Retry-After: 2`. Rate limit использует фиксированные окна: возможны повторные 429 после этой задержки, поэтому backend увеличивает интервал повторов. Примеры кодов в таблице не являются закрытым enum.
 
-```python
-from pathlib import Path
+Начальные пределы задаются `Settings`: ZIP ≤10 MiB; options ≤64 KiB; JSON запрос ≤256 KiB; 8 активных HTTP-запросов; 2 одновременно выполняемых операции; 32 queued-задачи; 2 активные job одного владельца. Plan/bundle/advice используют те же глобальные слоты, а на одном проекте одновременно идет одна такая операция. Режим запуска и квоты принадлежат оператору, клиент не повышает их через options.
 
-from nishtyak_core import ArchiveReader, ReproducibilityService, RunSpec, UserDecisions
-from nishtyak_core.exporting import BundleWriter
+Хранилище резервируется атомарно: ≤2 GiB всего, ≤256 MiB на владельца. Резерв одного проекта равен `archive_bytes + 2 × max_report_bytes + max_bundle_bytes + 1 MiB`: при стандартных лимитах это размер ZIP +97 MiB. Это бюджет будущих отчетов и экспорта, а не только текущий размер ZIP; свободное место на диске VM не отменяет квоту. Отчет ограничен 8 MiB, ZIP результата — 80 MiB. После удаления резерв освобождается, когда физическая очистка завершена.
 
-service = ReproducibilityService()
-snapshot = ArchiveReader().from_path(trusted_archive_path)
-report = service.analyze(snapshot)
+Лимиты на владельца за минуту: загрузка 5, чтение job/project суммарно 120, plan 30, bundle 10, advice 5, удаление 30. Для включенного AI дополнительно действуют 10 запросов на владельца и 100 на сервис в сутки; это лимит запросов, не токенов. Сервис не определяет пользовательский IP: ограничения публичного трафика и IP остаются на втором backend/proxy.
 
-# project_id -> snapshot/report хранится на сервере.
-# DTO отдельно проверяет типы, размеры, разрешенные поля и неизвестные параметры.
-data = validated_decisions
-run = RunSpec(
-    target=data["run_spec"]["target"],
-    kind=data["run_spec"].get("kind", "script"),
-    args=tuple(data["run_spec"].get("args", [])),
-    working_directory=data["run_spec"].get("working_directory", "."),
-)
-decisions = UserDecisions(
-    analysis_id=data["analysis_id"],
-    packages=data.get("packages", {}),
-    versions=data.get("versions", {}),
-    excluded_modules=tuple(data.get("excluded_modules", [])),
-    excluded_files=tuple(data.get("excluded_files", [])),
-    run_spec=run,
-    python_version=data.get("python_version"),
-    description=data.get("description", ""),
-    input_description=data.get("input_description", ""),
-    expected_output=data.get("expected_output", ""),
-    data_confirmed=data.get("data_confirmed", False),
-)
-plan = service.prepare(report, decisions)
-generated = service.render(plan, include_dockerfile=False)
-artifact = BundleWriter().write(snapshot, plan, generated, Path(server_output_path))
-```
-
-Для `/plan` достаточно вернуть `plan.to_dict()`. Для `/bundle` сервер заново вызывает prepare с хранимым отчетом и принятыми решениями; он не берет план из JSON клиента. Возвращается ZIP с `Content-Disposition: attachment` и именем файла. Локальный `artifact.path` клиенту не раскрывается.
-
-`run_spec` может быть null при подготовке черновика. В этом случае DTO передает `run_spec=None`; показанный пример соответствует выбранному запуску. Все коллекции преобразуются явно. Dataclass не заменяет валидацию HTTP-запроса.
-
-## Поля решений
-
-| Поле | Значение |
-| --- | --- |
-| `analysis_id` | Обязательный ID текущего серверного отчета |
-| `packages` | Импортируемый модуль → подтвержденное PEP 508 требование |
-| `versions` | Модуль или имя дистрибутива → версия/ограничение |
-| `excluded_modules` | Явно исключенные из внешних зависимостей модули |
-| `excluded_files` | Относительные пути исключаемых файлов |
-| `run_spec` | script/module, target, args, рабочая папка |
-| `python_version` | Версия Python, выбранная автором; не профиль анализатора |
-| `description` | Назначение эксперимента |
-| `input_description` | Что требуется для запуска |
-| `expected_output` | Какой результат проверить |
-| `data_confirmed` | Автор подтвердил комплектность/доступность данных |
-
-Пример: `packages={"yaml": "PyYAML>=6"}`. `versions={"pandas": "==2.2.0"}` задает спецификатор с сохранением имеющегося marker. Разные markers не объединяются в одно требование только по имени.
-
-## Дополнительные функции
-
-```python
-from nishtyak_core.advisors import AdvisoryService, DeepSeekClient
-
-advisor = AdvisoryService(DeepSeekClient.from_env())
-result = advisor.advise(report, feature="explain", description="Описание автора")
-payload = result.to_dict()
-```
-
-Ключ и модель находятся только на сервере: `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`. `feature` — explain/readme/packages. Предложения всегда требуют подтверждения и становятся обычными UserDecisions. Список suggestions или текст ответа не исполняется и не используется как готовый requirements.
-
-Снимок среды автора импортируется через `AuthorEnvironmentSnapshot.from_dict()` и передается в `service.analyze(..., author_environment=...)`. Он также хранится серверно. Сбор локальной среды запускается явно у автора через CLI `nishtyak environment`; среда API-сервера не подменяет среду проекта.
-
-Conda читается через `CondaEnvironmentReader.read(snapshot)` как отдельный профиль. Для первой интеграции достаточно показать этот результат и предупреждение о ручном согласовании; автоматического pip-пакета из Conda нет.
-
-## Ошибки
-
-Конверт: `{code, message, findings?}`. Сообщения очищаются и не раскрывают пути сервера, исходники, ключи или traceback.
-
-| HTTP | Случай |
-| --- | --- |
-| 400 | Некорректный JSON/options или архив, отклоненный до очереди |
-| 401 | `SESSION_REQUIRED`: сессия отсутствует, недействительна или истекла |
-| 403 | `REQUEST_FORBIDDEN`: неверный CSRF-токен или Origin |
-| 404 | `RESOURCE_NOT_FOUND`: чужой, неизвестный, удаленный или полностью истекший ресурс |
-| 409 | `ANALYSIS_NOT_READY`, `ANALYSIS_UNAVAILABLE`, `STALE_ANALYSIS`, `PLAN_BLOCKED` |
-| 413 | `UPLOAD_LIMIT`: сжатая загрузка превышает серверный предел |
-| 415 | Неподдерживаемый формат загрузки |
-| 422 | Некорректный DTO, решение, запуск или неподдерживаемая конфигурация генерации |
-| 429 | `QUEUE_FULL`, `RATE_LIMITED`, `STORAGE_QUOTA_EXCEEDED`, `ADVISORY_BUDGET_EXCEEDED`; обязательный `Retry-After` в секундах |
-| 500 | Неожиданная ошибка сервера с общим сообщением |
-
-Исключения ядра пока преимущественно ValueError. Для устойчивой классификации ошибок нужен адаптер с явными проверками либо типизированные исключения; производственный код не должен разбирать текст сообщения.
-
-Лимиты распаковки проверяет worker после 202: `ARCHIVE_LIMIT` приходит в `error` задачи. Переполнение очереди, rate limiting, диск и бюджет AI единообразно дают 429; отдельный 503 для перегрузки не используется. При отказе upload клиент не получает частично созданный проект/job.
-
-## Серверные квоты и обязанности адаптера
-
-Начальный профиль: ZIP ≤10 MiB; распакованные данные ≤50 000 000 байт; ≤1000 записей; файл ≤10 MiB; коэффициент сжатия ≤200; исходник ≤1 000 000 байт; JSON options ≤64 KiB; отчет ≤8 MiB. Сервер отклоняет неизвестные поля и значения options сверх этих границ; клиент не повышает лимиты.
-
-Для VM с 8 CPU и диском 120 GB: ≤2 running job на весь сервис, очередь ≤32 задач, у одного владельца ≤2 активных job (queued/running). Дополнительные квоты задаются конфигурацией: upload ≤5/мин на сессию и IP, polling ≤120/мин на сессию, хранилище ≤100 MiB на сессию и ≤2 GiB суммарно, TTL 1 час, отдельный лимит запросов/токенов AI. Резервирование квот и постановка в очередь атомарны; проверки выполняются до дорогостоящей обработки. Значения можно уменьшать на конкретном сервере; для изменения общей параллельности проверяют cgroups и ресурсы.
-
-- Ограничить multipart на proxy/API и передать ZIP в ArchiveReader внутри изолированного worker: пути, дубли, симлинки, размер и коэффициент сжатия проверяются до создания снимка.
-- Хранить снимок/отчет на сервере, назначать непредсказуемый ID, срок хранения и изолированную папку.
-- Проверять владельца и состояние задачи на каждой ручке; не принимать пользовательский путь как серверный.
-- Восстанавливать незавершенные задачи после рестарта, освобождать квоты после отмены/TTL, повторять неудачную очистку.
-- Делать операции с тяжелыми файлами/синхронным AI-клиентом вне event loop.
-- Передавать фронтенду только безопасные сериализаторы `to_dict()`, файлы ZIP и статусы.
-- Отдавать ZIP строго по серверному PackagePlan, не по присланному списку файлов.
-- Не выполнять загруженный код, shell-команды и build hooks.
+Worker проверяет ZIP без распаковки на диск: ≤1000 записей, ≤50 000 000 байт распакованных данных, ≤10 MiB на файл, коэффициент сжатия ≤200; запрещены небезопасные пути, дубли, симлинки, шифрование и специальные файлы. Эти проверки происходят после постановки в очередь. Контейнерный профиль и его проверка описаны отдельно в серверной спецификации.

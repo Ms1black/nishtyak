@@ -20,7 +20,7 @@ nishtyak build tests/fixtures/local_project --entry main.py \
 
 ## Подключение
 
-Публичная точка входа — `ReproducibilityService`: `analyze` → `prepare` → `render`. ZIP собирает отдельный `BundleWriter`. В этой ветке реализованы библиотека и CLI. HTTP-контракт подготовлен для разработчика API.
+Публичная точка входа — `ReproducibilityService`: `analyze` → `prepare` → `render`. ZIP собирает отдельный `BundleWriter`. Реализованы библиотека, CLI и самостоятельный внутренний HTTP-сервис с очередью, хранением, ownership и TTL. Пользовательский backend обращается к нему по Bearer + X-Owner-ID.
 
 - [Архитектура и ограничения](docs/CORE_ARCHITECTURE.md)
 - [Ручки API и подключение ядра](docs/API_CONTRACT.md)
@@ -30,6 +30,16 @@ nishtyak build tests/fixtures/local_project --entry main.py \
 - [Примеры JSON-контрактов](examples/contracts/)
 - [Результаты проверки двух учебных проектов](examples/verification.json)
 - [Источники технических решений](docs/research.json)
+
+## Сервис логики
+
+```sh
+python -m pip install -e '.[service]'
+export NISHTYAK_SERVICE_TOKEN=$(python -c 'import secrets; print(secrets.token_hex(32))')
+nishtyak-service dev --port 8010
+```
+
+`dev` запускает HTTP и очередь на собственных тестовых проектах через subprocess. Серверный профиль: `deploy/service-compose.yaml`, отдельный диспетчер и offline-контейнер на анализ. Команды развертывания и проверки — в [серверной спецификации](docs/SERVER_RUNTIME.md), ручки для второго backend — в [API-контракте](docs/API_CONTRACT.md).
 
 ## Дополнительные функции
 
@@ -57,4 +67,4 @@ ruff check src tests
 ruff format --check src tests
 ```
 
-Текущий результат: 231 тестов проходят. Два собственных примера повторены в отдельных чистых venv с результатом `mean=4.00`; wheel установлен и проверен отдельно. ZIP-анализ проверен в отдельном процессе и через stdin/stdout worker. Docker-конфигурация и shell-синтаксис проверены; сборка образа, ограничения на Linux и реальные запросы DeepSeek пока не проверялись. Загруженный пользовательский код ядром не выполняется.
+Текущий результат: 382 теста проходят. Проверены HTTP-сценарий загрузка → отчет → план → ZIP, запрет доступа другому владельцу, TTL/удаление, постоянная очередь, восстановление, отмена и отказоустойчивая очистка. Два собственных примера ранее повторены в чистых venv с результатом `mean=4.00`. На Linux VM собраны образы, проверены изоляция/cgroups/таймаут/очистка и HTTP-сценарий; очередь пережила перезапуск. Результаты: [service-verification.json](examples/service-verification.json). Платных запросов DeepSeek не было. Загруженный пользовательский код не выполняется.

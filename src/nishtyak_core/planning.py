@@ -296,17 +296,20 @@ class PackagePlanner:
             )
             groups.setdefault(key, []).append(requirement)
         for (name, _, _), group in groups.items():
-            pinned = [
-                spec.version
+            pinned = {
+                Version(spec.version)
                 for requirement in group
                 for spec in requirement.specifier
                 if spec.operator == "==" and "*" not in spec.version
-            ]
-            if pinned and any(
-                not requirement.specifier.contains(version, prereleases=True)
-                for version in pinned
-                for requirement in group
-            ):
+            }
+            conflict = len(pinned) > 1
+            if len(pinned) == 1:
+                version = next(iter(pinned))
+                conflict = any(
+                    not requirement.specifier.contains(version, prereleases=True)
+                    for requirement in group
+                )
+            if conflict:
                 unresolved = True
                 findings.append(
                     Finding("DEPENDENCY_CONFLICT", f"Declared constraints for {name} conflict.")

@@ -21,6 +21,7 @@ class StaticAnalysisWorker:
         output_path: str,
         options_path: Path | None = None,
         policy: JobPolicy | None = None,
+        options_json: str | None = None,
     ) -> int:
         policy = policy or JobPolicy()
         try:
@@ -30,7 +31,13 @@ class StaticAnalysisWorker:
 
         try:
             options = AnalysisOptions()
-            if options_path is not None:
+            if options_path is not None and options_json is not None:
+                return self._write(output_path, policy, "failed", "OPTIONS_INVALID")
+            if options_json is not None:
+                if len(options_json.encode("utf-8")) > 64 * 1024:
+                    return self._write(output_path, policy, "failed", "OPTIONS_INVALID")
+                options = AnalysisReportCodec().decode_options(json.loads(options_json))
+            elif options_path is not None:
                 with options_path.open("rb") as stream:
                     raw = stream.read(64 * 1024 + 1)
                 if len(raw) > 64 * 1024:
@@ -114,7 +121,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--options", type=Path)
+    options_group = parser.add_mutually_exclusive_group()
+    options_group.add_argument("--options", type=Path)
+    options_group.add_argument("--options-json")
     parser.add_argument("--memory-bytes", type=int, default=512 * 1024 * 1024)
     parser.add_argument("--cpu-seconds", type=int, default=15)
     parser.add_argument("--max-report-bytes", type=int, default=8 * 1024 * 1024)
@@ -130,7 +139,9 @@ def main() -> None:
     except ValueError:
         parser.error("Worker limits must be positive integers")
     raise SystemExit(
-        StaticAnalysisWorker().run(options.archive, options.output, options.options, policy)
+        StaticAnalysisWorker().run(
+            options.archive, options.output, options.options, policy, options.options_json
+        )
     )
 
 

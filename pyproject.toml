@@ -11,10 +11,25 @@ dependencies = ["packaging>=24"]
 
 [project.optional-dependencies]
 conda = ["PyYAML>=6"]
-dev = ["pytest>=8", "ruff>=0.11", "PyYAML>=6"]
+service = [
+    "fastapi>=0.143,<1",
+    "uvicorn>=0.54,<1",
+    "python-multipart>=0.0.32,<1",
+    "PyYAML>=6",
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.11",
+    "PyYAML>=6",
+    "httpx>=0.28,<1",
+    "fastapi>=0.143,<1",
+    "uvicorn>=0.54,<1",
+    "python-multipart>=0.0.32,<1",
+]
 
 [project.scripts]
 nishtyak = "nishtyak_core.cli:main"
+nishtyak-service = "nishtyak_service.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

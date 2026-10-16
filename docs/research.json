@@ -13,5 +13,8 @@
   "docker_seccomp": "https://docs.docker.com/engine/security/seccomp/",
   "gvisor_security": "https://gvisor.dev/docs/architecture_guide/security/",
   "vast_vm": "https://docs.vast.ai/linux-virtual-machines",
-  "vast_container_environment": "https://docs.vast.ai/guides/instances/docker-environment"
+  "vast_container_environment": "https://docs.vast.ai/guides/instances/docker-environment",
+  "fastapi_request_files": "https://fastapi.tiangolo.com/tutorial/request-files/",
+  "fastapi_lifespan": "https://fastapi.tiangolo.com/advanced/events/",
+  "fastapi_security": "https://fastapi.tiangolo.com/tutorial/security/first-steps/"
 }

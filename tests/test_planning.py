@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 
 from nishtyak_core.analysis import ProjectAnalyzer
 from nishtyak_core.models import (
@@ -138,6 +139,41 @@ def test_declared_exact_version_conflict_is_draft(report, decisions):
     plan = PackagePlanner().prepare(report, decisions)
     assert plan.state == "draft"
     assert "DEPENDENCY_CONFLICT" in codes(plan)
+
+
+def test_repeated_equivalent_pins_need_only_one_check_per_constraint(
+    report, decisions, monkeypatch
+):
+    count = 1200
+    declarations = tuple(
+        f"numpy>=0.{index},=={'1' if index % 2 else '1.0'}" for index in range(count)
+    )
+    report = replace(report, dependencies=(), declared_requirements=declarations)
+    contains = SpecifierSet.contains
+    calls = 0
+
+    def checked_contains(self, version, **kwargs):
+        nonlocal calls
+        calls += 1
+        return contains(self, version, **kwargs)
+
+    monkeypatch.setattr(SpecifierSet, "contains", checked_contains)
+    plan = PackagePlanner().prepare(report, decisions)
+    assert len(plan.requirements) == count
+    assert "DEPENDENCY_CONFLICT" not in codes(plan)
+    assert calls == count
+
+
+def test_distinct_pins_conflict_without_cross_product_of_constraints(report, decisions):
+    report = replace(
+        report,
+        dependencies=(),
+        declared_requirements=("numpy>=0.1,==1", "numpy>=0.2,==2"),
+    )
+    plan = PackagePlanner().prepare(report, decisions)
+    assert len(plan.requirements) == 2
+    assert "DEPENDENCY_CONFLICT" in codes(plan)
+    assert plan.state == "draft"
 
 
 @pytest.mark.parametrize(

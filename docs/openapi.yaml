@@ -1,588 +1,1241 @@
 openapi: 3.1.0
 info:
-  title: nishtyak HTTP adapter contract
-  version: 0.2.0
-  description: Proposed asynchronous HTTP integration contract. Python core and worker are implemented; these HTTP
-    routes are not implemented. All resources belong to the authenticated server-side session. Foreign resources
-    return the same 404 as unknown resources. Server quotas override client options; overload returns 429 with Retry-After.
-    See API_CONTRACT.md for lifecycle and limits.
-security:
-- SessionAuth: []
+  title: Nishtyak logic service
+  version: 1.0.0
 paths:
-  /api/projects:
+  /v1/projects:
     post:
-      operationId: createProject
-      summary: Store a bounded ZIP and enqueue static analysis
-      parameters:
-      - $ref: '#/components/parameters/CsrfToken'
+      summary: Submit
+      operationId: submit_v1_projects_post
       requestBody:
-        required: true
         content:
           multipart/form-data:
             schema:
-              type: object
-              additionalProperties: false
-              required:
-              - file
               properties:
                 file:
                   type: string
                   format: binary
-                  description: ZIP up to 10 MiB. Uploaded files and build hooks are never executed.
                 options:
                   type: string
                   maxLength: 65536
-                  description: Optional JSON object matching AnalysisOptions; server limits take precedence.
+                  contentMediaType: application/json
+                  contentSchema:
+                    $ref: '#/components/schemas/AnalysisOptionsDTO'
+                  description: AnalysisOptions JSON
+              additionalProperties: false
+              type: object
+              required:
+              - file
+        required: true
       responses:
         '202':
-          description: Project stored and analysis accepted; no analysis report is returned yet.
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmittedProjectDTO'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '408':
+          description: Request Timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '413':
+          description: Request Entity Too Large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '422':
+          description: Unprocessable Entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '429':
+          description: Too Many Requests
           headers:
-            Location:
-              description: Relative URL /api/jobs/{job_id} for polling.
+            Retry-After:
+              description: Retry delay in seconds
               schema:
                 type: string
-            Retry-After:
-              $ref: '#/components/headers/RetryAfter'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProjectAccepted'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '413':
-          $ref: '#/components/responses/UploadLimit'
-        '415':
-          $ref: '#/components/responses/UnsupportedMedia'
-        '422':
-          $ref: '#/components/responses/InvalidDto'
-        '429':
-          $ref: '#/components/responses/QuotaExceeded'
-        default:
-          $ref: '#/components/responses/AdapterError'
-  /api/jobs/{job_id}:
-    parameters:
-    - name: job_id
-      in: path
-      required: true
-      schema:
-        type: string
-    get:
-      operationId: getJob
-      summary: Return the owned job lifecycle and its public report after success
-      responses:
-        '200':
-          description: Lifecycle status is independent of analysis.status complete/partial. Only succeeded includes
-            analysis, serialized through AnalysisReport.to_dict(). Failure states include a sanitized error. An
-            expired owned job may remain as a metadata tombstone.
+                $ref: '#/components/schemas/ErrorDTO'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+        '503':
+          description: Service Unavailable
           headers:
             Retry-After:
-              $ref: '#/components/headers/RetryAfter'
+              description: Retry delay in seconds
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/JobResponse'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/QuotaExceeded'
-        default:
-          $ref: '#/components/responses/AdapterError'
-  /api/projects/{project_id}:
-    parameters:
-    - $ref: '#/components/parameters/ProjectId'
+                $ref: '#/components/schemas/ErrorDTO'
+        '507':
+          description: Insufficient Storage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+      security:
+      - ServiceToken: []
+      parameters:
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+  /v1/jobs/{job_id}:
     get:
-      operationId: getProject
-      summary: Return the public analysis only after a successful job
+      summary: Get Job
+      operationId: get_job_v1_jobs__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Job Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
       responses:
         '200':
-          description: Stored report serialized through AnalysisReport.to_dict().
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProjectResponse'
+                $ref: '#/components/schemas/JobDTO'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
         '401':
-          $ref: '#/components/responses/Unauthenticated'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
         '404':
-          $ref: '#/components/responses/NotFound'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
         '409':
-          $ref: '#/components/responses/AnalysisConflict'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
         '429':
-          $ref: '#/components/responses/QuotaExceeded'
-        default:
-          $ref: '#/components/responses/AdapterError'
-    delete:
-      operationId: deleteProject
-      summary: Revoke access, cancel active work and remove project data
-      description: After 204 all project and job reads return 404, including racing worker results. Inputs, reports,
-        bundles and advisory data are removed; a failed physical cleanup is retried internally without restoring
-        access. Repeating DELETE after removal returns 404.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+  /v1/projects/{project_id}:
+    get:
+      summary: Get Project
+      operationId: get_project_v1_projects__project_id__get
       parameters:
-      - $ref: '#/components/parameters/CsrfToken'
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectReportDTO'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+    delete:
+      summary: Delete Project
+      operationId: delete_project_v1_projects__project_id__delete
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
       responses:
         '204':
-          description: Access revoked and cleanup accepted; no response body.
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
         '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
         '404':
-          $ref: '#/components/responses/NotFound'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
         '429':
-          $ref: '#/components/responses/QuotaExceeded'
-        default:
-          $ref: '#/components/responses/AdapterError'
-  /api/projects/{project_id}/plan:
-    parameters:
-    - $ref: '#/components/parameters/ProjectId'
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+  /v1/projects/{project_id}/plan:
     post:
-      operationId: preparePlan
-      summary: Prepare a plan from author decisions after analysis succeeds
+      summary: Plan
+      operationId: plan_v1_projects__project_id__plan_post
       parameters:
-      - $ref: '#/components/parameters/CsrfToken'
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UserDecisions'
+              $ref: '#/components/schemas/DecisionsDTO'
       responses:
         '200':
-          description: Draft, blocked or ready_to_verify plan with findings via plan.to_dict().
+          description: Successful Response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PackagePlan'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
         '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
         '404':
-          $ref: '#/components/responses/NotFound'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
         '409':
-          $ref: '#/components/responses/AnalysisConflict'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
         '422':
-          $ref: '#/components/responses/InvalidDto'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
         '429':
-          $ref: '#/components/responses/QuotaExceeded'
-        default:
-          $ref: '#/components/responses/AdapterError'
-  /api/projects/{project_id}/bundle:
-    parameters:
-    - $ref: '#/components/parameters/ProjectId'
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+  /v1/projects/{project_id}/bundle:
     post:
-      operationId: downloadBundle
-      summary: Recompute a stored successful report into a plan and download ZIP
+      summary: Bundle
+      operationId: bundle_v1_projects__project_id__bundle_post
       parameters:
-      - $ref: '#/components/parameters/CsrfToken'
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/BundleRequest'
+              $ref: '#/components/schemas/BundleDTO'
       responses:
         '200':
-          description: Reproducibility ZIP; draft export is allowed, blocked export is rejected.
-          headers:
-            Content-Disposition:
-              schema:
-                type: string
-              description: attachment; filename="project.zip"
+          description: Successful Response
           content:
             application/zip:
               schema:
                 type: string
                 format: binary
         '400':
-          $ref: '#/components/responses/BadRequest'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
         '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
         '404':
-          $ref: '#/components/responses/NotFound'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
         '409':
-          $ref: '#/components/responses/AnalysisConflict'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
         '422':
-          $ref: '#/components/responses/InvalidDto'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
         '429':
-          $ref: '#/components/responses/QuotaExceeded'
-        default:
-          $ref: '#/components/responses/AdapterError'
-  /api/projects/{project_id}/advice:
-    parameters:
-    - $ref: '#/components/parameters/ProjectId'
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+  /v1/projects/{project_id}/advice:
     post:
-      operationId: requestAdvice
-      summary: Request optional AI suggestions after analysis succeeds
+      summary: Advice
+      operationId: advice_v1_projects__project_id__advice_post
       parameters:
-      - $ref: '#/components/parameters/CsrfToken'
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AdviceRequest'
+              $ref: '#/components/schemas/AdviceDTO'
       responses:
         '200':
-          description: AI status is independent of the core pipeline; suggestions require confirmation.
+          description: Successful Response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AdvisoryResult'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
         '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
         '404':
-          $ref: '#/components/responses/NotFound'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
         '409':
-          $ref: '#/components/responses/AnalysisConflict'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
         '422':
-          $ref: '#/components/responses/InvalidDto'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
         '429':
-          $ref: '#/components/responses/QuotaExceeded'
-        default:
-          $ref: '#/components/responses/AdapterError'
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
 components:
-  securitySchemes:
-    SessionAuth:
-      type: apiKey
-      in: cookie
-      name: __Host-nishtyak_session
-      description: 'Opaque random session ID backed by server-side ownership records. Cookie attributes: Secure;
-        HttpOnly; SameSite=Strict; Path=/; no Domain. Session issuance/login is outside this contract. No route
-        permits anonymous access.'
-  parameters:
-    ProjectId:
-      name: project_id
-      in: path
-      required: true
-      schema:
-        type: string
-    CsrfToken:
-      name: X-CSRF-Token
-      in: header
-      required: true
-      description: Session-bound token supplied by the hosting UI bootstrap; validate Origin as well.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 256
-  headers:
-    RetryAfter:
-      description: Required on 429; suggested polling delay on 202 and pending job responses, in seconds.
-      schema:
-        type: integer
-        minimum: 1
-        default: 2
-  responses:
-    BadRequest:
-      description: Malformed JSON/options or an upload rejected before queueing; sanitized code/message.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Unauthenticated:
-      description: SESSION_REQUIRED; session cookie is absent, invalid or expired.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Forbidden:
-      description: REQUEST_FORBIDDEN; CSRF token or Origin validation failed. Never used for foreign IDs.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    NotFound:
-      description: RESOURCE_NOT_FOUND; identical for foreign, unknown, deleted and fully expired resources.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    AnalysisConflict:
-      description: ANALYSIS_NOT_READY for queued/running; ANALYSIS_UNAVAILABLE for failed/timed_out/resource_limited;
-        STALE_ANALYSIS for obsolete analysis_id; PLAN_BLOCKED for blocked bundle export.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    UploadLimit:
-      description: UPLOAD_LIMIT; compressed upload exceeds the server limit before queueing.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    UnsupportedMedia:
-      description: UNSUPPORTED_MEDIA; only ZIP multipart uploads are accepted.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    InvalidDto:
-      description: INVALID_REQUEST; invalid typed DTO, options, decisions or generator configuration.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    QuotaExceeded:
-      description: QUEUE_FULL, RATE_LIMITED, STORAGE_QUOTA_EXCEEDED or ADVISORY_BUDGET_EXCEEDED. No partial project/job
-        allocation is exposed when upload is rejected.
-      headers:
-        Retry-After:
-          $ref: '#/components/headers/RetryAfter'
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    AdapterError:
-      description: Sanitized unexpected adapter failure; no traceback, source content or server paths.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
   schemas:
-    FileInfo:
-      type: object
+    AdviceDTO:
       properties:
-        path:
+        feature:
           type: string
-        size:
-          type: integer
-        sha256:
+          enum:
+          - explain
+          - readme
+          - packages
+          title: Feature
+          default: explain
+        description:
           type: string
-      required:
-      - path
-      - size
-      - sha256
-    AnalysisOptions:
+          maxLength: 8192
+          title: Description
+          default: ''
+      additionalProperties: false
       type: object
+      title: AdviceDTO
+    AdvisoryResult:
       properties:
-        python_version:
+        analysis_id:
           type: string
-        source_roots:
-          type: array
+          title: Analysis Id
+        feature:
+          type: string
+          title: Feature
+        status:
+          type: string
+          enum:
+          - ok
+          - unavailable
+          - invalid_response
+          - invalid_request
+          title: Status
+        suggestions:
           items:
-            type: string
-        max_source_bytes:
-          type: integer
-        max_files:
-          type: integer
-    ImportObservation:
-      type: object
-      properties:
-        module:
-          type: string
-        path:
-          type: string
-        line:
-          type: integer
-        names:
+            $ref: '#/components/schemas/AdvisorySuggestion'
           type: array
-          items:
-            type: string
-        level:
-          type: integer
-        context:
-          type: string
-        kind:
-          type: string
-        id:
-          type: string
-      required:
-      - module
-      - path
-      - line
-    Finding:
-      type: object
-      properties:
-        code:
-          type: string
-        message:
-          type: string
-        path:
+          title: Suggestions
+          default: []
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/TokenUsage'
+          - type: 'null'
+        reason:
           anyOf:
           - type: string
           - type: 'null'
-        line:
-          anyOf:
-          - type: integer
-          - type: 'null'
-        severity:
-          type: string
-        evidence_ids:
-          type: array
-          items:
-            type: string
-        id:
-          type: string
-      required:
-      - code
-      - message
-    DependencyCandidate:
+          title: Reason
+        schema_version:
+          type: integer
+          title: Schema Version
+          default: 1
       type: object
+      required:
+      - analysis_id
+      - feature
+      - status
+      title: AdvisoryResult
+    AdvisorySuggestion:
       properties:
-        module:
-          type: string
-        category:
+        kind:
           type: string
           enum:
-          - stdlib
-          - local
-          - external
-          - unresolved
+          - explanation
+          - readme_description
+          - package_hypothesis
+          title: Kind
+        text:
+          type: string
+          title: Text
+        evidence_ids:
+          items:
+            type: string
+          type: array
+          title: Evidence Ids
+          default: []
+        module:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Module
         package:
           anyOf:
           - type: string
           - type: 'null'
-        requirement:
-          anyOf:
-          - type: string
-          - type: 'null'
-        status:
+          title: Package
+        requires_confirmation:
+          type: boolean
+          title: Requires Confirmation
+          default: true
+      type: object
+      required:
+      - kind
+      - text
+      title: AdvisorySuggestion
+    AnalysisOptions:
+      properties:
+        python_version:
           type: string
-        evidence_ids:
-          type: array
+          title: Python Version
+          default: '3.11'
+        source_roots:
           items:
             type: string
-        reason:
-          type: string
-        context:
-          type: string
-        id:
-          type: string
-      required:
-      - module
-      - category
-    AnalysisReport:
+          type: array
+          title: Source Roots
+          default:
+          - .
+        max_source_bytes:
+          type: integer
+          title: Max Source Bytes
+          default: 1000000
+        max_files:
+          type: integer
+          title: Max Files
+          default: 1000
+      additionalProperties: false
       type: object
+      title: AnalysisOptions
+    AnalysisReport:
       properties:
         analysis_id:
           type: string
+          title: Analysis Id
         fingerprint:
           type: string
+          title: Fingerprint
         options:
           $ref: '#/components/schemas/AnalysisOptions'
         files:
-          type: array
           items:
             $ref: '#/components/schemas/FileInfo'
-        imports:
           type: array
+          title: Files
+        imports:
           items:
             $ref: '#/components/schemas/ImportObservation'
-        dependencies:
           type: array
+          title: Imports
+          default: []
+        dependencies:
           items:
             $ref: '#/components/schemas/DependencyCandidate'
-        findings:
           type: array
+          title: Dependencies
+          default: []
+        findings:
           items:
             $ref: '#/components/schemas/Finding'
+          type: array
+          title: Findings
+          default: []
         status:
           type: string
-          enum:
-          - complete
-          - partial
+          title: Status
+          default: complete
         declared_requirements:
-          type: array
           items:
             type: string
+          type: array
+          title: Declared Requirements
+          default: []
         python_requires:
           anyOf:
           - type: string
           - type: 'null'
+          title: Python Requires
         entrypoints:
-          type: array
           items:
             type: string
+          type: array
+          title: Entrypoints
+          default: []
         schema_version:
           type: integer
+          title: Schema Version
+          default: 1
+      additionalProperties: false
+      type: object
       required:
       - analysis_id
       - fingerprint
       - options
       - files
-    RunSpec:
-      type: object
+      title: AnalysisReport
+    BundleDTO:
       properties:
-        target:
-          type: string
-        kind:
-          type: string
-          enum:
-          - script
-          - module
-          default: script
-        args:
-          type: array
-          items:
-            type: string
-        working_directory:
-          type: string
-      required:
-      - target
+        decisions:
+          $ref: '#/components/schemas/DecisionsDTO'
+        include_dockerfile:
+          type: boolean
+          title: Include Dockerfile
+          default: false
       additionalProperties: false
-    UserDecisions:
       type: object
+      required:
+      - decisions
+      title: BundleDTO
+    DecisionsDTO:
       properties:
         analysis_id:
           type: string
+          pattern: ^[a-f0-9]{20}$
+          title: Analysis Id
         packages:
-          type: object
           additionalProperties:
             type: string
+            maxLength: 2048
+          propertyNames:
+            maxLength: 2048
+          type: object
+          maxProperties: 1000
+          title: Packages
         versions:
-          type: object
           additionalProperties:
             type: string
+            maxLength: 2048
+          propertyNames:
+            maxLength: 2048
+          type: object
+          maxProperties: 1000
+          title: Versions
         excluded_modules:
-          type: array
           items:
             type: string
+            maxLength: 2048
+          type: array
+          maxItems: 1000
+          title: Excluded Modules
         excluded_files:
-          type: array
           items:
             type: string
+            maxLength: 1024
+            minLength: 1
+          type: array
+          maxItems: 1000
+          title: Excluded Files
         run_spec:
           anyOf:
-          - $ref: '#/components/schemas/RunSpec'
+          - $ref: '#/components/schemas/RunSpecDTO'
           - type: 'null'
         python_version:
           anyOf:
           - type: string
+            maxLength: 16
+            minLength: 1
           - type: 'null'
+          title: Python Version
         description:
           type: string
+          maxLength: 8192
+          title: Description
+          default: ''
         input_description:
           type: string
+          maxLength: 8192
+          title: Input Description
+          default: ''
         expected_output:
           type: string
+          maxLength: 8192
+          title: Expected Output
+          default: ''
         data_confirmed:
           type: boolean
+          title: Data Confirmed
+          default: false
+      additionalProperties: false
+      type: object
       required:
       - analysis_id
+      title: DecisionsDTO
+    DependencyCandidate:
+      properties:
+        module:
+          type: string
+          title: Module
+        category:
+          type: string
+          title: Category
+        package:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Package
+        requirement:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requirement
+        status:
+          type: string
+          title: Status
+          default: inferred
+        evidence_ids:
+          items:
+            type: string
+          type: array
+          title: Evidence Ids
+          default: []
+        reason:
+          type: string
+          title: Reason
+          default: ''
+        context:
+          type: string
+          title: Context
+          default: runtime
+        id:
+          type: string
+          title: Id
+          default: ''
       additionalProperties: false
-    PackagePlan:
       type: object
+      required:
+      - module
+      - category
+      title: DependencyCandidate
+    ErrorDTO:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+      additionalProperties: false
+      type: object
+      required:
+      - code
+      - message
+      title: ErrorDTO
+    FileInfo:
+      properties:
+        path:
+          type: string
+          title: Path
+        size:
+          type: integer
+          title: Size
+        sha256:
+          type: string
+          title: Sha256
+      additionalProperties: false
+      type: object
+      required:
+      - path
+      - size
+      - sha256
+      title: FileInfo
+    Finding:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Path
+        line:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Line
+        severity:
+          type: string
+          title: Severity
+          default: warning
+        evidence_ids:
+          items:
+            type: string
+          type: array
+          title: Evidence Ids
+          default: []
+        id:
+          type: string
+          title: Id
+          default: ''
+      additionalProperties: false
+      type: object
+      required:
+      - code
+      - message
+      title: Finding
+    ImportObservation:
+      properties:
+        module:
+          type: string
+          title: Module
+        path:
+          type: string
+          title: Path
+        line:
+          type: integer
+          title: Line
+        names:
+          items:
+            type: string
+          type: array
+          title: Names
+          default: []
+        level:
+          type: integer
+          title: Level
+          default: 0
+        context:
+          type: string
+          title: Context
+          default: runtime
+        kind:
+          type: string
+          title: Kind
+          default: import
+        id:
+          type: string
+          title: Id
+          default: ''
+      additionalProperties: false
+      type: object
+      required:
+      - module
+      - path
+      - line
+      title: ImportObservation
+    JobDTO:
+      properties:
+        project_id:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+        job_id:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Job Id
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - resource_limited
+          title: Status
+        created_at:
+          type: number
+          minimum: 0.0
+          title: Created At
+        expires_at:
+          type: number
+          minimum: 0.0
+          title: Expires At
+        analysis:
+          anyOf:
+          - $ref: '#/components/schemas/AnalysisReport'
+          - type: 'null'
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorDTO'
+          - type: 'null'
+      additionalProperties: false
+      type: object
+      required:
+      - project_id
+      - job_id
+      - status
+      - created_at
+      - expires_at
+      title: JobDTO
+    PackagePlan:
       properties:
         report:
           $ref: '#/components/schemas/AnalysisReport'
         requirements:
-          type: array
           items:
             type: string
+          type: array
+          title: Requirements
         run_spec:
           anyOf:
           - $ref: '#/components/schemas/RunSpec'
@@ -591,34 +1244,42 @@ components:
           anyOf:
           - type: string
           - type: 'null'
+          title: Python Version
         files:
-          type: array
           items:
             $ref: '#/components/schemas/FileInfo'
-        excluded_files:
           type: array
+          title: Files
+        excluded_files:
           items:
             type: string
-        findings:
           type: array
+          title: Excluded Files
+        findings:
           items:
             $ref: '#/components/schemas/Finding'
+          type: array
+          title: Findings
         state:
           type: string
-          enum:
-          - draft
-          - ready_to_verify
-          - blocked
+          title: State
         description:
           type: string
+          title: Description
+          default: ''
         input_description:
           type: string
+          title: Input Description
+          default: ''
         expected_output:
           type: string
+          title: Expected Output
+          default: ''
         decisions:
           anyOf:
           - $ref: '#/components/schemas/UserDecisions'
           - type: 'null'
+      type: object
       required:
       - report
       - requirements
@@ -628,197 +1289,205 @@ components:
       - excluded_files
       - findings
       - state
-    AdvisorySuggestion:
-      type: object
+      title: PackagePlan
+    ProjectReportDTO:
       properties:
-        kind:
+        project_id:
           type: string
-          enum:
-          - explanation
-          - readme_description
-          - package_hypothesis
-        text:
-          type: string
-        evidence_ids:
-          type: array
-          items:
-            type: string
-        module:
-          anyOf:
-          - type: string
-          - type: 'null'
-        package:
-          anyOf:
-          - type: string
-          - type: 'null'
-        requires_confirmation:
-          type: boolean
-      required:
-      - kind
-      - text
-    TokenUsage:
-      type: object
-      properties:
-        prompt_tokens:
-          type: integer
-        completion_tokens:
-          type: integer
-        total_tokens:
-          type: integer
-      required:
-      - prompt_tokens
-      - completion_tokens
-      - total_tokens
-    AdvisoryResult:
-      type: object
-      properties:
-        analysis_id:
-          type: string
-        feature:
-          type: string
-        status:
-          type: string
-          enum:
-          - ok
-          - unavailable
-          - invalid_response
-          - invalid_request
-        suggestions:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdvisorySuggestion'
-        usage:
-          anyOf:
-          - $ref: '#/components/schemas/TokenUsage'
-          - type: 'null'
-        reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-        schema_version:
-          type: integer
-      required:
-      - analysis_id
-      - feature
-      - status
-    ProjectResponse:
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+        analysis:
+          $ref: '#/components/schemas/AnalysisReport'
+      additionalProperties: false
       type: object
       required:
       - project_id
       - analysis
+      title: ProjectReportDTO
+    RunSpec:
       properties:
-        project_id:
+        target:
           type: string
-        analysis:
-          $ref: '#/components/schemas/AnalysisReport'
-    ErrorResponse:
-      type: object
-      required:
-      - code
-      - message
-      properties:
-        code:
+          title: Target
+        kind:
           type: string
-        message:
-          type: string
-        findings:
-          type: array
+          title: Kind
+          default: script
+        args:
           items:
-            $ref: '#/components/schemas/Finding'
-    BundleRequest:
+            type: string
+          type: array
+          title: Args
+          default: []
+        working_directory:
+          type: string
+          title: Working Directory
+          default: .
       type: object
       required:
-      - decisions
-      additionalProperties: false
+      - target
+      title: RunSpec
+    RunSpecDTO:
       properties:
-        decisions:
-          $ref: '#/components/schemas/UserDecisions'
-        include_dockerfile:
-          type: boolean
-          default: false
-    AdviceRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        feature:
+        target:
+          type: string
+          maxLength: 1024
+          minLength: 1
+          title: Target
+        kind:
           type: string
           enum:
-          - explain
-          - readme
-          - packages
-          default: explain
-        description:
+          - script
+          - module
+          title: Kind
+          default: script
+        args:
+          items:
+            type: string
+            maxLength: 1024
+          type: array
+          maxItems: 64
+          title: Args
+        working_directory:
           type: string
-          maxLength: 20000
-          default: ''
-    JobStatus:
-      type: string
-      enum:
-      - queued
-      - running
-      - succeeded
-      - failed
-      - timed_out
-      - resource_limited
-      - expired
-    ProjectAccepted:
-      type: object
+          maxLength: 1024
+          minLength: 1
+          title: Working Directory
+          default: .
       additionalProperties: false
+      type: object
       required:
-      - project_id
-      - job_id
-      - status
+      - target
+      title: RunSpecDTO
+    SubmittedProjectDTO:
       properties:
         project_id:
           type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
         job_id:
           type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Job Id
         status:
           type: string
           enum:
           - queued
           - running
-    JobResponse:
-      type: object
+          title: Status
       additionalProperties: false
+      type: object
       required:
       - project_id
       - job_id
       - status
+      title: SubmittedProjectDTO
+    TokenUsage:
       properties:
-        project_id:
+        prompt_tokens:
+          type: integer
+          title: Prompt Tokens
+        completion_tokens:
+          type: integer
+          title: Completion Tokens
+        total_tokens:
+          type: integer
+          title: Total Tokens
+      type: object
+      required:
+      - prompt_tokens
+      - completion_tokens
+      - total_tokens
+      title: TokenUsage
+    UserDecisions:
+      properties:
+        analysis_id:
           type: string
-        job_id:
+          title: Analysis Id
+        packages:
+          additionalProperties:
+            type: string
+          type: object
+          title: Packages
+        versions:
+          additionalProperties:
+            type: string
+          type: object
+          title: Versions
+        excluded_modules:
+          items:
+            type: string
+          type: array
+          title: Excluded Modules
+          default: []
+        excluded_files:
+          items:
+            type: string
+          type: array
+          title: Excluded Files
+          default: []
+        run_spec:
+          anyOf:
+          - $ref: '#/components/schemas/RunSpec'
+          - type: 'null'
+        python_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Python Version
+        description:
           type: string
-        status:
-          $ref: '#/components/schemas/JobStatus'
-        analysis:
-          $ref: '#/components/schemas/AnalysisReport'
-        error:
-          $ref: '#/components/schemas/ErrorResponse'
-      allOf:
-      - if:
-          properties:
-            status:
-              const: succeeded
-        then:
-          required:
-          - analysis
-        else:
-          not:
-            required:
-            - analysis
-      - if:
-          properties:
-            status:
-              enum:
-              - failed
-              - timed_out
-              - resource_limited
-        then:
-          required:
-          - error
-        else:
-          not:
-            required:
-            - error
+          title: Description
+          default: ''
+        input_description:
+          type: string
+          title: Input Description
+          default: ''
+        expected_output:
+          type: string
+          title: Expected Output
+          default: ''
+        data_confirmed:
+          type: boolean
+          title: Data Confirmed
+          default: false
+      type: object
+      required:
+      - analysis_id
+      title: UserDecisions
+    AnalysisOptionsDTO:
+      additionalProperties: false
+      properties:
+        python_version:
+          default: '3.11'
+          maxLength: 16
+          minLength: 1
+          title: Python Version
+          type: string
+        source_roots:
+          items:
+            maxLength: 1024
+            minLength: 1
+            type: string
+          maxItems: 32
+          minItems: 1
+          title: Source Roots
+          type: array
+        max_source_bytes:
+          default: 1000000
+          maximum: 1000000
+          minimum: 1
+          title: Max Source Bytes
+          type: integer
+        max_files:
+          default: 1000
+          maximum: 1000
+          minimum: 1
+          title: Max Files
+          type: integer
+      title: AnalysisOptionsDTO
+      type: object
+  securitySchemes:
+    ServiceToken:
+      type: http
+      scheme: bearer
