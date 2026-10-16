@@ -148,3 +148,24 @@ def test_json_request_limits_apply_before_any_request(monkeypatch):
         client.submit(b"PK", author_environment={"platform": "x" * 262144})
     with pytest.raises(ValueError):
         client.plan(PROJECT_ID, {"value": float("nan")})
+
+
+def test_wait_includes_automatic_environment_preparation(monkeypatch):
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    results = iter(
+        [
+            {"status": "succeeded", "automatic_resolution": {"status": "pending"}},
+            {"status": "succeeded", "automatic_resolution": {"status": "running"}},
+            {"status": "succeeded", "automatic_resolution": {"status": "ready"}},
+        ]
+    )
+    monkeypatch.setattr(client, "job", lambda _job_id: next(results))
+    monkeypatch.setattr("nishtyak_client.client.time.sleep", lambda _seconds: None)
+    assert client.wait(PROJECT_ID)["automatic_resolution"]["status"] == "ready"
+
+
+def test_wait_returns_cached_resolution_failure_without_retrying(monkeypatch):
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    result = {"status": "succeeded", "automatic_resolution": {"status": "unavailable"}}
+    monkeypatch.setattr(client, "job", lambda _job_id: result)
+    assert client.wait(PROJECT_ID) == result

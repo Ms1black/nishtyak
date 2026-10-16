@@ -106,7 +106,11 @@ class LogicClient:
         deadline = time.monotonic() + timeout
         while True:
             job = self.job(job_id)
-            if job["status"] not in {"queued", "running"}:
+            preparing = any(
+                (job.get(key) or {}).get("status") in {"pending", "running"}
+                for key in ("automatic_review", "automatic_resolution")
+            )
+            if job["status"] not in {"queued", "running"} and not preparing:
                 return job
             remaining = deadline - time.monotonic()
             if remaining <= 0:

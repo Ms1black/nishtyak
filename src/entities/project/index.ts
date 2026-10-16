@@ -6,6 +6,7 @@ export type {
   ProjectArchive,
   ProjectAnalysis,
   AutomaticReview,
+  AutomaticResolution,
   ServiceCapabilities,
   AnalysisOptions,
   LaunchCandidate,

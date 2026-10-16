@@ -25,7 +25,7 @@ const hint = computed(() => {
 
 async function analyze() {
   const project = await upload()
-  if (project) await wizard.openProject(project)
+  if (project) await wizard.openProject(project, { autoBuild: true })
 }
 </script>
 

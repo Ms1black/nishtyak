@@ -123,6 +123,8 @@ class SQLiteJobRepository:
                         self._review_eligible(),
                     ),
                 )
+                if self.settings.automatic_resolution:
+                    self._queue_resolution(connection, project_id, job_id)
                 row = connection.execute(
                     "SELECT * FROM projects WHERE project_id = ?", (project_id,)
                 ).fetchone()
@@ -201,6 +203,12 @@ class SQLiteJobRepository:
                 (project_id, json.dumps(prose) if prose else None, now),
             )
             (self._project_directory(project_id) / "dependency-lock.json").unlink(missing_ok=True)
+            if self.settings.automatic_resolution:
+                self._queue_resolution(connection, project_id, job_id)
+            else:
+                connection.execute(
+                    "DELETE FROM automatic_resolutions WHERE project_id = ?", (project_id,)
+                )
             return self._record(
                 connection.execute(
                     "SELECT * FROM projects WHERE project_id = ?", (project_id,)
@@ -228,6 +236,59 @@ class SQLiteJobRepository:
                 (time.time(),),
             ).fetchall()
         return [self._record(row) for row in rows]
+
+    def pending_resolutions(self) -> list[JobRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.* FROM projects p JOIN automatic_resolutions r
+                ON r.project_id = p.project_id AND r.job_id = p.job_id
+                WHERE p.status = 'succeeded' AND p.deleted = 0 AND p.expires_at > ?
+                AND (r.status = 'pending' OR (r.status = 'running' AND r.updated_at < ?))
+                ORDER BY p.created_at LIMIT 8""",
+                (time.time(), time.time() - 30),
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def read_resolution(self, record: JobRecord) -> dict | None:
+        self.get_project(record.owner_id, record.project_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT result_json FROM automatic_resolutions
+                WHERE project_id = ? AND job_id = ?""",
+                (record.project_id, record.job_id),
+            ).fetchone()
+        return json.loads(row["result_json"]) if row is not None else None
+
+    def save_resolution(self, record: JobRecord, result: dict) -> None:
+        payload = bounded_json(result, 256 * 1024).decode("ascii")
+        with self._transaction() as connection:
+            current = self._accessible(
+                connection.execute(
+                    "SELECT * FROM projects WHERE project_id = ? AND owner_id = ?",
+                    (record.project_id, record.owner_id),
+                ).fetchone()
+            )
+            if current.job_id != record.job_id or current.status != "succeeded":
+                raise ServiceError(409, "ANALYSIS_STALE", "Resolution belongs to old analysis")
+            connection.execute(
+                """INSERT INTO automatic_resolutions
+                (project_id, job_id, status, result_json, updated_at) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET job_id = excluded.job_id,
+                status = excluded.status, result_json = excluded.result_json,
+                updated_at = excluded.updated_at""",
+                (record.project_id, record.job_id, result["status"], payload, time.time()),
+            )
+
+    @staticmethod
+    def _queue_resolution(connection, project_id: str, job_id: str) -> None:
+        connection.execute(
+            """INSERT INTO automatic_resolutions
+            (project_id, job_id, status, result_json, updated_at) VALUES (?, ?, 'pending', ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET job_id = excluded.job_id,
+            status = excluded.status, result_json = excluded.result_json,
+            updated_at = excluded.updated_at""",
+            (project_id, job_id, json.dumps({"status": "pending"}), time.time()),
+        )
 
     def read_review(
         self, record: JobRecord, analysis_id: str, *, reuse_policy: str | None = None
@@ -788,6 +849,13 @@ class SQLiteJobRepository:
                     analysis_id TEXT NOT NULL,
                     job_id TEXT NOT NULL,
                     result_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS automatic_resolutions (
+                    project_id TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
+                    job_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
                 );
                 """
             )

@@ -171,7 +171,7 @@ def test_upload_ignores_filename_and_uses_typed_options(client, facade) -> None:
 def test_upload_defaults_options(client, facade) -> None:
     response = client.post("/v1/projects", headers=HEADERS, files={"file": ("p.zip", b"zip")})
     assert response.status_code == 202
-    assert facade.calls[0][3] == AnalysisOptions()
+    assert facade.calls[0][3] == AnalysisOptions(python_version_auto=True)
 
 
 @pytest.mark.parametrize(

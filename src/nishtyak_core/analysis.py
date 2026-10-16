@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from .imports import ImportScanner
 from .layout import LayoutDetector
 from .manifests import ManifestReader
 from .models import AnalysisOptions, AnalysisReport, Finding, ProjectSnapshot, stable_id
+from .python_targets import select_python_target
 from .resolution import DependencyResolver, StandardLibraryProfile
 
 
@@ -18,6 +19,13 @@ class ProjectAnalyzer:
         options = options or AnalysisOptions()
         layout = LayoutDetector().detect(snapshot, options)
         roots = layout.source_roots
+        manifests = ManifestReader(
+            snapshot, options.max_source_bytes, project_root=layout.root
+        ).read()
+        if options.python_version_auto:
+            selected = select_python_target(manifests.python_requires)
+            if selected is not None:
+                options = replace(options, python_version=".".join(selected.split(".")[:2]))
         profile = StandardLibraryProfile(options.python_version)
         if options.max_source_bytes <= 0 or options.max_files <= 0:
             raise ValueError("Analysis limits must be positive")
@@ -94,9 +102,6 @@ class ProjectAnalyzer:
             }:
                 entrypoints.append(source.path)
 
-        manifests = ManifestReader(
-            snapshot, options.max_source_bytes, project_root=layout.root
-        ).read()
         findings.extend(manifests.findings)
         partial = partial or not manifests.complete
         result = DependencyResolver(

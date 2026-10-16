@@ -151,7 +151,7 @@ export const en: MessageSchema = {
     stepsLabel: 'Preparation steps',
     steps: {
       upload: 'Upload project',
-      analysis: 'Clarify and review',
+      analysis: 'Package preparation',
       ready: 'Ready archive',
     },
   },
@@ -167,7 +167,7 @@ export const en: MessageSchema = {
     hintSelect: 'Choose a file first',
     hintReady: 'Ready for analysis',
     hintUploading: 'Uploading and analyzing…',
-    analyze: 'Analyze project',
+    analyze: 'Prepare package',
     automaticReviewConditional:
       'If automatic descriptions are enabled on the server, filtered source excerpts are sent to DeepSeek after upload. Files with detected secrets are excluded; code is not executed.',
     automaticReviewDisclosure:
@@ -239,11 +239,27 @@ export const en: MessageSchema = {
     found: 'Found {shown} of {total}',
   },
   analysis: {
+    automatic: {
+      environmentTitle: 'Dependencies and environment',
+      resolving: 'Selecting compatible library versions…',
+      resolvingHint: 'Python and compatible packages are selected automatically. Exact versions will be included in the archive.',
+      resolved: 'Versions pinned for {platform}, including package dependencies.',
+      provenance: 'This is a newly resolved environment. The author’s original environment and project execution are unverified.',
+      needsInput: 'An ambiguity prevents automatic resolution. Correct it in advanced settings or build a draft.',
+      unavailable: 'Automatic version resolution is currently unavailable. A draft will retain known dependencies and limitations.',
+      blockingTitle: 'One detail needs attention',
+      fix: 'Fix',
+      advancedTitle: 'Advanced settings and report',
+      advancedHint: 'Manual corrections, source files and analysis details. Ordinary projects do not need these settings.',
+      preparingTitle: 'Preparing environment…',
+      buildingTitle: 'Building archive…',
+      buildingHint: 'Adding sources, dependencies and launch instructions.',
+    },
     review: {
-      eyebrow: 'Static analysis complete',
-      title: 'Review your package before building',
+      eyebrow: 'Automatic preparation',
+      title: 'Project analyzed',
       intro:
-        'A draft package has been prepared from your project. Add missing details here if you know them. Building saves your answers and updates the README and dependency list.',
+        'Description, launch and dependencies have been prepared from the sources. Missing data and limitations will be recorded in README.',
       descriptionTitle: 'README description',
       descriptionAutomatic:
         'Prepared automatically from the sources and included in README. You can edit it under “Data and description”.',
@@ -299,7 +315,7 @@ export const en: MessageSchema = {
       archiveFiles:
         'Sources, README with installation and launch instructions, requirements.txt, and an uncertainty report.',
       nextStep:
-        'We will save your answers, recalculate the package and open the ZIP download. Unknown details can remain in the report.',
+        'New projects are prepared automatically. Manual corrections remain available in advanced settings.',
     },
     files: {
       title: 'All project files',
@@ -415,7 +431,7 @@ export const en: MessageSchema = {
       },
       draft: {
         title: 'Ready to build a draft',
-        text: 'You do not need to answer every warning. Unknown details will be included in the package.',
+        text: 'Limitations are recorded in README. Missing input data can be added later.',
       },
       ready_to_verify: {
         title: 'Ready to build a package',
@@ -487,7 +503,7 @@ export const en: MessageSchema = {
       size: 'Archive size',
     },
     pythonUnknown: 'not set',
-    edit: 'Back to clarifications',
+    edit: 'Edit settings',
     toProjects: 'To team projects',
     download: 'Download ZIP',
   },

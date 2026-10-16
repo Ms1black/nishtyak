@@ -42,16 +42,24 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const error = ref<string | null>(null)
   const saveState = ref<SaveState>('idle')
   const savedAt = ref<Date | null>(null)
+  const advancedOpen = ref(false)
 
   let pollTimer: ReturnType<typeof setTimeout> | undefined
+  let resolutionTimer: ReturnType<typeof setTimeout> | undefined
   let epoch = 0
   let editVersion = 0
   let savedVersion = -1
+  let autoBuildRequested = false
   let syncing: { epoch: number; promise: Promise<boolean> } | null = null
 
   const isAnalyzing = computed(() => analysis.value?.status === 'analyzing')
+  const isPreparingEnvironment = computed(() =>
+    ['pending', 'running'].includes(plan.value?.automaticResolution?.status ?? ''),
+  )
   const isBusy = computed(
-    () => isBuilding.value || isResolving.value || isRefreshing.value || isLoading.value || isAnalyzing.value,
+    () =>
+      isBuilding.value || isResolving.value || isRefreshing.value ||
+      isLoading.value || isAnalyzing.value || isPreparingEnvironment.value,
   )
   const canBuild = computed(() => canEdit.value && !!plan.value && plan.value.state !== 'blocked' && !isBusy.value)
   const canIncludeDockerfile = computed(() => {
@@ -68,8 +76,9 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     projectStore.upsert(project.value)
   }
 
-  async function openProject(next: Project) {
+  async function openProject(next: Project, options: { autoBuild?: boolean } = {}) {
     reset()
+    autoBuildRequested = options.autoBuild === true && canEdit.value && next.archive.status !== 'ready'
     project.value = next
     step.value = next.archive.status === 'ready' ? 3 : 2
     await loadAnalysis()
@@ -97,20 +106,73 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       const doc = await projectApi.getDecisions(projectId)
       if (epoch !== requestEpoch) return
       revision.value = doc.revision
-      decisions.value =
-        doc.decisions?.analysisId === result.analysisId ? doc.decisions : createDefaultDecisions(result)
-      savedVersion = doc.decisions?.analysisId === result.analysisId ? editVersion : -1
+      const hasSavedDecisions = doc.decisions?.analysisId === result.analysisId
+      decisions.value = hasSavedDecisions ? doc.decisions : createDefaultDecisions(result)
+      savedVersion = hasSavedDecisions ? editVersion : -1
+      if (
+        !hasSavedDecisions && autoBuildRequested && canEdit.value &&
+        decisions.value!.excludedFiles.length > 0
+      ) {
+        const saved = await projectApi.saveDecisions(projectId, snapshotDecisions(), revision.value)
+        if (epoch !== requestEpoch) return
+        revision.value = saved.revision
+        savedVersion = editVersion
+      }
       const nextPlan = await projectApi.plan(projectId, snapshotDecisions())
       if (epoch !== requestEpoch) return
       plan.value = nextPlan
+      scheduleResolutionPoll()
       const existingLock = await projectApi.getLock(projectId).catch(() => null)
       if (epoch !== requestEpoch) return
-      if (existingLock?.analysis_id === result.analysisId) lock.value = existingLock
+      const automatic = nextPlan.automaticResolution
+      const matchesAutomatic = !automatic || automatic.status === 'disabled' || automatic.lockId === existingLock?.id
+      if (existingLock?.analysis_id === result.analysisId && matchesAutomatic) lock.value = existingLock
     } catch (cause) {
       if (epoch === requestEpoch) error.value = message(cause, 'analysis.errors.load')
     } finally {
-      if (epoch === requestEpoch) isLoading.value = false
+      if (epoch === requestEpoch) {
+        isLoading.value = false
+        await continueAutomaticBuild()
+      }
     }
+  }
+
+  function scheduleResolutionPoll() {
+    clearTimeout(resolutionTimer)
+    if (isPreparingEnvironment.value) {
+      resolutionTimer = setTimeout(() => void pollAutomaticResolution(), POLL_INTERVAL_MS)
+    }
+  }
+
+  async function pollAutomaticResolution() {
+    if (!project.value || !decisions.value || !isPreparingEnvironment.value) return
+    const requestEpoch = epoch
+    const version = editVersion
+    try {
+      const nextPlan = await projectApi.plan(project.value.id, snapshotDecisions())
+      if (epoch !== requestEpoch || version !== editVersion) return
+      plan.value = nextPlan
+      if (nextPlan.automaticResolution?.status === 'ready' && lock.value?.id !== nextPlan.automaticResolution.lockId) {
+        lock.value = null
+      }
+      error.value = null
+    } catch (cause) {
+      if (epoch !== requestEpoch) return
+      error.value = message(cause, 'analysis.errors.load')
+    }
+    scheduleResolutionPoll()
+    await continueAutomaticBuild()
+  }
+
+  async function continueAutomaticBuild() {
+    if (!autoBuildRequested || !plan.value) return
+    if (plan.value.state === 'blocked' || plan.value.automaticResolution?.status === 'needs_input') {
+      autoBuildRequested = false
+      return
+    }
+    if (isBusy.value || error.value) return
+    autoBuildRequested = false
+    await build()
   }
 
   function snapshotDecisions(): AnalysisDecisions {
@@ -135,6 +197,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
           const nextPlan = await projectApi.plan(projectId, snapshot)
           if (epoch !== requestEpoch) return false
           if (version === editVersion) plan.value = nextPlan
+          scheduleResolutionPoll()
         } while (savedVersion !== editVersion)
         saveState.value = 'saved'
         savedAt.value = new Date()
@@ -216,6 +279,10 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     try {
       if (!(await sync()) || epoch !== requestEpoch) return
       if (!plan.value || plan.value.state === 'blocked') return
+      if (isPreparingEnvironment.value) {
+        autoBuildRequested = true
+        return
+      }
       if (includeDockerfile.value && !canIncludeDockerfile.value) {
         error.value = 'workflow.dockerUnavailable'
         return
@@ -279,16 +346,21 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   function backToAnalysis() {
-    if (project.value) step.value = 2
+    if (project.value) {
+      advancedOpen.value = true
+      step.value = 2
+    }
   }
 
   function reset() {
     epoch += 1
     clearTimeout(pollTimer)
+    clearTimeout(resolutionTimer)
     scheduleSync.cancel()
     syncing = null
     editVersion = 0
     savedVersion = -1
+    autoBuildRequested = false
     step.value = 1
     project.value = null
     analysis.value = null
@@ -304,6 +376,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     error.value = null
     saveState.value = 'idle'
     savedAt.value = null
+    advancedOpen.value = false
   }
 
   function message(cause: unknown, fallback: string): string {
@@ -327,10 +400,12 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     isResolving,
     isRefreshing,
     isAnalyzing,
+    isPreparingEnvironment,
     isBusy,
     error,
     saveState,
     savedAt,
+    advancedOpen,
     canBuild,
     canIncludeDockerfile,
     openProject,

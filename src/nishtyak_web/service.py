@@ -82,7 +82,7 @@ class BrowserService:
         ArchiveReader().from_bytes(source)
         self.store.cleanup()
         client = self.client_factory(identity.scope)
-        submission = client.submit(source)
+        submission = client.submit(source, options={"python_version_auto": True})
         try:
             record = self.store.create(
                 identity.scope,
@@ -104,21 +104,29 @@ class BrowserService:
         record = self._refresh(identity, self.store.get(identity.scope, project_id))
         job = json.loads(record["job"])
         preparation = None
-        if job["status"] == "succeeded" and (job.get("automatic_review") or {}).get(
-            "status"
-        ) not in {"pending", "running"}:
+        if job["status"] == "succeeded" and not any(
+            (job.get(key) or {}).get("status") in {"pending", "running"}
+            for key in ("automatic_review", "automatic_resolution")
+        ):
             preparation = self.client_factory(identity.scope).preparation(project_id)
         return analysis_to_web(project_id, job, preparation)
 
     def capabilities(self, identity: WorkspaceIdentity) -> dict:
-        value = self.client_factory(identity.scope).capabilities()["automatic_review"]
+        capabilities = self.client_factory(identity.scope).capabilities()
+        value = capabilities["automatic_review"]
+        resolution = capabilities.get("automatic_resolution") or {"enabled": False}
         return {
             "automaticReview": {
                 "enabled": value["enabled"],
                 "provider": value["provider"],
                 "budgetSeconds": value["budget_seconds"],
                 "features": value.get("features", []),
-            }
+            },
+            "automaticResolution": {
+                "enabled": resolution["enabled"],
+                "budgetSeconds": resolution.get("budget_seconds", 20),
+                "defaultPlatform": resolution.get("default_platform", "linux-x86_64"),
+            },
         }
 
     def file(self, identity: WorkspaceIdentity, project_id: str, path: str) -> dict:
@@ -246,6 +254,16 @@ class BrowserService:
                 )
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 files = archive.namelist()
+                if "dependency-lock.json" in files:
+                    lock_document = json.loads(archive.read("dependency-lock.json"))
+                    included_lock = lock_document.get("id")
+                    if not isinstance(included_lock, str) or not re.fullmatch(
+                        r"[a-f0-9]{64}", included_lock
+                    ):
+                        raise LogicClientError(
+                            502, "RESPONSE_INVALID", "The archive contains an invalid lock"
+                        )
+                    lock_id = included_lock
             tag = json.dumps(
                 {
                     "analysis": report["analysis_id"],

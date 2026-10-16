@@ -13,7 +13,8 @@ const wizard = useUploadWizardStore()
 const router = useRouter()
 const archive = useArchiveActions()
 
-const isDraft = computed(() => wizard.plan?.state === 'draft')
+const automaticResolution = computed(() => wizard.plan?.automaticResolution)
+const isDraft = computed(() => wizard.plan?.state === 'draft' && automaticResolution.value?.status !== 'ready')
 
 const treeItems = computed(() => {
   if (wizard.project?.archive.files) return wizard.project.archive.files
@@ -21,12 +22,22 @@ const treeItems = computed(() => {
 })
 
 const summary = computed(() => [
-  { label: t('ready.summary.packages'), value: String(wizard.plan?.requirements.length ?? 0) },
+  {
+    label: t('ready.summary.packages'),
+    value: String(
+      wizard.lock?.packages.length ?? automaticResolution.value?.packages?.length ??
+      wizard.plan?.requirements.length ?? 0,
+    ),
+  },
   {
     label: t('ready.summary.run'),
     value: wizard.plan?.runSpec?.target ?? wizard.decisions?.runSpec?.target ?? '—',
   },
-  { label: t('ready.summary.python'), value: wizard.plan?.pythonVersion ?? t('ready.pythonUnknown') },
+  {
+    label: t('ready.summary.python'),
+    value: wizard.lock?.target.python_version ?? automaticResolution.value?.target?.pythonVersion ??
+      wizard.plan?.pythonVersion ?? t('ready.pythonUnknown'),
+  },
   { label: t('ready.summary.excluded'), value: String(wizard.decisions?.excludedFiles.length ?? 0) },
   {
     label: t('ready.summary.size'),
@@ -71,6 +82,9 @@ function toProjects() {
           <dd>{{ row.value }}</dd>
         </div>
       </dl>
+      <p v-if="automaticResolution?.status === 'ready'" class="summary__provenance">
+        {{ $t('analysis.automatic.provenance') }}
+      </p>
     </BaseCard>
 
     <div class="step-actions">
@@ -165,5 +179,10 @@ function toProjects() {
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.summary__provenance {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
 }
 </style>

@@ -148,11 +148,26 @@ export interface PackagePlan {
   runSpec?: RunSpec | null
   runSpecOrigin?: 'author' | 'automatic' | 'inferred' | 'unknown'
   pythonVersion?: string | null
+  pythonVersionOrigin?: 'author' | 'author_environment' | 'inferred' | 'unknown'
   files?: string[]
   decisions?: AnalysisDecisions
   description?: string
   descriptionOrigin?: 'author' | 'automatic' | 'unknown'
   automaticReview?: AutomaticReview | null
+  automaticResolution?: AutomaticResolution | null
+}
+
+export interface AutomaticResolution {
+  status: 'pending' | 'running' | 'ready' | 'needs_input' | 'unavailable' | 'disabled'
+  reason?: string
+  target?: { pythonVersion: string; platform: TargetPlatform }
+  lockId?: string
+  pythonSource?: 'author_environment' | 'author' | 'declared' | 'analysis_default'
+  targetSource?: 'author' | 'automatic'
+  platformSource?: 'author_environment' | 'service_default' | 'author'
+  packages?: string[]
+  provenance?: string
+  elapsedMs?: number
 }
 
 export type TargetPlatform =

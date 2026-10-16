@@ -31,6 +31,7 @@ class StrictDTO(BaseModel):
 
 class AnalysisOptionsDTO(StrictDTO):
     python_version: PythonVersion = AnalysisOptions().python_version
+    python_version_auto: bool = False
     source_roots: Annotated[list[PathText], Field(min_length=1, max_length=32)] = Field(
         default_factory=lambda: ["."]
     )
@@ -45,6 +46,9 @@ class AnalysisOptionsDTO(StrictDTO):
             max_source_bytes=self.max_source_bytes,
             max_files=self.max_files,
             project_root=self.project_root,
+            python_version_auto=self.python_version_auto
+            if {"python_version", "python_version_auto"} & self.model_fields_set
+            else True,
         )
 
 
@@ -200,6 +204,7 @@ class PreparationDTO(BaseModel):
     plan: PackagePlan
     launch: LaunchAssessment
     automatic_review: dict | None = None
+    automatic_resolution: dict | None = None
 
 
 class ImportGraphDTO(BaseModel):
@@ -220,3 +225,4 @@ class JobDTO(BaseModel):
     analysis: AnalysisReport | None = None
     error: ErrorDTO | None = None
     automatic_review: dict | None = None
+    automatic_resolution: dict | None = None

@@ -7,7 +7,6 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from dataclasses import replace
 
 import pytest
@@ -416,25 +415,22 @@ def test_heartbeat_start_failure_does_not_leak_processing_slot(repository, monke
         assert connection.execute("SELECT COUNT(*) FROM leases").fetchone()[0] == 0
 
 
-def test_facade_rechecks_access_after_operation_release(repository, monkeypatch):
-    from nishtyak_core.models import UserDecisions
-
+@pytest.mark.parametrize("method", ["plan", "preparation"])
+def test_facade_rechecks_access_after_read_only_preparation(repository, monkeypatch, method):
     record = submit(repository)
-    report = complete(repository, record)
-    original = repository.operation
-
-    @contextmanager
-    def delete_at_release(owner, project_id):
-        with original(owner, project_id) as leased:
-            yield leased
-        repository.delete(owner, project_id)
-
-    monkeypatch.setattr(repository, "operation", delete_at_release)
+    complete(repository, record)
     logic = LogicService(repository.settings, repository)
+    original = logic._prepare
+
+    def delete_after_preparing(*args, **kwargs):
+        plan = original(*args, **kwargs)
+        repository.delete("alice", record.project_id)
+        return plan
+
+    monkeypatch.setattr(logic, "_prepare", delete_after_preparing)
     assert_error(
         "RESOURCE_NOT_FOUND",
-        logic.plan,
+        getattr(logic, method),
         "alice",
         record.project_id,
-        UserDecisions(report.analysis_id),
     )

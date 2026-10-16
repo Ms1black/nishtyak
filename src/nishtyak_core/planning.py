@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import PurePosixPath
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -22,6 +23,7 @@ from .models import (
     UserDecisions,
 )
 from .resolution import LocalModuleIndex
+from .runtime_dependencies import RuntimeDependencySelector
 from .security import SecretScanner
 
 
@@ -60,6 +62,8 @@ class PackagePlanner:
             "UNSUPPORTED_REQUIREMENT",
             "MISSING_DATA",
             "MISSING_INPUT_FILE",
+            "INPUT_PATH_UNVERIFIED",
+            "EXTERNAL_INPUT_REFERENCE",
             "DEPENDENCY_CONFLICT",
             "MANIFEST_UNSUPPORTED",
             "TOOL_METADATA_UNSUPPORTED",
@@ -117,17 +121,41 @@ class PackagePlanner:
         if run_spec is None and launch.recommended is not None:
             run_spec = launch.recommended.run_spec
             run_spec_origin = "inferred"
-        findings = [
+        runtime = RuntimeDependencySelector().select(
+            report, included_files=included, run_spec=run_spec
+        )
+        ignored_evidence = runtime.ignored_evidence_ids | {
+            candidate.id
+            for candidate in report.dependencies
+            if candidate not in runtime.dependencies
+        }
+        effective_findings = [
             finding
             for finding in report.findings
+            if not (
+                finding.code.startswith(("DEPENDENCY_", "LOCAL_", "AUTHOR_"))
+                and finding.evidence_ids
+                and set(finding.evidence_ids) <= ignored_evidence
+            )
+        ]
+        runtime_report = replace(
+            report,
+            dependencies=runtime.dependencies,
+            imports=tuple(
+                item for item in report.imports if item.id not in runtime.ignored_evidence_ids
+            ),
+        )
+        findings = [
+            finding
+            for finding in effective_findings
             if not self._finding_resolved(finding, report, decisions, run_spec)
         ]
         draft = report.status != "complete"
-        local_findings = self._validate_local_imports(report, included)
+        local_findings = self._validate_local_imports(runtime_report, included)
         findings.extend(local_findings)
         blocked = bool(local_findings)
 
-        for finding in report.findings:
+        for finding in effective_findings:
             if self._finding_resolved(finding, report, decisions, run_spec):
                 continue
             if finding.code == "SECRET_DETECTED":
@@ -146,19 +174,21 @@ class PackagePlanner:
             elif finding.code in self._uncertain_findings:
                 draft = True
 
-        requirements, dependency_findings, unresolved = self._requirements(report, decisions)
-        findings.extend(dependency_findings)
-        draft = draft or unresolved
-
-        if not decisions.data_confirmed:
-            draft = True
+        requirements, dependency_findings, unresolved = self._requirements(
+            runtime_report, decisions, automatic_extras=runtime.automatic_extras
+        )
+        if runtime.automatic_extras:
             findings.append(
                 Finding(
-                    "DATA_NOT_CONFIRMED",
-                    "The author has not confirmed that required input data "
-                    "and configuration are included.",
+                    "EXTRAS_AUTOMATIC",
+                    "Runtime imports selected optional dependency groups: "
+                    + ", ".join(runtime.automatic_extras)
+                    + ".",
+                    severity="info",
                 )
             )
+        findings.extend(dependency_findings)
+        draft = draft or unresolved
 
         if run_spec_origin == "automatic":
             findings.append(
@@ -262,6 +292,11 @@ class PackagePlanner:
             expected_output=decisions.expected_output,
             decisions=decisions,
             run_spec_origin=run_spec_origin,
+            python_version_origin="author"
+            if decisions.python_version
+            else "author_environment"
+            if report.author_python_version
+            else "unknown",
         )
 
     def _validate_decisions(self, report: AnalysisReport, decisions: UserDecisions) -> None:
@@ -365,7 +400,11 @@ class PackagePlanner:
                 )
 
     def _requirements(
-        self, report: AnalysisReport, decisions: UserDecisions
+        self,
+        report: AnalysisReport,
+        decisions: UserDecisions,
+        *,
+        automatic_extras: tuple[str, ...] = (),
     ) -> tuple[list[str], list[Finding], bool]:
         requirements: dict[str, Requirement] = {}
         findings: list[Finding] = []
@@ -373,7 +412,9 @@ class PackagePlanner:
         declared_names: set[str] = set()
         removed_names: set[str] = set()
         declaration_values: list[str] = []
-        selected = {canonicalize_name(group) for group in decisions.selected_extras}
+        selected = {
+            canonicalize_name(group) for group in (*decisions.selected_extras, *automatic_extras)
+        }
         if report.declarations:
             for declaration in report.declarations:
                 original = self._parse_requirement(declaration.requirement)

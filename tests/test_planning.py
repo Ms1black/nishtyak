@@ -258,12 +258,12 @@ def test_detected_secret_blocks_export_until_file_is_excluded(report, decisions)
     assert [file.path for file in excluded.files] == ["main.py"]
 
 
-def test_partial_analysis_and_unconfirmed_data_are_draft(report, decisions):
+def test_partial_analysis_is_draft_but_data_acknowledgement_is_not_required(report, decisions):
     partial = PackagePlanner().prepare(replace(report, status="partial"), decisions)
     assert partial.state == "draft"
     missing_data = PackagePlanner().prepare(report, replace(decisions, data_confirmed=False))
-    assert missing_data.state == "draft"
-    assert "DATA_NOT_CONFIRMED" in codes(missing_data)
+    assert missing_data.state == "ready_to_verify"
+    assert "DATA_NOT_CONFIRMED" not in codes(missing_data)
 
 
 def test_module_launch_resolves_from_working_directory(report, decisions):
@@ -319,7 +319,8 @@ def test_readme_consolidates_limits_but_json_retains_all_evidence():
     document = json.loads(generated.get("analysis-report.json"))
     raw_codes = [item["code"] for item in document["findings"]]
     assert raw_codes.count("VERSION_NOT_PINNED") == 2
-    assert {"DATA_NOT_CONFIRMED", "README_MISSING"} <= set(raw_codes)
+    assert {"DATA_DEPENDENCIES_UNVERIFIED", "README_MISSING"} <= set(raw_codes)
+    assert "DATA_NOT_CONFIRMED" not in raw_codes
 
 
 def test_generated_description_is_distinguished_from_author_confirmation(report, decisions):

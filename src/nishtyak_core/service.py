@@ -42,6 +42,12 @@ class ReproducibilityService:
         author_environment: AuthorEnvironmentSnapshot | None = None,
     ) -> AnalysisReport:
         SnapshotBuilder().validate(snapshot)
+        if options is not None and options.python_version_auto and author_environment is not None:
+            options = replace(
+                options,
+                python_version=".".join(author_environment.python_version.split(".")[:2]),
+                python_version_auto=False,
+            )
         report = self.analyzer.analyze(snapshot, options)
         if author_environment is not None:
             from .environment import AuthorEnvironmentInspector

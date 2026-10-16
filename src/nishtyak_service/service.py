@@ -17,6 +17,7 @@ from nishtyak_core.locking import LockExporter, ResolutionError, ResolutionTarge
 from nishtyak_core.models import AnalysisOptions, AnalysisReport, PackagePlan, UserDecisions
 from nishtyak_core.redaction import TextRedactor
 
+from .automatic_resolution import AutomaticDependencyResolution
 from .automatic_review import AutomaticProjectReview
 from .config import Settings
 from .errors import ServiceError
@@ -35,12 +36,17 @@ class LogicService:
         self.core = ReproducibilityService()
         self.advisor = advisor
         self.automatic_review = AutomaticProjectReview(self.repository)
+        self.automatic_resolution = AutomaticDependencyResolution(self.repository)
 
     def capabilities(self) -> dict:
-        return {"automatic_review": self.automatic_review.capabilities()}
+        return {
+            "automatic_review": self.automatic_review.capabilities(),
+            "automatic_resolution": self.automatic_resolution.capabilities(),
+        }
 
     def review_pending(self) -> None:
         self.automatic_review.process_pending()
+        self.automatic_resolution.process_pending(self._prepare)
 
     def submit(
         self,
@@ -75,11 +81,12 @@ class LogicService:
         self.repository.consume_rate(owner, "plan", 30)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            plan = self._prepare(report, decisions)
+            plan = self._prepare(report, decisions, record)
             # Persist the same sanitized decisions used by the generated plan.
             result = self.repository.save_decisions(
                 owner, project_id, report.analysis_id, expected_revision, asdict(plan.decisions)
             )
+            self.automatic_resolution.queue_if_changed(record, plan)
         self.repository.get_project(owner, project_id)
         return result
 
@@ -93,6 +100,7 @@ class LogicService:
             report = self.repository.read_report(record)
             result["analysis"] = report.to_dict()
             result["automatic_review"] = self.automatic_review.status(record, report)
+            result["automatic_resolution"] = self.automatic_resolution.status(record)
         elif record.error_code:
             result["error"] = {
                 "code": record.error_code,
@@ -115,15 +123,12 @@ class LogicService:
 
     def plan(self, owner: str, project_id: str, decisions: UserDecisions | None = None) -> dict:
         self.repository.consume_rate(owner, "plan", 30)
-        with self.repository.operation(owner, project_id) as record:
-            report = self.repository.read_report(record)
-            self.automatic_review.ensure(record, report)
-            plan = self._prepare(
-                report, self._decisions(owner, project_id, report, decisions), record
-            )
-            result = plan.to_dict()
-        self.repository.get_project(owner, project_id)
-        return result
+        record = self.repository.get_project(owner, project_id)
+        self._require_succeeded(record)
+        report = self.repository.read_report(record)
+        plan = self._prepare(report, self._decisions(owner, project_id, report, decisions), record)
+        self._require_current(record, report)
+        return plan.to_dict()
 
     def bundle(
         self,
@@ -140,6 +145,10 @@ class LogicService:
             plan = self._prepare(
                 report, self._decisions(owner, project_id, report, decisions), record
             )
+            if (plan.automatic_resolution or {}).get("status") in {"pending", "running"}:
+                raise ServiceError(
+                    409, "PREPARATION_PENDING", "Automatic dependency preparation is still running"
+                )
             if plan.state == "blocked":
                 raise ServiceError(409, "PLAN_BLOCKED", "Resolve the blocking findings first")
             try:
@@ -147,9 +156,13 @@ class LogicService:
                 if snapshot.fingerprint != report.fingerprint:
                     raise ServiceError(409, "SNAPSHOT_CHANGED", "The stored project has changed")
                 generated = self.core.render(plan, include_dockerfile=include_dockerfile)
-                if lock_id is not None:
-                    lock = self.repository.read_lock(owner, project_id)
-                    if lock.id != lock_id:
+                lock = (
+                    self.repository.read_lock(owner, project_id)
+                    if lock_id is not None
+                    else self.automatic_resolution.valid_lock(record, plan)
+                )
+                if lock is not None:
+                    if lock_id is not None and lock.id != lock_id:
                         raise ServiceError(409, "LOCK_STALE", "Dependency lock was replaced")
                     try:
                         generated = LockExporter().attach(generated, plan, lock)
@@ -186,17 +199,18 @@ class LogicService:
         from nishtyak_core.launches import LaunchDetector
 
         self.repository.consume_rate(owner, "plan", 30)
-        with self.repository.operation(owner, project_id) as record:
-            report = self.repository.read_report(record)
-            self.automatic_review.ensure(record, report)
-            plan = self._prepare(report, self._decisions(owner, project_id, report, None), record)
-            result = {
-                "project_id": project_id,
-                "plan": plan.to_dict(),
-                "launch": LaunchDetector().detect(report, plan.files).to_dict(),
-                "automatic_review": self.automatic_review.status(record, report),
-            }
-        self.repository.get_project(owner, project_id)
+        record = self.repository.get_project(owner, project_id)
+        self._require_succeeded(record)
+        report = self.repository.read_report(record)
+        plan = self._prepare(report, self._decisions(owner, project_id, report, None), record)
+        result = {
+            "project_id": project_id,
+            "plan": plan.to_dict(),
+            "launch": LaunchDetector().detect(report, plan.files).to_dict(),
+            "automatic_review": self.automatic_review.status(record, report),
+            "automatic_resolution": self.automatic_resolution.status(record),
+        }
+        self._require_current(record, report)
         return TextRedactor().redact_value(result)
 
     def graph(self, owner: str, project_id: str) -> dict:
@@ -256,13 +270,16 @@ class LogicService:
         self.repository.consume_rate("_service", "resolve-global", 20)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            plan = self._prepare(report, self._decisions(owner, project_id, report, decisions))
+            plan = self._prepare(
+                report, self._decisions(owner, project_id, report, decisions), record
+            )
             try:
                 lock = VersionResolver().resolve(plan, target)
             except ResolutionError as error:
                 status = 503 if error.code in {"RESOLVER_UNAVAILABLE", "INDEX_UNAVAILABLE"} else 422
                 raise ServiceError(status, error.code, str(error)) from None
             self.repository.save_lock(owner, project_id, lock)
+            self.automatic_resolution.record_lock(record, plan, lock)
         self.repository.get_project(owner, project_id)
         return lock.to_dict()
 
@@ -323,7 +340,10 @@ class LogicService:
                 if candidate is not None
                 else self.core.prepare(report, decisions)
             )
-            return self.automatic_review.enrich(plan, record) if record is not None else plan
+            if record is not None:
+                plan = self.automatic_review.enrich(plan, record)
+                plan = self.automatic_resolution.enrich(plan, record)
+            return plan
         except ValueError as error:
             if hasattr(error, "code") and hasattr(error, "field"):
                 raise ServiceError(422, error.code, str(error), error.field) from None
@@ -338,6 +358,13 @@ class LogicService:
             "job_id": record.job_id,
             "status": record.status,
         }
+
+    def _require_current(self, record: JobRecord, report: AnalysisReport) -> None:
+        current = self.repository.get_project(record.owner_id, record.project_id)
+        if current.job_id != record.job_id or current.status != "succeeded":
+            raise ServiceError(409, "ANALYSIS_STALE", "Analysis changed while preparing the result")
+        if self.repository.read_report(current).analysis_id != report.analysis_id:
+            raise ServiceError(409, "ANALYSIS_STALE", "Analysis changed while preparing the result")
 
     @staticmethod
     def _require_succeeded(record: JobRecord) -> None:

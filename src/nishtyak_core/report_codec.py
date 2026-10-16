@@ -87,9 +87,12 @@ class AnalysisReportCodec:
             raise InvalidWorkerReport("Invalid worker report") from error
 
     def decode_options(self, value: Any) -> AnalysisOptions:
-        if not isinstance(value, dict) or set(value) not in (
-            set(AnalysisOptions.__dataclass_fields__),
-            set(AnalysisOptions.__dataclass_fields__) - {"project_root"},
+        required = set(AnalysisOptions.__dataclass_fields__) - {
+            "project_root",
+            "python_version_auto",
+        }
+        if not isinstance(value, dict) or not required <= set(value) <= set(
+            AnalysisOptions.__dataclass_fields__
         ):
             raise InvalidWorkerReport("Unexpected analysis option fields")
         data = value
@@ -102,12 +105,16 @@ class AnalysisReportCodec:
         project_root = self._nullable_text(data.get("project_root"))
         if project_root is not None and len(project_root) > 1024:
             raise InvalidWorkerReport("Invalid project root")
+        automatic = data.get("python_version_auto", False)
+        if type(automatic) is not bool:
+            raise InvalidWorkerReport("Invalid automatic Python selection")
         return AnalysisOptions(
             python_version=version,
             source_roots=roots,
             max_source_bytes=self._integer(data["max_source_bytes"], 1, 1_000_000),
             max_files=self._integer(data["max_files"], 1, 1_000),
             project_root=project_root,
+            python_version_auto=automatic,
         )
 
     def _layout(self, value: Any) -> ProjectLayout | None:

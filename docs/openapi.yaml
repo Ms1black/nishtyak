@@ -1754,6 +1754,10 @@ components:
           - type: string
           - type: 'null'
           title: Project Root
+        python_version_auto:
+          type: boolean
+          title: Python Version Auto
+          default: false
       additionalProperties: false
       type: object
       title: AnalysisOptions
@@ -1766,6 +1770,10 @@ components:
           minLength: 1
           title: Python Version
           type: string
+        python_version_auto:
+          default: false
+          title: Python Version Auto
+          type: boolean
         source_roots:
           items:
             maxLength: 1024
@@ -2472,6 +2480,12 @@ components:
             type: object
           - type: 'null'
           title: Automatic Review
+        automatic_resolution:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automatic Resolution
       additionalProperties: false
       type: object
       required:
@@ -2592,6 +2606,16 @@ components:
             type: object
           - type: 'null'
           title: Automatic Review
+        python_version_origin:
+          type: string
+          title: Python Version Origin
+          default: unknown
+        automatic_resolution:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automatic Resolution
       type: object
       required:
       - report
@@ -2619,6 +2643,12 @@ components:
             type: object
           - type: 'null'
           title: Automatic Review
+        automatic_resolution:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automatic Resolution
       additionalProperties: false
       type: object
       required:

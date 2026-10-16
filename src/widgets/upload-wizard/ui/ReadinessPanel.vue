@@ -2,11 +2,8 @@
 import { computed } from 'vue'
 import {
   AnalysisBadge,
-  describeFinding,
-  getFindingKind,
   getProjectMeta,
   ProjectSourceIcon,
-  type Finding,
   type PackagePlan,
   type Project,
 } from '@/entities/project'
@@ -21,25 +18,33 @@ const props = defineProps<{
   saveState: SaveState
   savedAt: Date | null
   isBuilding: boolean
+  isPreparingEnvironment?: boolean
   isRefreshing: boolean
   canBuild: boolean
   error: string | null
 }>()
 
-const emit = defineEmits<{ focus: [finding: Finding]; build: []; reset: []; reload: []; refresh: [] }>()
+const emit = defineEmits<{ build: []; reset: []; reload: []; refresh: [] }>()
 
-const blockers = computed(
-  () => props.plan?.findings.filter((finding) => getFindingKind(finding) === 'blocker') ?? [],
-)
+const state = computed(() => {
+  if (props.isPreparingEnvironment) {
+    return { title: t('analysis.automatic.preparingTitle'), text: t('analysis.automatic.resolvingHint') }
+  }
+  if (props.isBuilding) {
+    return { title: t('analysis.automatic.buildingTitle'), text: t('analysis.automatic.buildingHint') }
+  }
+  if (!props.plan) return null
+  return {
+    title: t(`analysis.plan.${props.plan.state}.title`),
+    text: t(`analysis.plan.${props.plan.state}.text`),
+  }
+})
 
-const state = computed(() =>
-  props.plan
-    ? {
-        title: t(`analysis.plan.${props.plan.state}.title`),
-        text: t(`analysis.plan.${props.plan.state}.text`),
-      }
-    : null,
-)
+const buttonText = computed(() => {
+  if (props.isPreparingEnvironment) return t('analysis.automatic.preparingTitle')
+  if (props.isBuilding) return t('analysis.automatic.buildingTitle')
+  return t('analysis.panel.build')
+})
 
 const saveText = computed(() => {
   switch (props.saveState) {
@@ -73,7 +78,8 @@ const saveText = computed(() => {
     <div v-if="plan && state" class="panel__state" :class="`panel__state--${plan.state}`">
       <span class="panel__state-icon">
         <BaseIcon
-          :name="plan.state === 'blocked' ? 'alert' : plan.state === 'draft' ? 'circle-dashed' : 'check'"
+          :name="isPreparingEnvironment || isBuilding ? 'refresh' : plan.state === 'blocked' ? 'alert' : plan.state === 'draft' ? 'circle-dashed' : 'check'"
+          :spin="isPreparingEnvironment || isBuilding"
           :size="22"
           :stroke-width="plan.state === 'ready_to_verify' ? 2.6 : 2"
         />
@@ -83,19 +89,6 @@ const saveText = computed(() => {
         <p class="panel__state-text">{{ state.text }}</p>
       </div>
     </div>
-
-    <template v-if="blockers.length">
-      <p class="panel__group">{{ $t('analysis.panel.leftFix') }}</p>
-      <ul class="panel__list">
-        <li v-for="f in blockers" :key="f.id">
-          <button type="button" class="item item--blocker" @click="emit('focus', f)">
-            <BaseIcon name="alert" :size="18" class="item__icon" />
-            <span class="item__text">{{ describeFinding(f) }}</span>
-            <BaseIcon name="chevron-right" :size="16" class="item__chevron" />
-          </button>
-        </li>
-      </ul>
-    </template>
 
     <div class="panel__footer">
       <p v-if="error" class="panel__error" role="alert">{{ error }}</p>
@@ -109,11 +102,11 @@ const saveText = computed(() => {
       >
         {{ $t('analysis.panel.refresh') }}
       </BaseButton>
-      <BaseButton block :disabled="!canBuild" :loading="isBuilding" @click="emit('build')">
-        {{ $t('analysis.panel.build') }}
+      <BaseButton block :disabled="!canBuild" :loading="isBuilding || isPreparingEnvironment" @click="emit('build')">
+        {{ buttonText }}
       </BaseButton>
       <p class="panel__next">{{ $t('analysis.review.nextStep') }}</p>
-      <p class="panel__save" :class="`panel__save--${saveState}`" aria-live="polite">
+      <p v-if="saveState !== 'idle'" class="panel__save" :class="`panel__save--${saveState}`" aria-live="polite">
         {{ saveText }}
         <button v-if="saveState === 'conflict'" type="button" class="panel__link" @click="emit('reload')">
           {{ $t('analysis.panel.reload') }}
@@ -232,56 +225,6 @@ const saveText = computed(() => {
   color: var(--color-text-muted);
 }
 
-.panel__list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 10px;
-  margin: 0 -10px;
-  width: calc(100% + 20px);
-  border-radius: var(--radius-sm);
-  text-align: left;
-  transition: background-color var(--transition);
-}
-
-.item:hover {
-  background: var(--color-surface-hover);
-}
-
-.item__icon {
-  margin-top: 1px;
-  color: var(--color-text-secondary);
-}
-
-.item--blocker .item__icon {
-  color: #ff5c5c;
-}
-
-.item--limitation .item__icon {
-  color: var(--color-text-subtle);
-}
-
-.item__text {
-  flex: 1;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.item--limitation .item__text {
-  color: var(--color-text-muted);
-}
-
-.item__chevron {
-  margin-top: 1px;
-  color: var(--color-text-subtle);
-}
 
 .panel__footer {
   display: flex;

@@ -72,6 +72,7 @@ def document_to_web(value: dict) -> dict:
 def options_to_core(value: dict) -> dict:
     fields = {
         "pythonVersion": "python_version",
+        "pythonVersionAuto": "python_version_auto",
         "sourceRoots": "source_roots",
         "projectRoot": "project_root",
     }
@@ -110,11 +111,36 @@ def plan_to_web(value: dict) -> dict:
         "runSpec": run_to_web(value.get("run_spec")),
         "runSpecOrigin": value.get("run_spec_origin", "unknown"),
         "pythonVersion": value.get("python_version"),
+        "pythonVersionOrigin": value.get("python_version_origin", "unknown"),
         "files": [item["path"] for item in value.get("files", [])],
         "decisions": decisions_to_web(value.get("decisions")),
         "description": value.get("description", ""),
         "descriptionOrigin": value.get("description_origin", "unknown"),
         "automaticReview": review_to_web(value.get("automatic_review")),
+        "automaticResolution": resolution_to_web(value.get("automatic_resolution")),
+    }
+
+
+def resolution_to_web(value: dict | None) -> dict | None:
+    if value is None:
+        return None
+    target = value.get("target")
+    return {
+        "status": value["status"],
+        "reason": value.get("reason"),
+        "target": {
+            "pythonVersion": target["python_version"],
+            "platform": target["platform"],
+        }
+        if target is not None
+        else None,
+        "lockId": value.get("lock_id"),
+        "pythonSource": value.get("python_source"),
+        "platformSource": value.get("platform_source"),
+        "targetSource": value.get("target_source"),
+        "packages": value.get("packages", []),
+        "provenance": value.get("provenance"),
+        "elapsedMs": value.get("elapsed_ms", 0),
     }
 
 
@@ -186,13 +212,17 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
     layout = report.get("layout") or {}
     plan = (preparation or {}).get("plan", {})
     review = job.get("automatic_review")
+    resolution = job.get("automatic_resolution")
     return {
         "analysisId": report.get("analysis_id", ""),
         "projectId": project_id,
         "status": "analyzing"
-        if (review or {}).get("status") in {"pending", "running"}
+        if any(
+            (item or {}).get("status") in {"pending", "running"} for item in (review, resolution)
+        )
         else analysis_status(report or None, job["status"]),
         "automaticReview": review_to_web(plan.get("automatic_review") or review),
+        "automaticResolution": resolution_to_web(plan.get("automatic_resolution") or resolution),
         "error": (job.get("error") or {}).get("code"),
         "files": [
             {
@@ -218,6 +248,7 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
         ],
         "options": {
             "pythonVersion": options.get("python_version", "3.11"),
+            "pythonVersionAuto": options.get("python_version_auto", False),
             "projectRoot": options.get("project_root"),
             "sourceRoots": options.get("source_roots", ["."]),
         },

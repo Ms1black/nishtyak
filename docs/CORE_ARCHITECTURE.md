@@ -17,6 +17,7 @@
 | `LaunchDetector` | Обоснованные кандидаты запуска и автоматический выбор при достаточных фактах |
 | `ProjectInspector` | README, LICENSE, CSV/JSON, простые ссылки на входные файлы |
 | `SecretScanner` / `TextRedactor` | Диагностика потенциальных секретов и очистка публичных данных |
+| `RuntimeDependencySelector` | Runtime-импорты, достижимые локальные модули и однозначные extras; TYPE_CHECKING и неподключённые инструменты разработки исключаются |
 | `PackagePlanner` | Решения автора, версии, запуск, файлы, состояние пакета |
 | `DocumentRenderer` | README, requirements, JSON-отчет из одного плана |
 | `ProjectLauncher` | Переносимый `run_project.py` для выбранных корней импортов и console callable |
@@ -162,7 +163,7 @@ nishtyak build ./experiment --output locked.zip --python 3.11 \
   --lock --target-platform linux-x86_64
 ```
 
-Для lock нужен Python из явного выбора или снимка среды автора и явный профиль платформы. Обычная сборка без `--lock` работает без этих полей. Серверный контракт разрешения и экспорта описан в API_CONTRACT.md.
+В HTTP-сценарии Python и платформа выбираются автоматически с отдельным происхождением; подходящий lock прикладывается к ZIP без отдельного выбора пользователя. `AutomaticDependencyResolution` выполняет ограниченное фоновое разрешение и кеширует результат/ошибку. CLI сохраняет явный `--lock` и ручной target. Серверный контракт описан в API_CONTRACT.md.
 
 ## DeepSeek с ограниченными инструментами
 

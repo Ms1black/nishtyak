@@ -47,6 +47,7 @@ class AnalysisOptions:
     max_source_bytes: int = 1_000_000
     max_files: int = 1_000
     project_root: str | None = None
+    python_version_auto: bool = False
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,8 @@ class PackagePlan:
     run_spec_origin: str = "unknown"
     description_origin: str = "unknown"
     automatic_review: dict[str, Any] | None = None
+    python_version_origin: str = "unknown"
+    automatic_resolution: dict[str, Any] | None = None
 
     @property
     def analysis_id(self) -> str:

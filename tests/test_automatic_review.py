@@ -296,6 +296,7 @@ def test_unsupported_provider_claims_cannot_change_package_decisions(reviewed, m
         )
 
     monkeypatch.setattr("nishtyak_service.automatic_review.ProjectAdviceJobRunner.run", malicious)
+    logic.review_pending()
     plan = logic.plan("alice", record.project_id)
     assert plan["description"] == ""
     assert plan["requirements"] == ()
@@ -304,6 +305,7 @@ def test_unsupported_provider_claims_cannot_change_package_decisions(reviewed, m
 
 def test_whitespace_author_description_allows_automatic_fallback(reviewed):
     logic, record, report, _ = reviewed
+    logic.review_pending()
     plan = logic.plan(
         "alice", record.project_id, UserDecisions(report.analysis_id, description="  ")
     )
@@ -420,6 +422,8 @@ def test_model_choice_precedes_static_recommendation_and_replans_local_findings(
     static = logic.core.prepare(report, UserDecisions(report.analysis_id))
     assert static.run_spec.target == "utility.py"
     assert "LOCAL_IMPORT_CONTEXT_REQUIRED" in {item.code for item in static.findings}
+    logic.review_pending()
+    logic.review_pending()  # Each tick processes one eligible project.
     plan = logic.plan("bob", record.project_id)
     assert plan["run_spec"]["target"] == "workflow/experiment.py"
     assert plan["run_spec_origin"] == "automatic"
@@ -435,7 +439,8 @@ def test_model_choice_precedes_static_recommendation_and_replans_local_findings(
         assert "python utility.py" not in readme
         assert "assistant selected" in readme
         assert "LOCAL_IMPORT_CONTEXT_REQUIRED" not in readme
-    assert len(calls) == 1 and calls[0][1] == "review"
+    project_calls = [call for call in calls if call[0].analysis_id == report.analysis_id]
+    assert len(project_calls) == 1 and project_calls[0][1] == "review"
     assert 0 < calls[0][2] <= 15
 
 
@@ -444,6 +449,7 @@ def test_explicit_author_launch_wins_and_reset_restores_cached_model_choice(revi
     choose_entrypoint(monkeypatch, calls)
     authored = UserDecisions(report.analysis_id, run_spec=RunSpec("helpers.py"))
     logic.save_decisions("alice", record.project_id, authored, 0)
+    logic.review_pending()
     plan = logic.plan("alice", record.project_id)
     assert plan["run_spec"]["target"] == "helpers.py"
     assert plan["run_spec_origin"] == "author"
@@ -497,6 +503,7 @@ def test_invalid_candidate_causes_static_fallback_and_never_changes_decisions(
         return json.loads(json.dumps(result.to_dict()))
 
     monkeypatch.setattr("nishtyak_service.automatic_review.ProjectAdviceJobRunner.run", run)
+    logic.review_pending()
     plan = logic.plan("alice", record.project_id)
     assert plan["run_spec_origin"] == "inferred"
     assert plan["run_spec"]["target"] == "experiment.py"
@@ -515,6 +522,7 @@ def test_absent_token_and_provider_quota_use_static_launch(reviewed, monkeypatch
     monkeypatch.setenv("DEEPSEEK_API_KEY", "private-test-key")
     for _ in range(10):
         logic.repository.consume_rate("alice", "advice-daily", 10, 86400)
+    logic.review_pending()
     plan = logic.plan("alice", record.project_id)
     assert plan["run_spec_origin"] == "inferred"
     assert plan["automatic_review"]["reason"] == "review_quota"

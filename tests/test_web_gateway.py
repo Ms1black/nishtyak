@@ -196,7 +196,9 @@ def test_single_python_upload_and_draft_export(gateway):
     archive = client.get(f"/api/projects/{project['id']}/archive")
     with zipfile.ZipFile(io.BytesIO(archive.content)) as package:
         assert b"numpy" in package.read("requirements.txt").splitlines()
-        assert "draft" in package.read("README.md").decode().lower()
+        readme = package.read("README.md").decode()
+        assert "ready_to_verify" in readme
+        assert "Successful reproduction has not been verified" in readme
 
 
 @pytest.mark.parametrize(
@@ -230,9 +232,11 @@ def test_raw_upload_examples_export_without_manual_answers(
     assert plan["runSpec"]["target"] == "experiment.py"
     assert plan["runSpecOrigin"] == "inferred"
     assert plan["requirements"] == expected_requirements
-    assert {"INPUT_PATH_UNVERIFIED", "DATA_NOT_CONFIRMED", "PYTHON_VERSION_UNKNOWN"} <= {
-        finding["code"] for finding in plan["findings"]
-    }
+    codes = {finding["code"] for finding in plan["findings"]}
+    assert "INPUT_PATH_UNVERIFIED" in codes
+    assert "DATA_NOT_CONFIRMED" not in codes
+    # This fixture keeps network resolution disabled; no historical version is invented.
+    assert plan["pythonVersion"] is None
 
     built = client.post(prefix + "/archive")
     assert built.status_code == 200, built.text
@@ -489,7 +493,7 @@ def test_extras_round_trip_and_package_plan(gateway):
 
 
 def test_lock_graph_and_explicit_ai_source_consent(gateway):
-    client, _, _ = gateway
+    client, service, _ = gateway
     project = upload(client)
     analyzed(client, project["id"])
     prefix = f"/api/projects/{project['id']}"
@@ -508,7 +512,10 @@ def test_lock_graph_and_explicit_ai_source_consent(gateway):
     assert lock.status_code == 200, lock.text
     assert lock.json()["packages"] == []
     assert client.get(prefix + "/lock").json()["id"] == lock.json()["id"]
-    assert client.post(prefix + "/archive", json={"lockId": lock.json()["id"]}).status_code == 200
+    # A valid stored lock is exported automatically; the UI need not supply its ID.
+    assert client.post(prefix + "/archive", json={}).status_code == 200
+    stored = service.store.get(WorkspaceIdentity("local", "local", "local").scope, project["id"])
+    assert json.loads(stored["archive_tag"])["lock"] == lock.json()["id"]
     archive = client.get(prefix + "/archive")
     with zipfile.ZipFile(io.BytesIO(archive.content)) as package:
         assert "requirements.lock.txt" in package.namelist()
@@ -530,3 +537,69 @@ def test_preview_checks_retained_source_fingerprint(gateway):
     response = client.get(f"/api/projects/{project['id']}/files", params={"path": "main.py"})
     assert response.status_code == 409
     assert response.json()["code"] == "SNAPSHOT_CHANGED"
+
+
+def test_upload_automatically_prepares_python_and_pins_without_author_answers(gateway, monkeypatch):
+    import hashlib
+
+    from nishtyak_core.locking import DependencyLock, resolution_input_id
+
+    client, service, http = gateway
+    logic = http.app.state.logic
+    configured = replace(logic.settings, automatic_resolution=True)
+    logic.settings = configured
+    logic.repository.settings = configured
+    calls = []
+
+    def resolve(_resolver, plan, target):
+        calls.append(target)
+        packages = ("numpy==2.2.0", "pandas==2.2.3")
+        text = "".join(package + " --hash=sha256:" + "a" * 64 + "\n" for package in packages)
+        identifier = resolution_input_id(plan, target)
+        return DependencyLock(
+            hashlib.sha256((identifier + "\0" + text).encode()).hexdigest(),
+            plan.analysis_id,
+            identifier,
+            target,
+            text,
+            packages,
+        )
+
+    monkeypatch.setattr("nishtyak_service.automatic_resolution.VersionResolver.resolve", resolve)
+    project = upload(
+        client,
+        {
+            "experiment.py": "import numpy\nimport pandas\nprint(numpy.mean([1,2]))\n",
+            "pyproject.toml": (
+                '[project]\nname="measurements"\nversion="0.1"\n'
+                'requires-python=">=3.12"\ndependencies=["numpy>=2", "pandas>=2"]\n'
+            ),
+        },
+    )
+    scope = WorkspaceIdentity("local", "local", "local").scope
+    deadline = time.monotonic() + 10
+    while logic.repository.get_project(scope, project["id"]).status != "succeeded":
+        assert time.monotonic() < deadline
+        time.sleep(0.04)
+    prefix = f"/api/projects/{project['id']}"
+    assert client.get(prefix + "/analysis").json()["status"] == "analyzing"
+    logic.review_pending()
+    result = analyzed(client, project["id"])
+    assert result["automaticResolution"]["status"] == "ready"
+    assert result["options"]["pythonVersion"] == "3.12"
+    assert calls[0].python_version == "3.12"
+    plan = client.post(prefix + "/plan").json()
+    assert plan["pythonVersionOrigin"] == "inferred"
+    assert plan["automaticResolution"]["packages"] == ["numpy==2.2.0", "pandas==2.2.3"]
+    assert plan["decisions"]["pythonVersion"] is None
+    assert plan["decisions"]["versions"] == {}
+    assert plan["decisions"]["dataConfirmed"] is False
+    assert client.post(prefix + "/archive", json={}).status_code == 200
+    result = client.get(prefix + "/archive")
+    assert result.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
+        assert "pandas==2.2.3" in archive.read("requirements.lock.txt").decode()
+        assert "--require-hashes -r requirements.lock.txt" in archive.read("README.md").decode()
+    tag = json.loads(service.store.get(scope, project["id"])["archive_tag"])
+    assert tag["lock"] == plan["automaticResolution"]["lockId"]
+    assert client.get(prefix + "/decisions").json()["decisions"] is None

@@ -72,7 +72,8 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
 
         tasks = (
             [asyncio.create_task(review_projects()) for _ in range(settings.max_running)]
-            if settings.automatic_review and hasattr(logic, "review_pending")
+            if (settings.automatic_review or settings.automatic_resolution)
+            and hasattr(logic, "review_pending")
             else []
         )
         try:

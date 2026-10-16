@@ -35,7 +35,7 @@ def test_lone_scientific_script_needs_neither_main_guard_nor_manual_entry(tmp_pa
     assert plan.run_spec == RunSpec("experiment.py")
     assert plan.run_spec_origin == "inferred"
     assert plan.decisions.run_spec is None
-    assert plan.state == "draft"  # Unconfirmed data does not prevent packaging.
+    assert plan.state == "ready_to_verify"  # Existing input does not need a checkbox.
     artifact = BundleWriter().write(snapshot, plan, service.render(plan), tmp_path / "bundle.zip")
     with zipfile.ZipFile(artifact.path) as archive:
         readme = archive.read("README.md").decode()
@@ -264,7 +264,7 @@ def test_declared_python_constraint_does_not_require_a_manual_version_for_draft_
         }
     )
     assert plan.python_version is None
-    assert plan.state == "draft"
+    assert plan.state == "ready_to_verify"
     assert service.render(plan).get("README.md")
     assert [finding.code for finding in plan.findings].count("PYTHON_VERSION_UNKNOWN") == 1
 

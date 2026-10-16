@@ -182,6 +182,199 @@ describe('upload wizard request coordination', () => {
     expect(store.step).toBe(3)
   })
 
+  it('prepares a new upload through archive download without environment questions or manual resolution', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions),
+      pythonVersion: '3.11',
+      pythonVersionOrigin: 'inferred',
+      requirements: ['numpy', 'pandas'],
+      automaticResolution: {
+        status: 'ready',
+        target: { pythonVersion: '3.11', platform: 'linux-x86_64' },
+        packages: ['numpy==2.2.6', 'pandas==2.3.0', 'python-dateutil==2.9.0.post0'],
+        provenance: 'newly_resolved_not_author_environment',
+      },
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('new-upload'), { autoBuild: true })
+    expect(store.step).toBe(3)
+    expect(api.resolve).not.toHaveBeenCalled()
+    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('new-upload', { includeDockerfile: false })
+    expect(api.saveDecisions.mock.calls[0]![1]).toMatchObject({
+      pythonVersion: null,
+      runSpec: null,
+      versions: {},
+      dataConfirmed: false,
+    })
+    expect(store.plan?.automaticResolution?.packages).toContain('numpy==2.2.6')
+  })
+
+  it('saves automatic secret exclusions before requesting environment preparation for a new upload', async () => {
+    api.getAnalysis.mockImplementation(async (id: string) => ({
+      ...analysis(id),
+      files: [{ path: 'experiment.py', size: 40 }, { path: '.env', size: 50, secret: 'api_token' }],
+    }))
+    let excludedOnServer = false
+    api.saveDecisions.mockImplementation(async (_id: string, decisions: AnalysisDecisions, revision: number) => {
+      excludedOnServer = decisions.excludedFiles.includes('.env')
+      return { revision: revision + 1, decisions, updatedAt: null }
+    })
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions),
+      automaticResolution: {
+        status: excludedOnServer ? 'ready' : 'needs_input',
+        reason: excludedOnServer ? undefined : 'DECISIONS_NOT_SAVED',
+        packages: [],
+      },
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('secret-upload'), { autoBuild: true })
+    expect(api.saveDecisions.mock.invocationCallOrder[0]).toBeLessThan(api.plan.mock.invocationCallOrder[0]!)
+    expect(api.saveDecisions.mock.calls[0]![1]).toMatchObject({ excludedFiles: ['.env'], dataConfirmed: false })
+    expect(store.plan?.automaticResolution?.status).toBe('ready')
+    expect(store.step).toBe(3)
+    expect(api.buildArchive).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { label: 'a reopened project', viewer: false, autoBuild: false },
+    { label: 'a viewer session', viewer: true, autoBuild: true },
+  ])('does not persist initial secret exclusions for $label', async ({ viewer, autoBuild }) => {
+    team.canEditProjects = !viewer
+    api.getAnalysis.mockImplementation(async (id: string) => ({
+      ...analysis(id), files: [{ path: '.env', size: 50, secret: 'api_token' }],
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('existing-secret'), { autoBuild })
+    expect(store.decisions?.excludedFiles).toEqual(['.env'])
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('does not start an automatic exclusions save after the session changed during initial loading', async () => {
+    api.getAnalysis.mockImplementation(async (id: string) => ({
+      ...analysis(id), files: [{ path: '.env', size: 50, secret: 'api_token' }],
+    }))
+    const document = deferred<{ revision: number; decisions: null; updatedAt: null }>()
+    api.getDecisions.mockReturnValueOnce(document.promise)
+    const store = useUploadWizardStore()
+    const opening = store.openProject(project('old-secret'), { autoBuild: true })
+    await Promise.resolve()
+    resetIntegrationSession()
+    document.resolve({ revision: 0, decisions: null, updatedAt: null })
+    await opening
+    expect(store.project).toBeNull()
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.plan).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late initial exclusions save response after the session changed', async () => {
+    api.getAnalysis.mockImplementation(async (id: string) => ({
+      ...analysis(id), files: [{ path: '.env', size: 50, secret: 'api_token' }],
+    }))
+    const saved = deferred<{ revision: number; decisions: AnalysisDecisions; updatedAt: null }>()
+    api.saveDecisions.mockReturnValueOnce(saved.promise)
+    const store = useUploadWizardStore()
+    const opening = store.openProject(project('old-secret'), { autoBuild: true })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(api.saveDecisions).toHaveBeenCalledOnce()
+    const snapshot = api.saveDecisions.mock.calls[0]![1] as AnalysisDecisions
+    resetIntegrationSession()
+    saved.resolve({ revision: 7, decisions: snapshot, updatedAt: null })
+    await opening
+    expect(store.project).toBeNull()
+    expect(store.decisions).toBeNull()
+    expect(api.plan).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('waits for automatic version resolution and then builds the uploaded project', async () => {
+    api.getLock.mockResolvedValueOnce({
+      id: 'obsolete-lock', analysis_id: 'analysis-new-upload', packages: ['numpy==1.0.0'],
+      target: { python_version: '3.10', platform: 'linux-x86_64' },
+    })
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions),
+      automaticResolution: { status: 'ready', packages: ['numpy==2.2.6'] },
+    }))
+    api.plan.mockImplementationOnce(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions),
+      automaticResolution: { status: 'running' },
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('new-upload'), { autoBuild: true })
+    expect(store.isPreparingEnvironment).toBe(true)
+    expect(store.lock).toBeNull()
+    expect(store.canBuild).toBe(false)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(store.isPreparingEnvironment).toBe(false)
+    expect(api.buildArchive).toHaveBeenCalledOnce()
+    expect(api.buildArchive).toHaveBeenCalledWith('new-upload', { includeDockerfile: false })
+    expect(store.step).toBe(3)
+  })
+
+  it('never automatically rebuilds an existing project when opening its page', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('existing'))
+    expect(store.step).toBe(2)
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('pauses at genuine ambiguity and permits an explicit draft export', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions),
+      automaticResolution: { status: 'needs_input', reason: 'dependencies_unresolved' },
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('ambiguous'), { autoBuild: true })
+    expect(store.step).toBe(2)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+    expect(store.canBuild).toBe(true)
+    await store.build()
+    expect(api.buildArchive).toHaveBeenCalledOnce()
+    expect(store.step).toBe(3)
+  })
+
+  it('keeps a resolver outage usable as an automatically exported draft', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions),
+      automaticResolution: { status: 'unavailable', reason: 'resolver_timeout' },
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('offline'), { autoBuild: true })
+    expect(store.step).toBe(3)
+    expect(store.plan?.automaticResolution?.status).toBe('unavailable')
+    expect(api.resolve).not.toHaveBeenCalled()
+  })
+
+  it('does not build a new upload whose plan is blocked', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({ ...plan(decisions), state: 'blocked' }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('blocked'), { autoBuild: true })
+    expect(store.canBuild).toBe(false)
+    expect(store.step).toBe(2)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('does not allow a late automatic resolution to build after switching projects', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({ ...plan(decisions), automaticResolution: { status: 'running' } }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('old'), { autoBuild: true })
+    const oldResult = deferred<PackagePlan>()
+    api.plan.mockReturnValueOnce(oldResult.promise)
+    await vi.advanceTimersByTimeAsync(2000)
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => plan(decisions))
+    await store.openProject(project('new'))
+    oldResult.resolve({ ...plan(store.decisions!), automaticResolution: { status: 'ready' } })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(store.project?.id).toBe('new')
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
   it('keeps automatic prose out of author decisions until the user changes it', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
       ...plan(decisions),
@@ -245,7 +438,7 @@ describe('upload wizard request coordination', () => {
   it('lets viewers read a plan without sending edits or a build', async () => {
     team.canEditProjects = false
     const store = useUploadWizardStore()
-    await store.openProject(project('example'))
+    await store.openProject(project('example'), { autoBuild: true })
     expect(store.plan).not.toBeNull()
     expect(store.canBuild).toBe(false)
     store.update({ description: 'not allowed' })

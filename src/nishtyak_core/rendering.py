@@ -73,7 +73,13 @@ class DocumentRenderer:
             )
         lines.extend(["", "## Python", ""])
         if plan.python_version:
-            if plan.decisions is not None and plan.decisions.python_version is None:
+            if plan.python_version_origin == "inferred":
+                lines.append(
+                    f"Automatically selected target Python: `{plan.python_version}`. "
+                    "This is a target for the new dependency set; the author's tested "
+                    "interpreter is unknown."
+                )
+            elif plan.decisions is not None and plan.decisions.python_version is None:
                 lines.append(
                     f"Observed author-environment Python version: `{plan.python_version}`."
                 )
