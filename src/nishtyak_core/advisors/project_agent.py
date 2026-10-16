@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import time
 from dataclasses import asdict, dataclass, field
@@ -53,6 +54,10 @@ class ProjectTools:
     def __init__(self, context: SafeProjectContext):
         self.context = context
         self.bytes_returned = 0
+        self.evidence_ids = context.evidence_ids
+        self.file_ids = {item["id"] for item in context.files}
+        self.revealed_ids: set[str] = set()
+        self.revealed_source_ids: set[str] = set()
 
     @staticmethod
     def definitions() -> list[dict[str, Any]]:
@@ -91,12 +96,40 @@ class ProjectTools:
                 ["file_id", "start_line", "line_count"],
             ),
             tool(
+                "read_sources",
+                "Read up to four sanitized source previews together; prefer a single batch.",
+                {
+                    "file_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": 4,
+                    },
+                    "line_count": {"type": "integer", "minimum": 1, "maximum": 30},
+                },
+                ["file_ids", "line_count"],
+            ),
+            tool(
+                "search_source",
+                "Find literal text and line numbers in source previews; no regex or filesystem.",
+                {"query": {"type": "string", "minLength": 2, "maxLength": 80}},
+                ["query"],
+            ),
+            tool(
                 "analysis_facts",
-                "Read static imports, declarations and uncertainty codes, or summary.",
+                "Read imports, local edges, full-file AST code map, declarations or summary.",
                 {
                     "section": {
                         "type": "string",
-                        "enum": ["imports", "dependencies", "findings", "declarations", "summary"],
+                        "enum": [
+                            "imports",
+                            "dependencies",
+                            "findings",
+                            "declarations",
+                            "summary",
+                            "code_map",
+                            "local_imports",
+                        ],
                     },
                     "offset": integer,
                     "count": count,
@@ -150,6 +183,39 @@ class ProjectTools:
                     "lines": lines[start - 1 : start - 1 + count],
                     "truncated": file["truncated"],
                 }
+        elif name == "read_sources":
+            identifiers, count = arguments.get("file_ids"), arguments.get("line_count")
+            if (
+                set(arguments) != {"file_ids", "line_count"}
+                or not isinstance(identifiers, list)
+                or not 1 <= len(identifiers) <= 4
+                or any(not isinstance(item, str) for item in identifiers)
+                or len(set(identifiers)) != len(identifiers)
+                or type(count) is not int
+                or not 1 <= count <= 30
+            ):
+                raise InvalidAdvisorResponse("invalid_tool_arguments")
+            result = {
+                "files": [self._source_preview(identifier, count) for identifier in identifiers]
+            }
+        elif name == "search_source":
+            query = arguments.get("query")
+            if (
+                set(arguments) != {"query"}
+                or not isinstance(query, str)
+                or not 2 <= len(query) <= 80
+            ):
+                raise InvalidAdvisorResponse("invalid_tool_arguments")
+            matches = []
+            for file in self.context.files:
+                for line, text in enumerate((file["text"] or "").splitlines(), 1):
+                    if query.casefold() in text.casefold():
+                        matches.append({"file_id": file["id"], "line": line, "text": text[:200]})
+                    if len(matches) >= 20:
+                        break
+                if len(matches) >= 20:
+                    break
+            result = {"matches": matches, "scope": "visible_source_previews", "limit": 20}
         elif name == "analysis_facts":
             self._page(arguments, {"section", "offset", "count"})
             section = arguments["section"]
@@ -179,7 +245,37 @@ class ProjectTools:
         self.bytes_returned += len(encoded.encode("utf-8"))
         if self.bytes_returned > 24_576:
             raise InvalidAdvisorResponse("tool_output_budget_exceeded")
+        self.observe(json.loads(encoded))
         return encoded
+
+    def observe(self, value: Any) -> None:
+        if isinstance(value, str) and value in self.evidence_ids:
+            self.revealed_ids.add(value)
+        elif isinstance(value, dict):
+            identifier = value.get("file_id", value.get("id"))
+            if (
+                isinstance(identifier, str)
+                and identifier in self.file_ids
+                and (value.get("text") or value.get("lines") or value.get("parsed") is True)
+            ):
+                self.revealed_source_ids.add(identifier)
+            for item in value.values():
+                self.observe(item)
+        elif isinstance(value, list):
+            for item in value:
+                self.observe(item)
+
+    def _source_preview(self, identifier: str, count: int) -> dict[str, Any]:
+        file = next((item for item in self.context.files if item["id"] == identifier), None)
+        if file is None or file["text"] is None:
+            return {"file_id": identifier, "error": "file_not_available"}
+        return {
+            "file_id": identifier,
+            "path": file["path"],
+            "start_line": 1,
+            "lines": file["text"].splitlines()[:count],
+            "truncated": file["truncated"] or len(file["text"].splitlines()) > count,
+        }
 
     @staticmethod
     def _page(arguments: dict[str, Any], keys: set[str]) -> None:
@@ -212,8 +308,11 @@ class ProjectAdvisoryService:
         }
     )
 
-    def __init__(self, client: DeepSeekClient):
+    def __init__(self, client: DeepSeekClient, *, wall_seconds: float = 15.0):
+        if not 0 < wall_seconds <= 15:
+            raise ValueError("Project review budget must be between 0 and 15 seconds")
         self.client = client
+        self.wall_seconds = wall_seconds
 
     def advise_project(
         self,
@@ -231,6 +330,7 @@ class ProjectAdvisoryService:
     def advise_context(
         self, context: SafeProjectContext, feature: str = "explain", description: str = ""
     ) -> ProjectAdvisoryResult:
+        deadline = time.monotonic() + self.wall_seconds
         if (
             feature not in FEATURE_KINDS
             or not isinstance(description, str)
@@ -245,6 +345,8 @@ class ProjectAdvisoryService:
             if self.client.config.api_key:
                 context = SafeProjectContext.from_dict(self._remove_key(context.to_dict()))
             tools = ProjectTools(context)
+            initial_facts = self._initial_facts(context)
+            tools.observe(initial_facts)
             redactor = ProjectTextFilter()
             description = redactor.redact(
                 description.replace(self.client.config.api_key, "[REDACTED]")
@@ -258,7 +360,7 @@ class ProjectAdvisoryService:
                 "suggestions": [],
                 "unknowns": [],
             }
-            if context.evidence_ids:
+            if tools.revealed_ids:
                 candidate = context.launches[0]["id"] if context.launches else None
                 observed = [
                     item.get("module")
@@ -273,9 +375,9 @@ class ProjectAdvisoryService:
                             "evidence_ids": [
                                 candidate
                                 if feature == "entrypoint"
-                                else context.files[0]["id"]
-                                if context.files
-                                else sorted(context.evidence_ids)[0]
+                                else initial_facts["source_previews"][0]["file_id"]
+                                if initial_facts.get("source_previews")
+                                else sorted(tools.revealed_ids)[0]
                             ],
                             "candidate_id": candidate if feature == "entrypoint" else None,
                             "module": observed[0] if feature == "packages" and observed else None,
@@ -298,7 +400,8 @@ class ProjectAdvisoryService:
                 "dependencies or data semantics. README advice is descriptive prose only. "
                 "Installer and launch commands are generated deterministically elsewhere. "
                 "Never suggest automatic edits or version pins. Empty suggestions are valid. "
-                "Ask only unresolved useful questions. Unknown versions and absence of main.py "
+                "Do not repeat generic checklist questions already covered by static findings. "
+                "Unknown versions and absence of main.py "
                 "are not blocking errors. "
                 "Write concise Russian. At most 10 suggestions and 10 unknowns. JSON example: "
                 + json.dumps(example)
@@ -308,6 +411,22 @@ class ProjectAdvisoryService:
                     " In this " + feature + " response EVERY candidate_id, module and package "
                     "must be literal JSON null, including descriptions discussing launch targets. "
                     "Supporting candidate IDs may occur in evidence_ids only."
+                )
+            if feature == "readme":
+                instructions += (
+                    " Write the actual README project description, not advice on writing it. "
+                    "Return one to three short connected paragraphs as suggestions: purpose, "
+                    "input-to-output flow and relevant module responsibilities. Describe observed "
+                    "input filenames and column/key names as code expectations, never as proof "
+                    "that data exists or that its complete schema/provenance is known. "
+                    "Mention output destination/format only when visible in source. "
+                    "Avoid dependency/version/license/README-absence checklists, installation "
+                    "policy, improvement recommendations and questions to the user. "
+                    "Unpinned requirements are a valid installation draft; never claim that "
+                    "missing exact versions prevents generating installation commands. "
+                    "Use unknowns=[]: the deterministic report already records uncertainty. "
+                    "Read preloaded sources and local import edges first; ask for several "
+                    "needed files together only if the existing evidence is insufficient."
                 )
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": instructions},
@@ -319,13 +438,12 @@ class ProjectAdvisoryService:
                             "feature": feature,
                             "description": description,
                             "visible_files": len(context.files),
-                            "known_project_facts": self._initial_facts(context),
+                            "known_project_facts": initial_facts,
                         },
                         ensure_ascii=False,
                     ),
                 },
             ]
-            deadline = time.monotonic() + self.wall_seconds
             counts = [0, 0, 0]
             for round_index in range(self.max_rounds):
                 remaining = deadline - time.monotonic()
@@ -335,14 +453,16 @@ class ProjectAdvisoryService:
                     repair_attempted
                     or round_index == self.max_rounds - 1
                     or self.max_tool_calls - calls < 4
+                    or remaining < 7.0
                 )
                 messages.append(
                     {
                         "role": "system",
                         "content": (
                             f"Remaining tool calls: {self.max_tool_calls - calls}. "
-                            "The initial skeleton, summary, declarations, findings and candidates "
-                            "are already supplied. Inspect only needed source excerpts. "
+                            "The skeleton, code map, source previews, local import edges, "
+                            "summary, declarations, findings and candidates are already supplied. "
+                            "Batch independent tools in one response. Inspect missing evidence. "
                             "Avoid redundant facts. Return final JSON as soon as sufficient. "
                             + ("No further tools; return final JSON now." if final else "")
                         ),
@@ -356,6 +476,8 @@ class ProjectAdvisoryService:
                 )
                 rounds += 1
                 self._add_usage(envelope.get("usage"), counts)
+                if time.monotonic() >= deadline:
+                    raise AdvisorUnavailable("deadline_exceeded")
                 message, finish = self._message(envelope)
                 tool_calls = message.get("tool_calls")
                 if tool_calls:
@@ -377,7 +499,13 @@ class ProjectAdvisoryService:
                     raise InvalidAdvisorResponse("incomplete_response")
                 try:
                     document = json.loads(message["content"])
-                    suggestions, unknowns = self._parse(document, context, feature)
+                    suggestions, unknowns = self._parse(
+                        document,
+                        context,
+                        feature,
+                        evidence_ids=tools.revealed_ids,
+                        source_ids=tools.revealed_source_ids,
+                    )
                 except (
                     InvalidAdvisorResponse,
                     ValueError,
@@ -405,7 +533,14 @@ class ProjectAdvisoryService:
                     messages.append(
                         {
                             "role": "system",
-                            "content": self._repair_instruction(context, feature, terminal_reason),
+                            "content": self._repair_instruction(
+                                context,
+                                feature,
+                                terminal_reason,
+                                tools.revealed_ids - (tools.file_ids - tools.revealed_source_ids)
+                                if feature == "readme"
+                                else tools.revealed_ids,
+                            ),
                         }
                     )
                     continue
@@ -452,7 +587,9 @@ class ProjectAdvisoryService:
         )
 
     @staticmethod
-    def _repair_instruction(context: SafeProjectContext, feature: str, reason: str) -> str:
+    def _repair_instruction(
+        context: SafeProjectContext, feature: str, reason: str, evidence_ids: set[str]
+    ) -> str:
         rules = (
             "The previous final JSON failed validation: " + reason + ". "
             "Repair the entire final JSON once, using the exact supplied example schema. "
@@ -478,7 +615,7 @@ class ProjectAdvisoryService:
                 "analysis_id": context.analysis_id,
                 "feature": feature,
                 "kind": FEATURE_KINDS[feature],
-                "allowed_evidence_ids": sorted(context.evidence_ids)[:100],
+                "allowed_evidence_ids": sorted(evidence_ids)[:100],
                 "allowed_candidate_ids": [item["id"] for item in context.launches],
             }
         )
@@ -498,13 +635,40 @@ class ProjectAdvisoryService:
 
     @staticmethod
     def _initial_facts(context: SafeProjectContext) -> dict[str, Any]:
+        files = ProjectAdvisoryService._prioritized_files(context)
+        previews = []
+        preview_budget = 10_240
+        for item in files[:6]:
+            if not item["text"]:
+                continue
+            original = "\n".join(item["text"].splitlines()[:60])
+            encoded = original.encode("utf-8")[: min(preview_budget, 3_072)]
+            text = encoded.decode("utf-8", errors="ignore")
+            previews.append(
+                {
+                    "file_id": item["id"],
+                    "path": item["path"],
+                    "start_line": 1,
+                    "text": text,
+                    "truncated": item["truncated"] or text != item["text"],
+                }
+            )
+            preview_budget -= len(encoded)
+            if preview_budget <= 0:
+                break
+        rank = {item["path"]: index for index, item in enumerate(files)}
+        code_map = sorted(
+            context.facts.get("code_map", []), key=lambda item: rank.get(item["path"], 999)
+        )
         data = {
             "files": [
-                {key: value for key, value in item.items() if key != "text"}
-                for item in context.files[:30]
+                {key: value for key, value in item.items() if key != "text"} for item in files[:30]
             ],
             "summary": context.facts["summary"],
             "launch_candidates": list(context.launches[:10]),
+            "source_previews": previews,
+            "code_map": code_map[:10],
+            "local_imports": context.facts.get("local_imports", [])[:30],
             **{
                 key: context.facts[key][:20]
                 for key in ("imports", "dependencies", "findings", "declarations")
@@ -516,7 +680,8 @@ class ProjectAdvisoryService:
                 for key in ("imports", "dependencies", "findings", "declarations")
             ),
         }
-        while len(json.dumps(data, ensure_ascii=False).encode("utf-8")) > 12_288:
+        data["partial"] = data["partial"] or len(code_map) > 10 or len(files) > len(previews)
+        while len(json.dumps(data, ensure_ascii=False).encode("utf-8")) > 24_576:
             arrays = [key for key, value in data.items() if isinstance(value, list) and value]
             if not arrays:
                 return {"partial": True}
@@ -524,6 +689,42 @@ class ProjectAdvisoryService:
             data[largest] = data[largest][: len(data[largest]) // 2]
             data["partial"] = True
         return data
+
+    @staticmethod
+    def _prioritized_files(context: SafeProjectContext) -> list[dict[str, Any]]:
+        visible = {item["path"]: item for item in context.files}
+        queue = []
+        for launch in sorted(context.launches, key=lambda item: not item["recommended"]):
+            run = launch["run_spec"]
+            target = run["target"]
+            if run["kind"] == "script":
+                path = posixpath.normpath(posixpath.join(run["working_directory"], target))
+                if path in visible:
+                    queue.append(path)
+            elif run["kind"] in {"module", "callable"}:
+                module = target.split(":")[0].replace(".", "/")
+                queue.extend(
+                    path
+                    for path in visible
+                    if path.endswith((module + ".py", module + "/__main__.py"))
+                )
+        adjacency: dict[str, list[str]] = {}
+        for edge in context.facts.get("local_imports", []):
+            adjacency.setdefault(edge["path"], []).extend(edge["targets"])
+        ordered = []
+        seen = set()
+        for path in queue:
+            pending = [path]
+            for current in pending:
+                if current in visible and current not in seen:
+                    seen.add(current)
+                    ordered.append(visible[current])
+                    pending.extend(adjacency.get(current, []))
+        rest = sorted(
+            context.files, key=lambda item: (not item["path"].endswith(".py"), item["path"])
+        )
+        ordered.extend(item for item in rest if item["path"] not in seen)
+        return ordered
 
     @staticmethod
     def _run_tools(calls: list[Any], tools: ProjectTools) -> tuple[list[dict], list[dict]]:
@@ -559,7 +760,13 @@ class ProjectAdvisoryService:
         return normalized, results
 
     def _parse(
-        self, value: Any, context: SafeProjectContext, feature: str
+        self,
+        value: Any,
+        context: SafeProjectContext,
+        feature: str,
+        *,
+        evidence_ids: set[str] | None = None,
+        source_ids: set[str] | None = None,
     ) -> tuple[tuple[ProjectAdvisorySuggestion, ...], tuple[str, ...]]:
         if (
             not isinstance(value, dict)
@@ -578,7 +785,8 @@ class ProjectAdvisoryService:
         ):
             raise InvalidAdvisorResponse("invalid_project_advice")
         suggestions = []
-        evidence = context.evidence_ids
+        evidence = context.evidence_ids if evidence_ids is None else evidence_ids
+        files = {item["id"]: item for item in context.files}
         candidates = {item["id"] for item in context.launches}
         modules = {
             item.get("module") for key in ("imports", "dependencies") for item in context.facts[key]
@@ -598,7 +806,19 @@ class ProjectAdvisoryService:
                 or any(not isinstance(key, str) or key not in evidence for key in ids)
             ):
                 raise InvalidAdvisorResponse("invalid_project_evidence")
+            if feature == "readme" and any(
+                identifier in files
+                and (
+                    files[identifier]["text"] is None
+                    or source_ids is not None
+                    and identifier not in source_ids
+                )
+                for identifier in ids
+            ):
+                raise InvalidAdvisorResponse("invalid_project_evidence")
             text = self._safe_text(item["text"], 4000)
+            if feature == "readme":
+                self._validate_readme_prose(text)
             candidate, module, package = item["candidate_id"], item["module"], item["package"]
             if feature == "entrypoint":
                 if (
@@ -627,6 +847,18 @@ class ProjectAdvisoryService:
                 )
             )
         return tuple(suggestions), tuple(self._safe_text(item, 1000) for item in value["unknowns"])
+
+    @staticmethod
+    def _validate_readme_prose(text: str) -> None:
+        if re.search(
+            r"<\s*/?\s*[A-Za-z][^>]*>|```|~~~|\]\s*\(|"
+            r"^\s*(?:\$|#!|#{1,6}\s)|"
+            r"\b(?:curl|wget|sudo)\s|\bpip3?\s+install\b|"
+            r"\bpython3?\s+-[mc]\b|\b(?:ba|z)?sh\s+-c\b|\brm\s+-[rf]",
+            text,
+            flags=re.I | re.M,
+        ):
+            raise InvalidAdvisorResponse("invalid_advisory_text")
 
     def _safe_text(self, value: Any, limit: int) -> str:
         if not isinstance(value, str) or not 0 < len(value) <= limit:

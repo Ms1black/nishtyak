@@ -20,6 +20,7 @@ from nishtyak_core.models import (
 )
 from nishtyak_core.planning import PackagePlanner
 from nishtyak_core.rendering import DocumentRenderer
+from nishtyak_core.service import ReproducibilityService
 from nishtyak_core.snapshot import SnapshotBuilder
 
 
@@ -296,6 +297,57 @@ def test_documents_are_deterministic_and_commands_quote_arguments(report, decisi
     assert "Successful reproduction has not been verified" in readme
     assert json.loads(generated.get("analysis-report.json"))["state"] == "ready_to_verify"
     assert generated.get("requirements.txt").decode().endswith("numpy\n")
+
+
+def test_readme_consolidates_limits_but_json_retains_all_evidence():
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "experiment.py": "import pandas\nimport numpy\npandas.read_csv('measurements.csv')\n",
+        }
+    )
+    report = ReproducibilityService().analyze(snapshot)
+    plan = PackagePlanner().prepare(report, UserDecisions(report.analysis_id))
+    generated = DocumentRenderer().render(plan)
+    readme = generated.get("README.md").decode()
+    review = readme.split("## Review before reproduction", 1)[1].split("## Package contents", 1)[0]
+    assert review.count("[VERSIONS_UNVERIFIED]") == 1
+    assert "numpy, pandas" in review
+    assert "[INPUT_PATH_UNVERIFIED] (experiment.py:3)" in review
+    assert "DATA_NOT_CONFIRMED" not in review
+    assert "DATA_DEPENDENCIES_UNVERIFIED" not in review
+    assert "README_MISSING" not in review
+    document = json.loads(generated.get("analysis-report.json"))
+    raw_codes = [item["code"] for item in document["findings"]]
+    assert raw_codes.count("VERSION_NOT_PINNED") == 2
+    assert {"DATA_NOT_CONFIRMED", "README_MISSING"} <= set(raw_codes)
+
+
+def test_generated_description_is_distinguished_from_author_confirmation(report, decisions):
+    plan = PackagePlanner().prepare(report, decisions)
+    assert plan.description_origin == "author"
+    automatic = replace(
+        plan,
+        description="Computes measurement summaries.",
+        description_origin="automatic",
+        automatic_review={"status": "ready", "provider": "deepseek"},
+    )
+    generated = DocumentRenderer().render(automatic)
+    assert "not an author confirmation" in generated.get("README.md").decode()
+    document = json.loads(generated.get("analysis-report.json"))
+    assert document["automatic_review"]["provider"] == "deepseek"
+    assert document["decisions"]["description"] == decisions.description
+
+
+def test_human_report_preserves_distinct_diagnostics_and_errors(report, decisions):
+    plan = PackagePlanner().prepare(report, decisions)
+    findings = (
+        Finding("INPUT_PATH_UNVERIFIED", "Data missing", path="a.py", line=1),
+        Finding("INPUT_PATH_UNVERIFIED", "Data missing", path="b.py", line=2),
+        Finding("NEW_DIAGNOSTIC", "New important limitation"),
+        Finding("README_MISSING", "Escalated diagnostic", severity="error"),
+    )
+    presented = DocumentRenderer._review_findings(replace(plan, findings=findings))
+    assert presented == findings
 
 
 def test_launch_credentials_are_rejected_without_echoing_values(report, decisions):

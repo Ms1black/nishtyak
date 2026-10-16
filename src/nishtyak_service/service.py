@@ -17,6 +17,7 @@ from nishtyak_core.locking import LockExporter, ResolutionError, ResolutionTarge
 from nishtyak_core.models import AnalysisOptions, AnalysisReport, PackagePlan, UserDecisions
 from nishtyak_core.redaction import TextRedactor
 
+from .automatic_review import AutomaticProjectReview
 from .config import Settings
 from .errors import ServiceError
 from .storage import JobRecord, SQLiteJobRepository
@@ -33,6 +34,13 @@ class LogicService:
         self.repository = repository or SQLiteJobRepository(settings)
         self.core = ReproducibilityService()
         self.advisor = advisor
+        self.automatic_review = AutomaticProjectReview(self.repository)
+
+    def capabilities(self) -> dict:
+        return {"automatic_review": self.automatic_review.capabilities()}
+
+    def review_pending(self) -> None:
+        self.automatic_review.process_pending()
 
     def submit(
         self,
@@ -82,7 +90,9 @@ class LogicService:
         result["created_at"] = record.created_at
         result["expires_at"] = record.expires_at
         if record.status == "succeeded":
-            result["analysis"] = self.repository.read_report(record).to_dict()
+            report = self.repository.read_report(record)
+            result["analysis"] = report.to_dict()
+            result["automatic_review"] = self.automatic_review.status(record, report)
         elif record.error_code:
             result["error"] = {
                 "code": record.error_code,
@@ -107,7 +117,10 @@ class LogicService:
         self.repository.consume_rate(owner, "plan", 30)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            plan = self._prepare(report, self._decisions(owner, project_id, report, decisions))
+            self.automatic_review.ensure(record, report)
+            plan = self._prepare(
+                report, self._decisions(owner, project_id, report, decisions), record
+            )
             result = plan.to_dict()
         self.repository.get_project(owner, project_id)
         return result
@@ -123,7 +136,10 @@ class LogicService:
         self.repository.consume_rate(owner, "bundle", 10)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            plan = self._prepare(report, self._decisions(owner, project_id, report, decisions))
+            self.automatic_review.ensure(record, report)
+            plan = self._prepare(
+                report, self._decisions(owner, project_id, report, decisions), record
+            )
             if plan.state == "blocked":
                 raise ServiceError(409, "PLAN_BLOCKED", "Resolve the blocking findings first")
             try:
@@ -172,11 +188,13 @@ class LogicService:
         self.repository.consume_rate(owner, "plan", 30)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            plan = self._prepare(report, self._decisions(owner, project_id, report, None))
+            self.automatic_review.ensure(record, report)
+            plan = self._prepare(report, self._decisions(owner, project_id, report, None), record)
             result = {
                 "project_id": project_id,
                 "plan": plan.to_dict(),
                 "launch": LaunchDetector().detect(report, plan.files).to_dict(),
+                "automatic_review": self.automatic_review.status(record, report),
             }
         self.repository.get_project(owner, project_id)
         return TextRedactor().redact_value(result)
@@ -291,11 +309,14 @@ class LogicService:
         except (OSError, ValueError, sqlite3.Error):
             return False
 
-    def _prepare(self, report: AnalysisReport, decisions: UserDecisions) -> PackagePlan:
+    def _prepare(
+        self, report: AnalysisReport, decisions: UserDecisions, record: JobRecord | None = None
+    ) -> PackagePlan:
         if decisions.analysis_id != report.analysis_id:
             raise ServiceError(409, "STALE_ANALYSIS", "Decisions belong to another analysis")
         try:
-            return self.core.prepare(report, decisions)
+            plan = self.core.prepare(report, decisions)
+            return self.automatic_review.enrich(plan, record) if record is not None else plan
         except ValueError as error:
             if hasattr(error, "code") and hasattr(error, "field"):
                 raise ServiceError(422, error.code, str(error), error.field) from None

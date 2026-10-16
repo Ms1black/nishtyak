@@ -6,13 +6,14 @@ import {
   getFindingKind,
   getFindingSection,
   type Finding,
+  type PackagePlan,
 } from '@/entities/project'
 import { DataConfirmation } from '@/features/confirm-data'
 import { RunSettings } from '@/features/configure-run'
 import { ProjectFileExplorer } from '@/features/exclude-files'
 import { DependencyList } from '@/features/resolve-dependencies'
 import { BaseButton, BaseCard, BaseIcon } from '@/shared/ui'
-import { reviewNotices } from '../model/reviewSummary'
+import { reviewQuestions } from '../model/reviewQuestions'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 import ReadinessPanel from './ReadinessPanel.vue'
 import SectionCard from './SectionCard.vue'
@@ -21,11 +22,22 @@ import ProjectToolsPanel from './ProjectToolsPanel.vue'
 const wizard = useUploadWizardStore()
 const explorer = ref<InstanceType<typeof ProjectFileExplorer> | null>(null)
 const expanded = ref<Record<string, boolean>>({})
+const questionsDismissed = ref(false)
+const lastPlan = ref<PackagePlan | null>(wizard.plan)
 
 watch(
   () => wizard.analysis?.analysisId,
   () => {
     expanded.value = {}
+    questionsDismissed.value = false
+    lastPlan.value = null
+  },
+)
+
+watch(
+  () => wizard.plan,
+  (plan) => {
+    if (plan) lastPlan.value = plan
   },
 )
 
@@ -43,11 +55,12 @@ const dataFiles = computed(() =>
     .map((file) => file.path),
 )
 const visiblePlan = computed(() => {
-  if (!wizard.plan) return null
+  const plan = wizard.plan ?? lastPlan.value
+  if (!plan) return null
   const excluded = new Set(wizard.decisions?.excludedFiles ?? [])
   return {
-    ...wizard.plan,
-    findings: wizard.plan.findings.filter(
+    ...plan,
+    findings: plan.findings.filter(
       (finding) => finding.code !== 'SECRET_DETECTED' || !finding.path || !excluded.has(finding.path),
     ),
   }
@@ -60,8 +73,8 @@ const unresolvedModules = computed(() => {
   }
   return modules
 })
-const notices = computed(() => reviewNotices(findings.value))
-const requirementsCount = computed(() => wizard.plan?.requirements.length ?? 0)
+const questions = computed(() => (wizard.decisions ? reviewQuestions(findings.value, wizard.decisions) : []))
+const requirementsCount = computed(() => visiblePlan.value?.requirements.length ?? 0)
 const excludedCount = computed(() => wizard.decisions?.excludedFiles.length ?? 0)
 const effectiveRun = computed(
   () => wizard.decisions?.runSpec ?? wizard.plan?.runSpec ?? wizard.analysis?.suggestedRunSpec ?? null,
@@ -78,7 +91,10 @@ const pythonVersion = field('pythonVersion')
 const dataConfirmed = field('dataConfirmed')
 const inputDescription = field('inputDescription')
 const expectedOutput = field('expectedOutput')
-const description = field('description')
+const description = computed({
+  get: () => wizard.decisions?.description || visiblePlan.value?.description || '',
+  set: (value: string) => wizard.update({ description: value }),
+})
 
 function errorCount(section: string) {
   return findings.value.filter(
@@ -164,16 +180,49 @@ function focusFinding(finding: Finding) {
               }}
             </p>
           </div>
-          <div v-if="notices.length" class="overview__notices">
-            <p class="overview__notice-title">{{ $t('analysis.review.recorded') }}</p>
-            <ul>
-              <li v-for="notice in notices" :key="notice">{{ $t(`analysis.review.notices.${notice}`) }}</li>
-            </ul>
-            <button type="button" class="overview__link" @click="focusSection('notes')">
-              {{ $t('analysis.review.showReport') }}
-            </button>
+          <div v-if="visiblePlan?.description" class="overview__description">
+            <div class="overview__run-head">
+              <span>{{ $t('analysis.review.descriptionTitle') }}</span>
+              <button type="button" class="overview__link" @click="focusSection('data')">
+                {{ $t('analysis.review.editRun') }}
+              </button>
+            </div>
+            <p class="overview__description-text">{{ visiblePlan.description }}</p>
+            <p v-if="visiblePlan.descriptionOrigin === 'automatic'" class="overview__hint">
+              {{ $t('analysis.review.descriptionAutomatic') }}
+            </p>
           </div>
         </BaseCard>
+
+        <BaseCard v-if="questions.length && !questionsDismissed" padding="lg" class="questions">
+          <h3 class="questions__title">{{ $t('analysis.review.questionsTitle') }}</h3>
+          <p class="overview__text">{{ $t('analysis.review.questionsHint') }}</p>
+          <ul class="questions__list">
+            <li v-for="question in questions" :key="question.kind">
+              <div>
+                <p class="questions__topic">{{ $t(`analysis.review.questions.${question.kind}.title`) }}</p>
+                <p class="overview__hint">{{ $t(`analysis.review.questions.${question.kind}.hint`) }}</p>
+              </div>
+              <BaseButton
+                variant="tonal"
+                size="sm"
+                :disabled="wizard.isBusy"
+                @click="focusSection(question.section)"
+              >
+                {{ $t('analysis.review.clarify') }}
+              </BaseButton>
+            </li>
+          </ul>
+          <button type="button" class="overview__link" @click="questionsDismissed = true">
+            {{ $t('analysis.review.leaveUnknown') }}
+          </button>
+        </BaseCard>
+        <p v-else-if="questionsDismissed && questions.length" class="analysis__deferred">
+          {{ $t('analysis.review.deferred') }}
+          <button type="button" class="overview__link" @click="questionsDismissed = false">
+            {{ $t('analysis.review.clarify') }}
+          </button>
+        </p>
 
         <SectionCard
           id="section-dependencies"
@@ -183,7 +232,7 @@ function focusFinding(finding: Finding) {
         >
           <DependencyList
             :dependencies="wizard.analysis.dependencies"
-            :requirements="wizard.plan?.requirements"
+            :requirements="visiblePlan?.requirements"
             :unresolved-modules="unresolvedModules"
             :packages="wizard.decisions.packages"
             :versions="wizard.decisions.versions"
@@ -278,18 +327,70 @@ function focusFinding(finding: Finding) {
         :save-state="wizard.saveState"
         :saved-at="wizard.savedAt"
         :is-building="wizard.isBuilding"
+        :is-refreshing="wizard.isRefreshing"
         :can-build="wizard.canBuild"
         :error="wizard.error && $t(wizard.error)"
         @focus="focusFinding"
         @build="wizard.build()"
         @reset="wizard.reset()"
         @reload="wizard.reloadDecisions()"
+        @refresh="wizard.refreshPlan()"
       />
     </div>
   </div>
 </template>
 
 <style scoped>
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.questions__title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 500;
+}
+.questions__list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.questions__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.questions__topic {
+  font-size: 14px;
+  font-weight: 500;
+}
+.questions .overview__link {
+  align-self: flex-start;
+}
+.analysis__deferred {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.analysis__deferred .overview__link {
+  margin-left: 8px;
+}
+.overview__description {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
+.overview__description-text {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
 .analysis__grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
@@ -361,6 +462,7 @@ function focusFinding(finding: Finding) {
 }
 .overview__hint {
   margin-top: 10px;
+  font-size: 13px;
   color: var(--color-text-muted);
   line-height: 1.5;
 }
@@ -369,24 +471,6 @@ function focusFinding(finding: Finding) {
   font-size: 13px;
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-.overview__notices {
-  margin-top: 20px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--color-text-secondary);
-}
-.overview__notice-title {
-  margin-bottom: 8px;
-  font-weight: 500;
-}
-.overview__notices ul {
-  list-style: disc;
-  padding-left: 18px;
-  margin-bottom: 12px;
-}
-.overview__notices li + li {
-  margin-top: 6px;
 }
 .analysis__state {
   display: flex;

@@ -27,6 +27,7 @@ class Settings:
     max_http_requests: int = 8
     ttl_seconds: int = 3600
     operation_lease_seconds: int = 180
+    automatic_review: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_dir", Path(self.data_dir).absolute())
@@ -37,6 +38,10 @@ class Settings:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}", self.analyzer_image):
             raise ValueError("Invalid analyzer image")
         for name, value in vars(self).items():
+            if name == "automatic_review":
+                if type(value) is not bool:
+                    raise ValueError("Automatic review must be a boolean")
+                continue
             if name in {"data_dir", "api_token", "runner", "analyzer_image"}:
                 continue
             if type(value) is not int or value <= 0:
@@ -64,6 +69,7 @@ class Settings:
             "api_token": os.environ.get("NISHTYAK_SERVICE_TOKEN", ""),
             "runner": os.environ.get("NISHTYAK_RUNNER", "docker"),
             "analyzer_image": os.environ.get("NISHTYAK_ANALYZER_IMAGE", "nishtyak-analyzer:0.3.0"),
+            "automatic_review": os.environ.get("NISHTYAK_AUTOMATIC_REVIEW", "0") == "1",
         }
         for name in cls.__dataclass_fields__:
             if name in values:

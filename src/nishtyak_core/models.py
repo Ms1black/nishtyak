@@ -192,6 +192,8 @@ class PackagePlan:
     expected_output: str = ""
     decisions: UserDecisions | None = None
     run_spec_origin: str = "unknown"
+    description_origin: str = "unknown"
+    automatic_review: dict[str, Any] | None = None
 
     @property
     def analysis_id(self) -> str:

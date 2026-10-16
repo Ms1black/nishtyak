@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
@@ -10,6 +11,7 @@ from typing import Any
 from ..models import AnalysisReport, ProjectSnapshot, stable_id
 from ..redaction import TextRedactor
 from ..snapshot import SnapshotBuilder
+from .source_map import PythonSourceMap
 
 MAX_CONTEXT_BYTES = 196_608
 MAX_TOOL_BYTES = 6_144
@@ -49,6 +51,7 @@ class SafeProjectContext:
 
     @classmethod
     def from_project(cls, report: AnalysisReport, snapshot: ProjectSnapshot) -> SafeProjectContext:
+        from ..import_graph import ImportGraph
         from ..launches import LaunchDetector
 
         SnapshotBuilder().validate(snapshot)
@@ -63,11 +66,44 @@ class SafeProjectContext:
         blocked = {
             item.path for item in report.findings if item.code == "SECRET_DETECTED" and item.path
         }
+        assessment = LaunchDetector().detect(report)
+        roots = report.layout.source_roots if report.layout else report.options.source_roots
+        graph = ImportGraph(snapshot, roots, report.imports[:200])
+        priority = []
+        for candidate in sorted(
+            assessment.candidates, key=lambda item: item != assessment.recommended
+        ):
+            run = candidate.run_spec
+            if run.kind == "script":
+                priority.append(
+                    posixpath.normpath(posixpath.join(run.working_directory, run.target))
+                )
+            else:
+                module = run.target.split(":")[0]
+                resolved = graph.index.resolve_module(module)
+                priority.extend(resolved.paths)
+                if run.kind == "module":
+                    priority.extend(graph.index.resolve_module(module + ".__main__").paths)
+        ordered, seen = [], set()
+        for path in priority:
+            pending = [path]
+            for current in pending:
+                if current not in seen:
+                    seen.add(current)
+                    ordered.append(current)
+                    pending.extend(graph.successors(current))
+        rank = {path: index for index, path in enumerate(ordered)}
+        selected = sorted(snapshot.files, key=lambda item: (rank.get(item.path, 9999), item.path))
         files = []
         text_budget = 65_536
+        preview_source_budget = 2_000_000
         omitted = 0
-        for file in snapshot.files:
-            if not cls._allowed_path(file.path) or redactor.redact(file.path) != file.path:
+        for file in selected:
+            if (
+                len(file.path) > 1024
+                or not cls._allowed_path(file.path)
+                or redactor.redact(file.path) != file.path
+            ):
                 omitted += 1
                 continue
             if len(files) >= 200:
@@ -75,7 +111,12 @@ class SafeProjectContext:
                 continue
             text: str | None = None
             truncated = True
-            if file.path not in blocked and len(file.content) <= 1_000_000:
+            if (
+                text_budget > 0
+                and file.path not in blocked
+                and len(file.content) <= min(1_000_000, preview_source_budget)
+            ):
+                preview_source_budget -= len(file.content)
                 try:
                     decoded = file.content.decode("utf-8")
                 except UnicodeDecodeError:
@@ -102,7 +143,47 @@ class SafeProjectContext:
             "dependencies": [],
             "findings": [],
             "declarations": [],
+            "code_map": [],
+            "local_imports": [],
         }
+        source_map = PythonSourceMap()
+        map_budget = 32_768
+        source_budget = 2_000_000
+        mapped_paths = set()
+        for file in files:
+            source = snapshot.get(file["path"])
+            if (
+                source is None
+                or not source.path.endswith(".py")
+                or source.path in blocked
+                or len(source.content) > 1_000_000
+                or len(source.content) > source_budget
+                or len(facts["code_map"]) >= 50
+            ):
+                continue
+            source_budget -= len(source.content)
+            mapped = redactor.redact_value(
+                {"id": file["id"], "path": file["path"], **source_map.describe(source.content)}
+            )
+            size = len(json.dumps(mapped, ensure_ascii=False).encode("utf-8"))
+            if size > map_budget:
+                continue
+            facts["code_map"].append(mapped)
+            mapped_paths.add(file["path"])
+            map_budget -= size
+        visible = {file["path"] for file in files}
+        for edge in graph.edges:
+            targets = [path for path in edge.target_paths if path in visible]
+            if targets and edge.source_path in visible:
+                facts["local_imports"].append(
+                    {
+                        "id": edge.evidence_id,
+                        "path": edge.source_path,
+                        "module": edge.module,
+                        "targets": targets[:20],
+                        "status": edge.status,
+                    }
+                )
         for item in report.imports[:200]:
             facts["imports"].append(
                 {
@@ -148,6 +229,10 @@ class SafeProjectContext:
             "python_requires": report.python_requires,
             "author_python_version": report.author_python_version,
             "status": report.status,
+            "code_map_partial": any(
+                item.path.endswith(".py") and item.path not in mapped_paths
+                for item in snapshot.files
+            ),
             "partial": any(
                 len(getattr(report, name)) > limit
                 for name, limit in (
@@ -158,7 +243,6 @@ class SafeProjectContext:
                 )
             ),
         }
-        assessment = LaunchDetector().detect(report)
         launches = tuple(
             {
                 "id": candidate.id,
@@ -180,7 +264,36 @@ class SafeProjectContext:
             "launches": redactor.redact_value(launches),
             "omitted_files": omitted,
         }
+        cls._fit_document(document)
+        document["files"].sort(key=lambda item: item["path"])
         return cls.from_dict(document)
+
+    @staticmethod
+    def _fit_document(document: dict[str, Any]) -> None:
+        while len(json.dumps(document, ensure_ascii=False).encode("utf-8")) > MAX_CONTEXT_BYTES:
+            facts = document["facts"]
+            facts["summary"]["partial"] = True
+            arrays = [
+                (facts, key) for key, value in facts.items() if isinstance(value, list) and value
+            ]
+            arrays.extend((document, key) for key in ("files", "launches") if document[key])
+            if not arrays:
+                facts["summary"] = {"partial": True}
+                continue
+            owner, key = max(
+                arrays, key=lambda item: len(json.dumps(item[0][item[1]], ensure_ascii=False))
+            )
+            previous = len(owner[key])
+            owner[key] = owner[key][: previous // 2]
+            if key == "files":
+                document["omitted_files"] += previous - len(owner[key])
+                visible = {item["path"] for item in owner[key]}
+                facts["code_map"] = [item for item in facts["code_map"] if item["path"] in visible]
+                facts["local_imports"] = [
+                    item
+                    for item in facts["local_imports"]
+                    if item["path"] in visible and set(item["targets"]) <= visible
+                ]
 
     @staticmethod
     def _allowed_path(path: str) -> bool:
@@ -252,15 +365,21 @@ class SafeProjectContext:
             ):
                 raise ValueError("Invalid project advisor file text")
         facts = value["facts"]
-        if not isinstance(facts, dict) or set(facts) != {
+        required_facts = {
             "imports",
             "dependencies",
             "findings",
             "declarations",
             "summary",
-        }:
+        }
+        optional_facts = {"code_map", "local_imports"}
+        if (
+            not isinstance(facts, dict)
+            or not required_facts <= set(facts)
+            or set(facts) - required_facts - optional_facts
+        ):
             raise ValueError("Invalid project advisor facts")
-        for key in ("imports", "dependencies", "findings", "declarations"):
+        for key in (required_facts - {"summary"}) | (optional_facts & set(facts)):
             if not isinstance(facts[key], list) or len(facts[key]) > 200:
                 raise ValueError("Invalid project advisor facts")
             for item in facts[key]:

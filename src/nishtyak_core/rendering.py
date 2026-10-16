@@ -4,9 +4,11 @@ import json
 import posixpath
 import shlex
 
+from packaging.requirements import InvalidRequirement, Requirement
+
 from .launches import LaunchCandidate, LaunchDetector
 from .layout import ProjectLauncher
-from .models import GeneratedFile, GeneratedFiles, PackagePlan, RunSpec
+from .models import Finding, GeneratedFile, GeneratedFiles, PackagePlan, RunSpec
 from .security import SecretScanner
 
 
@@ -53,16 +55,23 @@ class DocumentRenderer:
             "",
             f"Package state: **{plan.state}**.",
             "",
-            "This guide was generated from static analysis and any supplied author decisions. "
+            "This guide records static analysis and any supplied author decisions. "
             "The uploaded code was not executed. Successful reproduction has not been verified.",
             "",
             "## Experiment",
             "",
             plan.description or "The author has not described the experiment.",
-            "",
-            "## Python",
-            "",
         ]
+        if plan.description_origin == "automatic":
+            lines.extend(
+                [
+                    "",
+                    "The project description was generated automatically from filtered source "
+                    "excerpts. It describes the code; it is not an author confirmation or "
+                    "an execution result.",
+                ]
+            )
+        lines.extend(["", "## Python", ""])
         if plan.python_version:
             if plan.decisions is not None and plan.decisions.python_version is None:
                 lines.append(
@@ -169,8 +178,9 @@ class DocumentRenderer:
                 "",
             ]
         )
-        if plan.findings:
-            for finding in plan.findings:
+        review_findings = self._review_findings(plan)
+        if review_findings:
+            for finding in review_findings:
                 location = ""
                 if finding.path:
                     location = f" ({finding.path}"
@@ -222,6 +232,56 @@ class DocumentRenderer:
             ]
         )
         return "\n".join(lines)
+
+    @staticmethod
+    def _review_findings(plan: PackagePlan) -> tuple[Finding, ...]:
+        """Consolidate human-facing limits without discarding raw diagnostic evidence."""
+        generic_data = {"DATA_DEPENDENCIES_UNVERIFIED", "DATA_NOT_CONFIRMED"}
+        detailed_data = {
+            "INPUT_PATH_UNVERIFIED",
+            "EXTERNAL_INPUT_REFERENCE",
+            "MISSING_DATA",
+            "MISSING_INPUT_FILE",
+        }
+        versions = {"VERSION_UNKNOWN", "VERSION_NOT_PINNED"}
+        has_data_details = any(item.code in detailed_data for item in plan.findings)
+        result: list[Finding] = []
+        seen: set[object] = set()
+        for finding in plan.findings:
+            if finding.severity != "error":
+                if finding.code in {"README_MISSING", "DATA_FILES_SUMMARY"}:
+                    continue
+                if finding.code in generic_data:
+                    if has_data_details:
+                        continue
+                    finding = Finding(
+                        "DATA_UNVERIFIED",
+                        "Completeness of required input data and configuration is not confirmed.",
+                    )
+                elif finding.code in versions:
+                    names = []
+                    for raw in plan.requirements:
+                        try:
+                            requirement = Requirement(raw)
+                        except InvalidRequirement:
+                            continue
+                        if not any(
+                            spec.operator in {"==", "==="} and "*" not in spec.version
+                            for spec in requirement.specifier
+                        ):
+                            names.append(requirement.name)
+                    packages = ": " + ", ".join(sorted(set(names))) if names else ""
+                    finding = Finding(
+                        "VERSIONS_UNVERIFIED",
+                        "Exact tested library versions are not supplied"
+                        + packages
+                        + ". Known constraints remain in requirements.txt.",
+                    )
+            key = (finding.code, finding.message, finding.path, finding.line, finding.severity)
+            if key not in seen:
+                seen.add(key)
+                result.append(finding)
+        return tuple(result)
 
     @staticmethod
     def _file_tree(plan: PackagePlan) -> list[str]:

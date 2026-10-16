@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -29,9 +30,10 @@ def run(destination: Path) -> int:
         ):
             return 1
         context = SafeProjectContext.from_dict(value["context"])
-        result = ProjectAdvisoryService(DeepSeekClient.from_env()).advise_context(
-            context, value["feature"], value["description"]
-        )
+        result = ProjectAdvisoryService(
+            DeepSeekClient.from_env(),
+            wall_seconds=float(os.environ.get("NISHTYAK_ADVISOR_WALL_SECONDS", "13.5")),
+        ).advise_context(context, value["feature"], value["description"])
         with destination.open("xb") as stream:
             stream.write(bounded_json(result.to_dict(), MAX_RESPONSE_BYTES))
         return 0

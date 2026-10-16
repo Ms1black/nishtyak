@@ -125,6 +125,10 @@ def create_app(
     def health():
         return {"status": "ok"}
 
+    @app.get("/api/capabilities")
+    def capabilities(request: Request):
+        return browser.capabilities(request.state.identity)
+
     if preview is not None:
 
         @app.get("/preview/access", response_class=HTMLResponse, include_in_schema=False)

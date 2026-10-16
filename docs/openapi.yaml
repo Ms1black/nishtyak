@@ -3,6 +3,28 @@ info:
   title: Nishtyak logic service
   version: 1.2.0
 paths:
+  /v1/capabilities:
+    get:
+      summary: Capabilities
+      operationId: capabilities_v1_capabilities_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Capabilities V1 Capabilities Get
+      security:
+      - ServiceToken: []
+      parameters:
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
   /v1/projects:
     post:
       summary: Submit
@@ -2444,6 +2466,12 @@ components:
           anyOf:
           - $ref: '#/components/schemas/ErrorDTO'
           - type: 'null'
+        automatic_review:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automatic Review
       additionalProperties: false
       type: object
       required:
@@ -2554,6 +2582,16 @@ components:
           type: string
           title: Run Spec Origin
           default: unknown
+        description_origin:
+          type: string
+          title: Description Origin
+          default: unknown
+        automatic_review:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automatic Review
       type: object
       required:
       - report
@@ -2575,6 +2613,12 @@ components:
           $ref: '#/components/schemas/PackagePlan'
         launch:
           $ref: '#/components/schemas/LaunchAssessment'
+        automatic_review:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automatic Review
       additionalProperties: false
       type: object
       required:

@@ -30,5 +30,8 @@
   "reprozip": "https://docs.reprozip.org/en/latest/",
   "inline_script_metadata": "https://packaging.python.org/en/latest/specifications/inline-script-metadata/",
   "deepseek_tool_calls": "https://api-docs.deepseek.com/guides/tool_calls/",
-  "deepseek_chat_api": "https://api-docs.deepseek.com/api/create-chat-completion/"
+  "deepseek_chat_api": "https://api-docs.deepseek.com/api/create-chat-completion/",
+  "aider_repository_map": "https://aider.chat/docs/repomap.html",
+  "readme_ai": "https://github.com/eli64s/readme-ai",
+  "github_readme_prompt": "https://docs.github.com/en/copilot/tutorials/customization-library/prompt-files/create-readme"
 }

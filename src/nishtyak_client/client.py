@@ -55,6 +55,9 @@ class LogicClient:
         self._token = token
         self._opener = build_opener(ProxyHandler({}), _NoRedirect())
 
+    def capabilities(self) -> dict:
+        return self._request("GET", "/v1/capabilities")
+
     def submit(
         self,
         archive: bytes | Path,

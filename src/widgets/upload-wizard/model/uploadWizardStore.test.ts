@@ -14,7 +14,6 @@ const { api, projects } = vi.hoisted(() => ({
     buildArchive: vi.fn(),
     reanalyze: vi.fn(),
     resolve: vi.fn(),
-    advice: vi.fn(),
   },
   projects: { upsert: vi.fn(), patch: vi.fn() },
 }))
@@ -58,7 +57,12 @@ function plan(decisions: AnalysisDecisions): PackagePlan {
     state: 'draft',
     requirements: [],
     findings: [],
-    runSpec: decisions.runSpec ?? { kind: 'script', target: 'experiment.py', args: [], workingDirectory: '.' },
+    runSpec: decisions.runSpec ?? {
+      kind: 'script',
+      target: 'experiment.py',
+      args: [],
+      workingDirectory: '.',
+    },
     decisions,
   }
 }
@@ -80,11 +84,13 @@ describe('upload wizard request coordination', () => {
     api.getDecisions.mockResolvedValue({ revision: 0, decisions: null, updatedAt: null })
     api.getLock.mockRejectedValue(new ApiError(404, 'No lock'))
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => plan(decisions))
-    api.saveDecisions.mockImplementation(async (_id: string, decisions: AnalysisDecisions, revision: number) => ({
-      revision: revision + 1,
-      decisions,
-      updatedAt: '2026-10-16T12:00:00Z',
-    }))
+    api.saveDecisions.mockImplementation(
+      async (_id: string, decisions: AnalysisDecisions, revision: number) => ({
+        revision: revision + 1,
+        decisions,
+        updatedAt: '2026-10-16T12:00:00Z',
+      }),
+    )
     api.buildArchive.mockImplementation(async (id: string) => ({
       ...project(id),
       archive: { status: 'ready', sizeBytes: 500 },
@@ -171,6 +177,44 @@ describe('upload wizard request coordination', () => {
     expect(api.saveDecisions.mock.calls[0]![1].runSpec).toBeNull()
     expect(store.plan?.state).toBe('draft')
     expect(store.step).toBe(3)
+  })
+
+  it('keeps automatic prose out of author decisions until the user changes it', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions),
+      description: decisions.description || 'Summarizes temperature measurements from a CSV file.',
+      descriptionOrigin: decisions.description ? 'author' : 'automatic',
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('example'))
+    expect(store.plan?.descriptionOrigin).toBe('automatic')
+    expect(store.decisions?.description).toBe('')
+    await store.build()
+    expect(api.saveDecisions.mock.calls[0]![1].description).toBe('')
+    store.backToAnalysis()
+    store.update({ description: 'Compares two calibrated thermometers.' })
+    await store.build()
+    expect(store.plan?.descriptionOrigin).toBe('author')
+    expect(store.plan?.description).toBe('Compares two calibrated thermometers.')
+  })
+
+  it('retries an unsuccessful clarification save and recalculates before export', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('example'))
+    store.update({ inputDescription: 'Request measurements.csv from the experiment author.' })
+    api.saveDecisions.mockRejectedValueOnce(new ApiError(503, 'Unavailable'))
+    await vi.advanceTimersByTimeAsync(500)
+    expect(store.saveState).toBe('error')
+    expect(store.plan).toBeNull()
+    await store.refreshPlan()
+    expect(store.saveState).toBe('saved')
+    expect(store.plan?.decisions?.inputDescription).toBe(
+      'Request measurements.csv from the experiment author.',
+    )
+    expect(store.isRefreshing).toBe(false)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+    await store.build()
+    expect(api.buildArchive).toHaveBeenCalledOnce()
   })
 
   it('explains an unavailable Docker template without submitting an invalid export', async () => {

@@ -8,7 +8,7 @@ export const en: MessageSchema = {
       'Upload storage limit reached. Delete an unused project or wait for its retention period to expire.',
     argumentsHint: 'One argument per line, without quotes. Spaces within a line are preserved.',
     resolveError: 'Could not resolve dependency versions.',
-    toolsTitle: 'Settings and assistant',
+    toolsTitle: 'Additional settings',
     analysisSettings: 'Analyze the project again',
     reanalysisWarning:
       'Reanalysis resets saved decisions, the lock and the built archive. Source code is not executed.',
@@ -34,20 +34,6 @@ export const en: MessageSchema = {
     resolve: 'Resolve dependencies',
     lockReady: 'Lock saved. Packages: {count}. It will be included in the next archive.',
     lockNotExecution: 'Project scripts were not executed; computation results were not verified.',
-    adviceTitle: 'DeepSeek assistant',
-    adviceHint: 'The model suggests explanations and decisions. You choose which changes to apply.',
-    adviceTask: 'Assistant task',
-    adviceReadme: 'README description',
-    adviceEntrypoint: 'Find the entry point',
-    advicePackages: 'Clarify dependencies',
-    adviceExplain: 'Explain the project',
-    advicePrompt: 'Optional details about your question',
-    sourceConsent: 'Allow filtered project excerpts to be sent to DeepSeek for this request.',
-    askAdvice: 'Ask the assistant',
-    adviceUnavailable: 'The assistant could not prepare a response.',
-    adviceStats: 'Model requests: {rounds}; tool calls: {tools}.',
-    apply: 'Accept suggestion',
-    applied: 'Accepted',
     dockerfile: 'Add a Dockerfile template to the archive',
     downloadGraph: 'Download the import graph — JSON',
     graphError: 'Could not load the import graph.',
@@ -154,7 +140,7 @@ export const en: MessageSchema = {
     stepsLabel: 'Preparation steps',
     steps: {
       upload: 'Upload project',
-      analysis: 'Review and build',
+      analysis: 'Clarify and review',
       ready: 'Ready archive',
     },
   },
@@ -171,6 +157,10 @@ export const en: MessageSchema = {
     hintReady: 'Ready for analysis',
     hintUploading: 'Uploading and analyzing…',
     analyze: 'Analyze project',
+    automaticReviewConditional:
+      'If automatic descriptions are enabled on the server, filtered source excerpts are sent to DeepSeek after upload. Files with detected secrets are excluded; code is not executed.',
+    automaticReviewDisclosure:
+      'After upload, DeepSeek automatically prepares a project description from filtered source excerpts. Files with detected secrets are not sent; project code is not executed.',
     errors: {
       type: 'A ZIP archive or .py file is required',
       empty: 'The file is empty',
@@ -240,9 +230,32 @@ export const en: MessageSchema = {
   analysis: {
     review: {
       eyebrow: 'Static analysis complete',
-      title: 'Analysis result',
+      title: 'Review your package before building',
       intro:
-        'Review the detected dependencies and build the ZIP. You do not need to fill in every setting: unknown details remain in the README and report.',
+        'A draft package has been prepared from your project. Add missing details here if you know them. Building saves your answers and updates the README and dependency list.',
+      descriptionTitle: 'README description',
+      descriptionAutomatic:
+        'Prepared automatically from the sources and included in README. You can edit it under “Data and description”.',
+      questionsTitle: 'Optional details before building',
+      questionsHint:
+        'Only details that cannot be reliably determined from the code. All answers are optional.',
+      clarify: 'Clarify',
+      leaveUnknown: 'I don’t know — record in report',
+      deferred: 'Unknown details remain in README and the report. You can build the ZIP.',
+      questions: {
+        data: {
+          title: 'Where can the input data be obtained?',
+          hint: 'The code references data whose presence or accessibility is unconfirmed. You can explain how to obtain it.',
+        },
+        python: {
+          title: 'Which Python version ran this project?',
+          hint: 'Specify a version only if you know it. There is no need to guess.',
+        },
+        launch: {
+          title: 'How should the project be launched?',
+          hint: 'There is no unambiguous command. Choose a suitable candidate or leave it unknown.',
+        },
+      },
       sources: 'Source files',
       packages: 'Packages to install',
       editRun: 'Edit',
@@ -267,13 +280,14 @@ export const en: MessageSchema = {
       runHint: 'Change the command or arguments, or specify a tested Python version',
       dataHint: 'Add README details: where to obtain data and how to check the result',
       filesHint: 'Browse sources and exclusions. Currently excluded: {excluded}',
-      toolsHint: 'DeepSeek, dependency locking, Dockerfile and reanalysis',
+      toolsHint: 'Dependency locking, Dockerfile, author environment and reanalysis',
       reportTitle: 'Full analysis report',
       reportHint: 'All warnings will be included in the package; you do not need to answer each one',
       archiveContents: 'What we will build',
       archiveFiles:
         'Sources, README with installation and launch instructions, requirements.txt, and an uncertainty report.',
-      nextStep: 'After building, use “Download ZIP”. Verify the package in a separate environment.',
+      nextStep:
+        'We will save your answers, recalculate the package and open the ZIP download. Unknown details can remain in the report.',
     },
     files: {
       title: 'All project files',
@@ -371,12 +385,13 @@ export const en: MessageSchema = {
       leftFix: 'Left to fix',
       leftAnswer: 'Left to answer',
       limitations: 'Analysis limitations',
-      saving: 'Saving…',
-      savedAt: 'Saved at {time}',
+      saving: 'Saving answers and recalculating the package…',
+      savedAt: 'Answers saved and package recalculated at {time}',
       saveError: 'Could not save — check your connection',
       conflict: 'Answers changed in another tab',
-      autosave: 'Answers are saved automatically',
+      autosave: 'The package is recalculated automatically after each change',
       reload: 'Load latest',
+      refresh: 'Save and recalculate',
       build: 'Build ZIP',
       buildDraft: 'Download draft',
       otherProject: 'Another project',
@@ -401,6 +416,10 @@ export const en: MessageSchema = {
     },
   },
   findings: {
+    DEPENDENCIES_UNRESOLVED: 'Installable packages have not been identified for every external import.',
+    VERSIONS_UNVERIFIED:
+      'Exact tested library versions are unspecified; requirements preserves the known constraints.',
+    DATA_UNVERIFIED: 'Input data and configuration completeness is unconfirmed.',
     SECRET_DETECTED: 'A secret was found in {path} — exclude the file from the archive',
     SECRET_FILE_EXCLUDED: '{path} with a secret is excluded — make sure the project runs without it',
     NO_PROJECT_FILES: 'No project files are left in the archive',
@@ -411,7 +430,7 @@ export const en: MessageSchema = {
     SOURCE_PARSE_ERROR: 'Could not parse {at}',
     RUN_NOT_SELECTED: 'No launch is specified — a draft can be built without a command',
     RUN_TARGET_MISSING: 'The entry file is not in the archive',
-    PYTHON_VERSION_UNKNOWN: 'The Python version the project ran on is not specified',
+    PYTHON_VERSION_UNKNOWN: 'The Python version used to run the project is unknown',
     PYTHON_VERSION_CONFLICT: 'The selected Python version does not meet the project requirements',
     DATA_NOT_CONFIRMED:
       'Input data completeness is unconfirmed — README will record this; the archive can still be built',
@@ -419,9 +438,9 @@ export const en: MessageSchema = {
       'Check input files, configs and external services yourself — analysis does not run them',
     README_MISSING:
       'Sources have no README — the service will create initial instructions and record limitations',
-    LICENSE_MISSING: 'No license — clarify the terms of reuse',
+    LICENSE_MISSING: 'The license and terms of reuse are unspecified',
     INPUT_PATH_UNVERIFIED:
-      '{at} refers to data whose presence is unconfirmed. Add it later or describe how to obtain it',
+      'Code at {at} references input data whose presence or accessibility is unconfirmed',
     RUN_INFERRED: 'The launch command was inferred from source and has not been executed',
     RUN_TARGET_AMBIGUOUS: 'Several launch commands were found — candidates will be recorded in README',
     RUN_TARGET_UNCERTAIN: 'A possible launch command was found; the author needs to verify it',
@@ -434,16 +453,17 @@ export const en: MessageSchema = {
     DATA_FILES_SUMMARY:
       'Potential data files are listed in the report; completeness is not verified automatically',
     EXTERNAL_INPUT_REFERENCE:
-      '{at} refers to data outside the project or on the network. Describe access in README',
+      'Code at {at} references data outside the project or on the network; accessibility has not been checked',
   },
   ready: {
+    limitationsTitle: 'Package limitations',
     reportHint:
-      'This report is also included in the ZIP. Check the noted data, versions and launch command before reproducing the project.',
+      'These limitations are already recorded in README and the report inside the ZIP. No additional answers are needed to download it.',
     title: 'Archive ready',
     titleDraft: 'Draft archive ready',
     text: 'Project “{name}” is built and available to the whole team.',
     textDraft:
-      'Download the ZIP. Unknown versions, data and other limitations are recorded inside and can be clarified later.',
+      'The ZIP is ready to download. Known details and remaining limitations are included. The next step is verification in a separate environment.',
     sources: '{entry} and other sources',
     summaryTitle: "What's inside",
     summary: {
@@ -454,7 +474,7 @@ export const en: MessageSchema = {
       size: 'Archive size',
     },
     pythonUnknown: 'not set',
-    edit: 'Edit',
+    edit: 'Back to clarifications',
     toProjects: 'To team projects',
     download: 'Download ZIP',
   },

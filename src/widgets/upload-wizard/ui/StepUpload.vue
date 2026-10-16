@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { projectApi } from '@/entities/project'
 import { ProjectDropzone, useUploadProject } from '@/features/upload-project'
 import { t } from '@/shared/i18n'
 import { BaseButton } from '@/shared/ui'
@@ -8,6 +9,12 @@ import SourceExampleCard from './SourceExampleCard.vue'
 
 const wizard = useUploadWizardStore()
 const { file, error, isUploading, select, upload } = useUploadProject()
+const automaticReviewEnabled = ref<boolean | null>(null)
+
+onMounted(async () => {
+  const capabilities = await projectApi.capabilities().catch(() => null)
+  automaticReviewEnabled.value = capabilities?.automaticReview.enabled ?? null
+})
 
 const hint = computed(() => {
   if (error.value) return t(error.value)
@@ -27,11 +34,26 @@ async function analyze() {
     <ProjectDropzone :file="file" :error="error && $t(error)" :disabled="isUploading" @select="select" />
     <SourceExampleCard />
 
+    <p v-if="automaticReviewEnabled !== false" class="upload-disclosure">
+      {{
+        $t(automaticReviewEnabled ? 'upload.automaticReviewDisclosure' : 'upload.automaticReviewConditional')
+      }}
+    </p>
     <div class="step-actions">
       <p class="step-actions__hint" :class="{ 'is-error': !!error }" aria-live="polite">{{ hint }}</p>
-      <BaseButton :disabled="!file" :loading="isUploading" @click="analyze">{{ $t('upload.analyze') }}</BaseButton>
+      <BaseButton :disabled="!file" :loading="isUploading" @click="analyze">{{
+        $t('upload.analyze')
+      }}</BaseButton>
     </div>
   </div>
 </template>
 
 <style scoped src="./step.css"></style>
+<style scoped>
+.upload-disclosure {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+</style>

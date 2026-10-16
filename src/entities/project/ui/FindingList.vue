@@ -1,18 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { BaseIcon, type IconName } from '@/shared/ui'
-import { describeFinding } from '../lib/findings'
+import { summarizeFindings } from '../lib/findingSummary'
 import type { Finding, FindingSeverity } from '../model/types'
 
-defineProps<{ findings: Finding[] }>()
+const props = defineProps<{ findings: Finding[]; residualOnly?: boolean }>()
+const items = computed(() => summarizeFindings(props.findings, props.residualOnly))
 
 const ICON: Record<FindingSeverity, IconName> = { error: 'alert', warning: 'warning', info: 'info' }
 </script>
 
 <template>
   <ul class="findings">
-    <li v-for="f in findings" :key="f.id" class="finding" :class="`finding--${f.severity}`">
+    <li v-for="f in items" :key="f.id" class="finding" :class="`finding--${f.severity}`">
       <BaseIcon :name="ICON[f.severity]" :size="18" class="finding__icon" />
-      <p class="finding__text">{{ describeFinding(f) }}</p>
+      <p class="finding__text">{{ f.text }}</p>
     </li>
   </ul>
 </template>

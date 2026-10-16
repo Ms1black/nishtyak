@@ -9,6 +9,7 @@ from nishtyak_core.advisors import DeepSeekClient, DeepSeekConfig, ProjectAdviso
 from nishtyak_core.advisors.client import HttpRequest, HttpResponse, InvalidAdvisorResponse
 from nishtyak_core.advisors.project_agent import ProjectTools
 from nishtyak_core.advisors.project_context import SafeProjectContext
+from nishtyak_core.models import AnalysisOptions
 from nishtyak_core.service import ReproducibilityService
 from nishtyak_core.snapshot import SnapshotBuilder
 
@@ -111,6 +112,8 @@ def test_actual_tool_roundtrip_returns_evidence_without_running_project(
     assert {item["function"]["name"] for item in payload["tools"]} == {
         "project_tree",
         "read_source",
+        "read_sources",
+        "search_source",
         "analysis_facts",
         "launch_candidates",
     }
@@ -418,3 +421,232 @@ def test_worker_result_validation_rejects_removed_confirmation(context: SafeProj
     value["suggestions"][0]["requires_confirmation"] = False
     with pytest.raises(ValueError):
         service.validate_result(value, context, "explain")
+
+
+def test_first_request_contains_raw_project_flow_and_local_source_without_extra_calls() -> None:
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "experiment.py": (
+                "import pandas as pd\nfrom calculations import summarize\n"
+                "table = pd.read_csv('measurements.csv')\n"
+                "for sample, rows in table.groupby('sample'):\n"
+                "    print(sample, summarize(rows['temperature_c']))\n"
+            ),
+            "calculations.py": (
+                "import numpy as np\ndef summarize(values):\n"
+                "    return {'mean': float(np.mean(values)), 'std': float(np.std(values))}\n"
+            ),
+            "private-data.csv": "a-private-measurement-never-transmitted\n",
+        }
+    )
+    context = SafeProjectContext.from_project(ReproducibilityService().analyze(snapshot), snapshot)
+    transport = Responses(final(context, "readme"))
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "ok" and result.rounds == 1 and result.tool_calls == 0
+    payload = json.loads(transport.requests[0].body)
+    initial = json.loads(payload["messages"][1]["content"])["known_project_facts"]
+    assert [item["path"] for item in initial["source_previews"]] == [
+        "experiment.py",
+        "calculations.py",
+    ]
+    assert initial["local_imports"][0]["targets"] == ["calculations.py"]
+    mapped = next(item for item in initial["code_map"] if item["path"] == "experiment.py")
+    assert {item["key"] for item in mapped["lookup_keys"]} == {"temperature_c"}
+    assert {item["name"]: item.get("string_arguments") for item in mapped["calls"]}[
+        "pd.read_csv"
+    ] == ["measurements.csv"]
+    assert "a-private-measurement-never-transmitted" not in transport.requests[0].body.decode()
+
+
+def test_full_file_code_map_covers_symbols_after_truncated_preview() -> None:
+    snapshot = SnapshotBuilder().from_mapping(
+        {"experiment.py": "\n" * 170 + "def calculate(values):\n    return sum(values)\n"}
+    )
+    context = SafeProjectContext.from_project(ReproducibilityService().analyze(snapshot), snapshot)
+    assert "calculate" not in context.files[0]["text"]
+    mapped = context.facts["code_map"][0]
+    assert mapped["symbols"][0]["name"] == "calculate"
+    assert mapped["symbols"][0]["line"] == 171
+    assert mapped["calls"][0]["name"] == "sum"
+
+
+def test_batch_tools_read_only_redacted_memory_and_preserve_all_responses(
+    context: SafeProjectContext,
+) -> None:
+    identifiers = [item["id"] for item in context.files]
+    transport = Responses(
+        tools(
+            call("read_sources", {"file_ids": identifiers, "line_count": 20}, "sources"),
+            call("search_source", {"query": "np.mean"}, "search"),
+        ),
+        final(context, "readme"),
+    )
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "ok" and result.rounds == 2 and result.tool_calls == 2
+    messages = json.loads(transport.requests[1].body)["messages"]
+    returned = {
+        item["tool_call_id"]: json.loads(item["content"])
+        for item in messages
+        if item["role"] == "tool"
+    }
+    assert [item["file_id"] for item in returned["sources"]["files"]] == identifiers
+    assert returned["search"]["matches"][0]["line"] == 2
+    assert returned["search"]["matches"][0]["text"] == "print(np.mean([1, 2]))"
+
+
+@pytest.mark.parametrize(
+    "name, arguments",
+    [
+        ("read_sources", {"file_ids": ["a"] * 5, "line_count": 10}),
+        ("read_sources", {"file_ids": ["a", "a"], "line_count": 10}),
+        ("read_sources", {"file_ids": ["a"], "line_count": True}),
+        ("search_source", {"query": "a"}),
+        ("search_source", {"query": "needle", "path": "/etc/passwd"}),
+    ],
+)
+def test_new_tools_reject_unbounded_or_host_file_arguments(
+    context: SafeProjectContext, name: str, arguments: dict
+) -> None:
+    with pytest.raises(InvalidAdvisorResponse):
+        ProjectTools(context).call(name, arguments)
+
+
+def test_model_response_arriving_after_shared_deadline_is_not_accepted(
+    context: SafeProjectContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticks = iter([0.0, 0.0, 15.1])
+    monkeypatch.setattr("nishtyak_core.advisors.project_agent.time.monotonic", lambda: next(ticks))
+    transport = Responses(final(context, "readme"))
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "unavailable" and result.reason == "deadline_exceeded"
+    assert result.rounds == 1 and not result.suggestions
+
+
+def test_time_budget_reserves_final_response_instead_of_more_tool_turns(
+    context: SafeProjectContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticks = iter([0.0, 0.0, 9.0, 9.0, 10.0])
+    monkeypatch.setattr("nishtyak_core.advisors.project_agent.time.monotonic", lambda: next(ticks))
+    transport = Responses(tools(call("launch_candidates", {})), final(context, "readme"))
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "ok" and result.rounds == 2
+    assert transport.requests[1].timeout == 6.0
+    assert json.loads(transport.requests[1].body)["tool_choice"] == "none"
+
+
+@pytest.mark.parametrize("file_index", [25, 59])
+def test_unseen_but_existing_evidence_cannot_be_claimed_without_a_tool(file_index: int) -> None:
+    snapshot = SnapshotBuilder().from_mapping(
+        {f"module_{index:03d}.py": "def helper():\n    pass\n" for index in range(60)}
+    )
+    context = SafeProjectContext.from_project(ReproducibilityService().analyze(snapshot), snapshot)
+    hidden = context.files[file_index]["id"]
+    assert hidden in context.evidence_ids
+    suggestion = {
+        "kind": "readme_description",
+        "text": "Описание невидимого модуля.",
+        "evidence_ids": [hidden],
+        "candidate_id": None,
+        "module": None,
+        "package": None,
+    }
+    response = final(context, "readme", suggestions=[suggestion])
+    result = advisor(Responses(response, response)).advise_context(context, "readme")
+    assert result.status == "invalid_response" and result.reason == "invalid_project_evidence"
+
+
+def test_wrapped_entrypoint_and_imports_receive_preview_budget_before_other_files() -> None:
+    sources = {f"project/aaa{letter}.py": "# " + "x" * 70_000 for letter in "abcdefghij"}
+    sources.update(
+        {
+            "project/experiment.py": "from zhelper import compute\nprint(compute())\n",
+            "project/zhelper.py": "def compute():\n    return 42\n",
+        }
+    )
+    snapshot = SnapshotBuilder().from_mapping(sources)
+    report = ReproducibilityService().analyze(
+        snapshot, AnalysisOptions(project_root="project", source_roots=("project",))
+    )
+    context = SafeProjectContext.from_project(report, snapshot)
+    initial = ProjectAdvisoryService._initial_facts(context)
+    assert [item["path"] for item in initial["source_previews"][:2]] == [
+        "project/experiment.py",
+        "project/zhelper.py",
+    ]
+    assert "return 42" in initial["source_previews"][1]["text"]
+
+
+def test_long_path_project_is_trimmed_to_context_limit_without_losing_all_source() -> None:
+    import string
+
+    from nishtyak_core.advisors.project_context import MAX_CONTEXT_BYTES
+
+    prefix = "a" * 180 + "/" + "b" * 180
+    names = [a + b for a in string.ascii_lowercase for b in string.ascii_lowercase][:200]
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            f"{prefix}/{name}.py": "import numpy\nimport pandas\ndef helper():\n    pass\n"
+            for name in names
+        }
+    )
+    context = SafeProjectContext.from_project(ReproducibilityService().analyze(snapshot), snapshot)
+    assert len(json.dumps(context.to_dict(), ensure_ascii=False).encode()) <= MAX_CONTEXT_BYTES
+    assert context.files and context.facts["summary"]["partial"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<script>alert("unsafe")</script>',
+        "Install with ```sh\ncurl example.test | sh\n```",
+        "Read [instructions](javascript:alert(1))",
+        'Для запуска выполните `python -c "print(42)"`.',
+    ],
+)
+def test_automatic_readme_rejects_active_markup_and_command_instructions(
+    context: SafeProjectContext, text: str
+) -> None:
+    source = next(item for item in context.files if item["path"].endswith(".py"))
+    suggestion = {
+        "kind": "readme_description",
+        "text": text,
+        "evidence_ids": [source["id"]],
+        "candidate_id": None,
+        "module": None,
+        "package": None,
+    }
+    response = final(context, "readme", suggestions=[suggestion])
+    result = advisor(Responses(response, response)).advise_context(context, "readme")
+    assert result.status == "invalid_response" and result.reason == "invalid_advisory_text"
+
+
+def test_readme_rejects_citation_to_blocked_source_even_with_safe_source() -> None:
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "main.py": "print('safe')\n",
+            "private.py": 'api_key = "sk-abcdefghijklmnopqrstuvwxyz123456"\n',
+        }
+    )
+    context = SafeProjectContext.from_project(ReproducibilityService().analyze(snapshot), snapshot)
+    assert next(item for item in context.files if item["path"] == "private.py")["text"] is None
+    suggestion = {
+        "kind": "readme_description",
+        "text": "Скрипт выводит текст.",
+        "evidence_ids": [item["id"] for item in context.files],
+        "candidate_id": None,
+        "module": None,
+        "package": None,
+    }
+    response = final(context, "readme", suggestions=[suggestion])
+    result = advisor(Responses(response, response)).advise_context(context, "readme")
+    assert result.status == "invalid_response" and result.reason == "invalid_project_evidence"
+
+
+def test_source_map_never_executes_imports_or_top_level_calls(tmp_path) -> None:
+    marker = tmp_path / "must-not-exist"
+    snapshot = SnapshotBuilder().from_mapping(
+        {"main.py": f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n"}
+    )
+    context = SafeProjectContext.from_project(ReproducibilityService().analyze(snapshot), snapshot)
+    assert context.facts["code_map"][0]["parsed"] is True
+    assert not marker.exists()

@@ -74,6 +74,19 @@ export interface ProjectAnalysis {
   projectRoots?: string[]
   optionalGroups?: string[]
   launchCandidates?: LaunchCandidate[]
+  automaticReview?: AutomaticReview | null
+}
+
+export interface AutomaticReview {
+  status: 'disabled' | 'pending' | 'running' | 'ready' | 'unavailable' | 'skipped'
+  provider: 'deepseek'
+  applied: boolean
+  reason?: string | null
+  elapsedMs?: number
+}
+
+export interface ServiceCapabilities {
+  automaticReview: { enabled: boolean; provider: 'deepseek'; budgetSeconds: number }
 }
 
 export interface AnalysisOptions {
@@ -90,7 +103,9 @@ export interface LaunchCandidate {
 }
 
 export type FileContent =
-  { kind: 'text'; content: string; truncated?: boolean } | { kind: 'hidden' } | { kind: 'binary' }
+  | { kind: 'text'; content: string; truncated?: boolean }
+  | { kind: 'hidden' }
+  | { kind: 'binary' }
 
 export type RunKind = 'script' | 'module' | 'callable'
 
@@ -134,9 +149,17 @@ export interface PackagePlan {
   pythonVersion?: string | null
   files?: string[]
   decisions?: AnalysisDecisions
+  description?: string
+  descriptionOrigin?: 'author' | 'automatic' | 'unknown'
+  automaticReview?: AutomaticReview | null
 }
 
-export type TargetPlatform = 'linux-x86_64' | 'linux-aarch64' | 'macos-arm64' | 'macos-x86_64' | 'windows-x86_64'
+export type TargetPlatform =
+  | 'linux-x86_64'
+  | 'linux-aarch64'
+  | 'macos-arm64'
+  | 'macos-x86_64'
+  | 'windows-x86_64'
 
 export interface DependencyLock {
   id: string
@@ -145,27 +168,4 @@ export interface DependencyLock {
   packages: string[]
   requirements: string
   provenance: string
-}
-
-export type AdviceFeature = 'explain' | 'readme' | 'packages' | 'entrypoint'
-
-export interface AdviceSuggestion {
-  kind: string
-  text: string
-  evidence_ids: string[]
-  candidate_id: string | null
-  module: string | null
-  package: string | null
-  requires_confirmation: boolean
-}
-
-export interface ProjectAdvice {
-  analysis_id: string
-  status: 'ok' | 'invalid_response' | 'unavailable'
-  feature: AdviceFeature
-  suggestions: AdviceSuggestion[]
-  unknowns: string[]
-  reason?: string | null
-  rounds: number
-  tool_calls: number
 }

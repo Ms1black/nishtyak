@@ -43,6 +43,8 @@ class JobRecord:
     error_code: str | None = None
     deleted: bool = False
     author_environment: AuthorEnvironmentSnapshot | None = None
+    automatic_review_eligible: bool = False
+    review_ready_at: float | None = None
 
 
 class SQLiteJobRepository:
@@ -106,8 +108,9 @@ class SQLiteJobRepository:
                 connection.execute(
                     """INSERT INTO projects
                     (project_id, job_id, owner_id, status, created_at, expires_at,
-                     options_json, reserved_bytes, deleted, worker_active, author_environment_json)
-                    VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, 0, 0, ?)""",
+                     options_json, reserved_bytes, deleted, worker_active, author_environment_json,
+                     automatic_review_eligible)
+                    VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, 0, 0, ?, ?)""",
                     (
                         project_id,
                         job_id,
@@ -117,6 +120,7 @@ class SQLiteJobRepository:
                         options_json,
                         reservation,
                         environment_json,
+                        self._review_eligible(),
                     ),
                 )
                 row = connection.execute(
@@ -164,23 +168,37 @@ class SQLiteJobRepository:
             job_id = uuid.uuid4().hex
             connection.execute(
                 """UPDATE projects SET job_id = ?, status = 'queued', options_json = ?,
-                author_environment_json = ?, error_code = NULL WHERE project_id = ?""",
+                author_environment_json = ?, automatic_review_eligible = ?, review_ready_at = NULL,
+                error_code = NULL WHERE project_id = ?""",
                 (
                     job_id,
                     options_json,
                     environment_json
                     if author_environment is not None
                     else row["author_environment_json"],
+                    self._review_eligible(),
                     project_id,
                 ),
             )
+            previous = connection.execute(
+                "SELECT decisions_json FROM decision_documents WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            prose = {}
+            if previous is not None and previous["decisions_json"]:
+                old_decisions = json.loads(previous["decisions_json"])
+                prose = {
+                    key: old_decisions[key]
+                    for key in ("description", "input_description", "expected_output")
+                    if old_decisions.get(key)
+                }
             connection.execute(
                 """INSERT INTO decision_documents
                 (project_id, analysis_id, revision, decisions_json, updated_at)
-                VALUES (?, '', 1, NULL, ?)
+                VALUES (?, '', 1, ?, ?)
                 ON CONFLICT(project_id) DO UPDATE SET revision = revision + 1,
-                decisions_json = NULL, updated_at = excluded.updated_at""",
-                (project_id, now),
+                analysis_id = '', decisions_json = excluded.decisions_json,
+                updated_at = excluded.updated_at""",
+                (project_id, json.dumps(prose) if prose else None, now),
             )
             (self._project_directory(project_id) / "dependency-lock.json").unlink(missing_ok=True)
             return self._record(
@@ -198,6 +216,48 @@ class SQLiteJobRepository:
                 "SELECT * FROM decision_documents WHERE project_id = ?", (project_id,)
             ).fetchone()
             return self._decision_document(report.analysis_id, document)
+
+    def pending_reviews(self) -> list[JobRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.* FROM projects p LEFT JOIN automatic_reviews r
+                ON r.project_id = p.project_id WHERE p.status = 'succeeded'
+                AND p.deleted = 0 AND p.expires_at > ? AND p.automatic_review_eligible = 1
+                AND (r.job_id IS NULL OR r.job_id != p.job_id)
+                ORDER BY p.created_at LIMIT 8""",
+                (time.time(),),
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def read_review(self, record: JobRecord, analysis_id: str) -> dict | None:
+        self.get_project(record.owner_id, record.project_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT result_json FROM automatic_reviews
+                WHERE project_id = ? AND analysis_id = ?""",
+                (record.project_id, analysis_id),
+            ).fetchone()
+        return json.loads(row["result_json"]) if row is not None else None
+
+    def save_review(self, record: JobRecord, analysis_id: str, result: dict) -> None:
+        payload = bounded_json(result, 256 * 1024).decode("ascii")
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM projects WHERE project_id = ? AND owner_id = ?",
+                (record.project_id, record.owner_id),
+            ).fetchone()
+            current = self._accessible(row)
+            if current.job_id != record.job_id or current.status != "succeeded":
+                raise ServiceError(
+                    409, "ANALYSIS_STALE", "Automatic review belongs to old analysis"
+                )
+            connection.execute(
+                """INSERT INTO automatic_reviews
+                (project_id, analysis_id, job_id, result_json) VALUES (?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET analysis_id = excluded.analysis_id,
+                job_id = excluded.job_id, result_json = excluded.result_json""",
+                (record.project_id, analysis_id, record.job_id, payload),
+            )
 
     def save_lock(self, owner_id: str, project_id: str, lock: DependencyLock) -> None:
         payload = bounded_json(lock.to_dict(), 512 * 1024)
@@ -395,12 +455,29 @@ class SQLiteJobRepository:
             if payload is not None:
                 try:
                     self._write_file(self.report_path(row["project_id"]), payload, replace=True)
+                    document = connection.execute(
+                        "SELECT * FROM decision_documents WHERE project_id = ?",
+                        (row["project_id"],),
+                    ).fetchone()
+                    if (
+                        document is not None
+                        and document["analysis_id"] == ""
+                        and document["decisions_json"]
+                    ):
+                        prose = json.loads(document["decisions_json"])
+                        prose["analysis_id"] = result.report.analysis_id
+                        connection.execute(
+                            """UPDATE decision_documents SET analysis_id = ?, decisions_json = ?
+                            WHERE project_id = ?""",
+                            (result.report.analysis_id, json.dumps(prose), row["project_id"]),
+                        )
                 except (OSError, ServiceError):
                     status, code = "failed", "REPORT_STORAGE_FAILED"
             connection.execute(
-                """UPDATE projects SET status = ?, error_code = ?, worker_active = 0
+                """UPDATE projects SET status = ?, error_code = ?, worker_active = 0,
+                review_ready_at = ?
                 WHERE job_id = ?""",
-                (status, code, job_id),
+                (status, code, now if status == "succeeded" else None, job_id),
             )
             return True
 
@@ -508,11 +585,19 @@ class SQLiteJobRepository:
             ) from None
 
     @contextmanager
-    def operation(self, owner_id: str, project_id: str) -> Iterator[JobRecord]:
+    def operation(
+        self, owner_id: str, project_id: str, *, lease_seconds: int | None = None
+    ) -> Iterator[JobRecord]:
         self._validate_owner(owner_id)
         self._validate_identifier(project_id)
         token = uuid.uuid4().hex
-        lease_seconds = min(self.lease_seconds, self.settings.operation_lease_seconds)
+        if lease_seconds is not None and (type(lease_seconds) is not int or lease_seconds <= 0):
+            raise ValueError("Operation lease must be a positive integer")
+        lease_seconds = min(
+            self.lease_seconds,
+            self.settings.operation_lease_seconds,
+            lease_seconds or self.lease_seconds,
+        )
         with self._transaction() as connection:
             now = time.time()
             row = connection.execute(
@@ -687,6 +772,12 @@ class SQLiteJobRepository:
                     expires_at REAL NOT NULL,
                     PRIMARY KEY(owner_id, action, window_seconds, bucket)
                 );
+                CREATE TABLE IF NOT EXISTS automatic_reviews (
+                    project_id TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
+                    analysis_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    result_json TEXT NOT NULL
+                );
                 """
             )
             connection.execute("BEGIN IMMEDIATE")
@@ -696,11 +787,23 @@ class SQLiteJobRepository:
                     connection.execute(
                         "ALTER TABLE projects ADD COLUMN author_environment_json TEXT"
                     )
+                if "automatic_review_eligible" not in columns:
+                    connection.execute(
+                        "ALTER TABLE projects ADD COLUMN automatic_review_eligible "
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "review_ready_at" not in columns:
+                    connection.execute("ALTER TABLE projects ADD COLUMN review_ready_at REAL")
                 connection.commit()
             except BaseException:
                 connection.rollback()
                 raise
         self._secure_database_files()
+
+    def _review_eligible(self) -> bool:
+        return self.settings.automatic_review and bool(
+            os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("DEEPSEEK_MODEL")
+        )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -897,6 +1000,8 @@ class SQLiteJobRepository:
             options=self._codec.decode_options(json.loads(row["options_json"])),
             error_code=row["error_code"],
             deleted=bool(row["deleted"]),
+            automatic_review_eligible=bool(row["automatic_review_eligible"]),
+            review_ready_at=row["review_ready_at"],
             author_environment=AuthorEnvironmentSnapshot.from_dict(
                 json.loads(row["author_environment_json"])
             )

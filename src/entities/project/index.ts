@@ -5,6 +5,8 @@ export type {
   ArchiveStatus,
   ProjectArchive,
   ProjectAnalysis,
+  AutomaticReview,
+  ServiceCapabilities,
   AnalysisOptions,
   LaunchCandidate,
   ProjectFile,
@@ -22,9 +24,6 @@ export type {
   PackagePlan,
   DependencyLock,
   TargetPlatform,
-  AdviceFeature,
-  AdviceSuggestion,
-  ProjectAdvice,
 } from './model/types'
 export { useProjectStore } from './model/projectStore'
 export { projectApi } from './api'

@@ -138,8 +138,17 @@ def test_backend_sdk_full_saved_workflow_and_reanalysis(workflow_client):
     assert new_job["status"] == "succeeded", new_job
     assert new_job["analysis"]["analysis_id"] != report["analysis_id"]
     assert new_job["analysis"]["author_environment_id"] == report["author_environment_id"]
-    assert client.decisions(identity)["decisions"] is None
-    assert client.decisions(identity)["revision"] > saved["revision"]
+    revised = client.decisions(identity)
+    retained = revised["decisions"]
+    assert retained["analysis_id"] == new_job["analysis"]["analysis_id"]
+    for field in ("description", "input_description", "expected_output"):
+        assert retained[field] == decisions[field]
+    assert retained["run_spec"] is None and retained["python_version"] is None
+    assert retained["data_confirmed"] is False
+    assert retained["selected_extras"] == [] and retained["declaration_actions"] == {}
+    assert retained["packages"] == {} and retained["versions"] == {}
+    assert retained["excluded_files"] == [] and retained["excluded_modules"] == []
+    assert revised["revision"] > saved["revision"]
     with pytest.raises(LogicClientError) as stale:
         client.save_decisions(identity, decisions, saved["revision"])
     assert stale.value.status == 409

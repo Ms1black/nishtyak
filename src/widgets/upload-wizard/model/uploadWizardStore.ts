@@ -4,14 +4,11 @@ import {
   createDefaultDecisions,
   projectApi,
   useProjectStore,
-  type AdviceFeature,
-  type AdviceSuggestion,
   type AnalysisDecisions,
   type AnalysisOptions,
   type DependencyLock,
   type PackagePlan,
   type Project,
-  type ProjectAdvice,
   type ProjectAnalysis,
   type RunSpec,
   type TargetPlatform,
@@ -34,12 +31,11 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const revision = ref(0)
   const plan = ref<PackagePlan | null>(null)
   const lock = ref<DependencyLock | null>(null)
-  const advice = ref<ProjectAdvice | null>(null)
   const includeDockerfile = ref(false)
   const isLoading = ref(false)
   const isBuilding = ref(false)
   const isResolving = ref(false)
-  const isAdvising = ref(false)
+  const isRefreshing = ref(false)
   const error = ref<string | null>(null)
   const saveState = ref<SaveState>('idle')
   const savedAt = ref<Date | null>(null)
@@ -51,7 +47,9 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   let syncing: { epoch: number; promise: Promise<boolean> } | null = null
 
   const isAnalyzing = computed(() => analysis.value?.status === 'analyzing')
-  const isBusy = computed(() => isBuilding.value || isResolving.value || isLoading.value || isAnalyzing.value)
+  const isBusy = computed(
+    () => isBuilding.value || isResolving.value || isRefreshing.value || isLoading.value || isAnalyzing.value,
+  )
   const canBuild = computed(() => !!plan.value && plan.value.state !== 'blocked' && !isBusy.value)
   const canIncludeDockerfile = computed(() => {
     const current = plan.value
@@ -96,7 +94,8 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       const doc = await projectApi.getDecisions(projectId)
       if (epoch !== requestEpoch) return
       revision.value = doc.revision
-      decisions.value = doc.decisions?.analysisId === result.analysisId ? doc.decisions : createDefaultDecisions(result)
+      decisions.value =
+        doc.decisions?.analysisId === result.analysisId ? doc.decisions : createDefaultDecisions(result)
       savedVersion = doc.decisions?.analysisId === result.analysisId ? editVersion : -1
       const nextPlan = await projectApi.plan(projectId, snapshotDecisions())
       if (epoch !== requestEpoch) return
@@ -168,6 +167,18 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   async function reloadDecisions() {
     if (!project.value || isBusy.value) return
     await openProject(project.value)
+  }
+
+  async function refreshPlan() {
+    if (!project.value || !decisions.value || isBusy.value) return
+    const requestEpoch = epoch
+    scheduleSync.cancel()
+    isRefreshing.value = true
+    try {
+      await sync()
+    } finally {
+      if (epoch === requestEpoch) isRefreshing.value = false
+    }
   }
 
   function setMapValue(key: 'packages' | 'versions', module: string, value: string) {
@@ -264,35 +275,6 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     }
   }
 
-  async function requestAdvice(feature: AdviceFeature, description: string) {
-    if (!project.value || !analysis.value || isAdvising.value || isBusy.value) return
-    const requestEpoch = epoch
-    const analysisId = analysis.value.analysisId
-    isAdvising.value = true
-    advice.value = null
-    error.value = null
-    try {
-      const result = await projectApi.advice(project.value.id, feature, description)
-      if (epoch === requestEpoch && result.analysis_id === analysisId) advice.value = result
-    } catch (cause) {
-      if (epoch === requestEpoch) error.value = message(cause, 'workflow.adviceUnavailable')
-    } finally {
-      if (epoch === requestEpoch) isAdvising.value = false
-    }
-  }
-
-  function applySuggestion(suggestion: AdviceSuggestion) {
-    if (!decisions.value || advice.value?.analysis_id !== decisions.value.analysisId) return
-    if (suggestion.kind === 'readme_description') {
-      update({ description: [decisions.value.description, suggestion.text].filter(Boolean).join('\n\n') })
-    } else if (suggestion.kind === 'package_hypothesis' && suggestion.module && suggestion.package) {
-      setPackage(suggestion.module, suggestion.package)
-    } else if (suggestion.kind === 'entrypoint_hypothesis') {
-      const candidate = analysis.value?.launchCandidates?.find((item) => item.id === suggestion.candidate_id)
-      if (candidate) setRunSpec(candidate.runSpec)
-    }
-  }
-
   function backToAnalysis() {
     if (project.value) step.value = 2
   }
@@ -310,13 +292,12 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     decisions.value = null
     plan.value = null
     lock.value = null
-    advice.value = null
     revision.value = 0
     includeDockerfile.value = false
     isLoading.value = false
     isBuilding.value = false
     isResolving.value = false
-    isAdvising.value = false
+    isRefreshing.value = false
     error.value = null
     saveState.value = 'idle'
     savedAt.value = null
@@ -333,12 +314,11 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     decisions,
     plan,
     lock,
-    advice,
     includeDockerfile,
     isLoading,
     isBuilding,
     isResolving,
-    isAdvising,
+    isRefreshing,
     isAnalyzing,
     isBusy,
     error,
@@ -350,6 +330,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     loadAnalysis,
     update,
     reloadDecisions,
+    refreshPlan,
     setPackage,
     setVersion,
     toggleModule,
@@ -359,8 +340,6 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     build,
     reanalyze,
     resolve,
-    requestAdvice,
-    applySuggestion,
     backToAnalysis,
     reset,
   }

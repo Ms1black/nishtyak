@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
 from typing import Annotated, Any
 
@@ -55,14 +57,41 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
     token = settings.api_token
     if not isinstance(token, str) or not 32 <= len(token) <= 512 or not token.isascii():
         raise ValueError("A service API token of 32 to 512 ASCII characters is required")
+    logic = service if service is not None else LogicService(settings)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async def review_projects():
+            while True:
+                try:
+                    await run_in_threadpool(logic.review_pending)
+                except Exception:
+                    # Static analysis stays available when optional enrichment fails.
+                    pass
+                await asyncio.sleep(0.25)
+
+        tasks = (
+            [asyncio.create_task(review_projects()) for _ in range(settings.max_running)]
+            if settings.automatic_review and hasattr(logic, "review_pending")
+            else []
+        )
+        try:
+            yield
+        finally:
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with suppress(asyncio.CancelledError):
+                    await task
+
     app = FastAPI(
         title="Nishtyak logic service",
         version="1.2.0",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
-    logic = service if service is not None else LogicService(settings)
     app.state.logic = logic
     app.add_middleware(
         RequestBoundaryMiddleware,
@@ -121,6 +150,10 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
     @app.get("/openapi.json", include_in_schema=False)
     async def openapi() -> JSONResponse:
         return JSONResponse(app.openapi(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/v1/capabilities")
+    def capabilities() -> dict:
+        return logic.capabilities()
 
     @app.post(
         "/v1/projects",

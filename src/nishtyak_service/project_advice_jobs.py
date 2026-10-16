@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from nishtyak_core.advisors import (
@@ -27,6 +28,7 @@ class ProjectAdviceJobRunner(AdviceJobRunner):
     def run(
         self, context: SafeProjectContext, feature: str = "explain", description: str = ""
     ) -> dict:
+        started = time.monotonic()
         unavailable = ProjectAdvisoryResult(
             context.analysis_id, feature, "unavailable", reason="advisor_unavailable"
         ).to_dict()
@@ -49,11 +51,15 @@ class ProjectAdviceJobRunner(AdviceJobRunner):
                 root = Path(directory)
                 source, destination = root / "request.json", root / "result.json"
                 source.write_bytes(payload)
+                environment = self._environment(root)
+                environment["NISHTYAK_ADVISOR_WALL_SECONDS"] = str(
+                    min(13.5, max(0.1, self.wall_time_seconds - (time.monotonic() - started) - 0.5))
+                )
                 with source.open("rb") as stream:
                     process = subprocess.Popen(
                         self._command(destination),
                         cwd=root,
-                        env=self._environment(root),
+                        env=environment,
                         stdin=stream,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
@@ -61,7 +67,9 @@ class ProjectAdviceJobRunner(AdviceJobRunner):
                         close_fds=True,
                     )
                     try:
-                        process.wait(timeout=self.wall_time_seconds)
+                        process.wait(
+                            timeout=max(0.01, self.wall_time_seconds - (time.monotonic() - started))
+                        )
                     except subprocess.TimeoutExpired:
                         self._kill(process)
                         return unavailable

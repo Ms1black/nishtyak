@@ -57,9 +57,9 @@ function toProjects() {
       </div>
       <ArchiveTree :root-name="getArchiveFileName(wizard.project)" :items="treeItems" />
       <details v-if="wizard.plan?.findings.length" class="ready__report">
-        <summary>{{ $t('analysis.review.reportTitle') }}</summary>
+        <summary>{{ $t('ready.limitationsTitle') }}</summary>
         <p class="step-muted">{{ $t('ready.reportHint') }}</p>
-        <FindingList :findings="wizard.plan.findings" />
+        <FindingList :findings="wizard.plan.findings" residual-only />
       </details>
     </BaseCard>
 

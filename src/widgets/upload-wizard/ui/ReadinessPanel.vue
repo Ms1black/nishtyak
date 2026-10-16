@@ -21,11 +21,12 @@ const props = defineProps<{
   saveState: SaveState
   savedAt: Date | null
   isBuilding: boolean
+  isRefreshing: boolean
   canBuild: boolean
   error: string | null
 }>()
 
-const emit = defineEmits<{ focus: [finding: Finding]; build: []; reset: []; reload: [] }>()
+const emit = defineEmits<{ focus: [finding: Finding]; build: []; reset: []; reload: []; refresh: [] }>()
 
 const blockers = computed(
   () => props.plan?.findings.filter((finding) => getFindingKind(finding) === 'blocker') ?? [],
@@ -98,6 +99,16 @@ const saveText = computed(() => {
 
     <div class="panel__footer">
       <p v-if="error" class="panel__error" role="alert">{{ error }}</p>
+      <BaseButton
+        v-if="saveState === 'error'"
+        block
+        variant="tonal"
+        :loading="isRefreshing"
+        :disabled="isBuilding"
+        @click="emit('refresh')"
+      >
+        {{ $t('analysis.panel.refresh') }}
+      </BaseButton>
       <BaseButton block :disabled="!canBuild" :loading="isBuilding" @click="emit('build')">
         {{ $t('analysis.panel.build') }}
       </BaseButton>

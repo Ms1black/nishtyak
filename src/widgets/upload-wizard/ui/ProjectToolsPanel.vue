@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { projectApi, type AdviceFeature, type AdviceSuggestion, type TargetPlatform } from '@/entities/project'
+import { projectApi, type TargetPlatform } from '@/entities/project'
 import { ApiError } from '@/shared/api'
 import { t } from '@/shared/i18n'
 import { downloadBlob } from '@/shared/lib'
-import { BaseButton, BaseCheckbox, BaseInput, BaseSelect, BaseTextarea, type SelectOption } from '@/shared/ui'
+import { BaseButton, BaseCheckbox, BaseInput, BaseSelect, type SelectOption } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 
 const wizard = useUploadWizardStore()
@@ -13,13 +13,9 @@ const sourceRoots = ref('.')
 const profilePython = ref<string | null>(null)
 const targetPython = ref<string | null>(null)
 const platform = ref<TargetPlatform | null>('linux-x86_64')
-const feature = ref<AdviceFeature | null>('readme')
-const prompt = ref('')
-const sourceConsent = ref(false)
 const environment = ref<unknown>()
 const environmentName = ref('')
 const localError = ref<string | null>(null)
-const applied = ref(new Set<number>())
 const isGraphLoading = ref(false)
 
 const pythonOptions: SelectOption[] = Array.from({ length: 7 }, (_, index) => {
@@ -33,12 +29,6 @@ const platformOptions: SelectOption<TargetPlatform>[] = [
   { value: 'macos-x86_64', label: 'macOS Intel' },
   { value: 'windows-x86_64', label: 'Windows x86_64' },
 ]
-const featureOptions = computed<SelectOption<AdviceFeature>[]>(() => [
-  { value: 'readme', label: t('workflow.adviceReadme') },
-  { value: 'entrypoint', label: t('workflow.adviceEntrypoint') },
-  { value: 'packages', label: t('workflow.advicePackages') },
-  { value: 'explain', label: t('workflow.adviceExplain') },
-])
 const rootHints = computed(() => wizard.analysis?.projectRoots?.join(', ') ?? '.')
 const targetMatchesProfile = computed(() => targetPython.value === wizard.analysis?.options?.pythonVersion)
 
@@ -52,17 +42,9 @@ watch(
     targetPython.value = wizard.decisions?.pythonVersion ?? options?.pythonVersion ?? '3.11'
     environment.value = undefined
     environmentName.value = ''
-    sourceConsent.value = false
     localError.value = null
   },
   { immediate: true },
-)
-
-watch(
-  () => wizard.advice,
-  () => {
-    applied.value = new Set()
-  },
 )
 
 async function readEnvironment(event: Event) {
@@ -76,11 +58,13 @@ async function readEnvironment(event: Event) {
   try {
     if (file.size > 256 * 1024) throw new Error(t('workflow.environmentTooLarge'))
     const value: unknown = JSON.parse(await file.text())
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('workflow.environmentInvalid'))
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error(t('workflow.environmentInvalid'))
     environment.value = value
     environmentName.value = file.name
   } catch (cause) {
-    localError.value = cause instanceof SyntaxError ? t('workflow.environmentInvalid') : (cause as Error).message
+    localError.value =
+      cause instanceof SyntaxError ? t('workflow.environmentInvalid') : (cause as Error).message
   }
 }
 
@@ -101,20 +85,6 @@ async function reanalyze() {
   )
 }
 
-function canApply(suggestion: AdviceSuggestion): boolean {
-  if (suggestion.kind === 'readme_description') return true
-  if (suggestion.kind === 'package_hypothesis') return !!suggestion.module && !!suggestion.package
-  if (suggestion.kind === 'entrypoint_hypothesis') {
-    return !!wizard.analysis?.launchCandidates?.some((candidate) => candidate.id === suggestion.candidate_id)
-  }
-  return false
-}
-
-function apply(suggestion: AdviceSuggestion, index: number) {
-  wizard.applySuggestion(suggestion)
-  applied.value = new Set([...applied.value, index])
-}
-
 async function downloadGraph() {
   if (!wizard.project || isGraphLoading.value) return
   const projectId = wizard.project.id
@@ -123,7 +93,10 @@ async function downloadGraph() {
   try {
     const graph = await projectApi.getGraph(projectId)
     if (wizard.project?.id !== projectId) return
-    downloadBlob(new Blob([JSON.stringify(graph, null, 2)], { type: 'application/json' }), 'import-graph.json')
+    downloadBlob(
+      new Blob([JSON.stringify(graph, null, 2)], { type: 'application/json' }),
+      'import-graph.json',
+    )
   } catch (cause) {
     localError.value = cause instanceof ApiError ? cause.message : t('workflow.graphError')
   } finally {
@@ -144,7 +117,12 @@ async function downloadGraph() {
         </label>
         <label class="tools__field">
           <span>{{ $t('workflow.projectRoot') }}</span>
-          <BaseInput v-model="projectRoot" mono :placeholder="$t('workflow.autoRoot')" :disabled="wizard.isBusy" />
+          <BaseInput
+            v-model="projectRoot"
+            mono
+            :placeholder="$t('workflow.autoRoot')"
+            :disabled="wizard.isBusy"
+          />
           <span class="tools__hint">{{ $t('workflow.rootCandidates', { roots: rootHints }) }}</span>
         </label>
         <label class="tools__field">
@@ -153,7 +131,12 @@ async function downloadGraph() {
         </label>
         <label class="tools__field">
           <span>{{ $t('workflow.authorEnvironment') }}</span>
-          <input type="file" accept=".json,application/json" :disabled="wizard.isBusy" @change="readEnvironment" />
+          <input
+            type="file"
+            accept=".json,application/json"
+            :disabled="wizard.isBusy"
+            @change="readEnvironment"
+          />
           <span class="tools__hint">{{ environmentName || $t('workflow.environmentHint') }}</span>
         </label>
         <BaseButton variant="tonal" :disabled="wizard.isBusy || !profilePython" @click="reanalyze">{{
@@ -206,57 +189,6 @@ async function downloadGraph() {
           <p>{{ $t('workflow.lockReady', { count: wizard.lock.packages.length }) }}</p>
           <code v-for="requirement in wizard.lock.packages" :key="requirement">{{ requirement }}</code>
           <p class="tools__hint">{{ $t('workflow.lockNotExecution') }}</p>
-        </div>
-      </div>
-    </details>
-
-    <details class="tools__section">
-      <summary>{{ $t('workflow.adviceTitle') }}</summary>
-      <div class="tools__body">
-        <p class="tools__hint">{{ $t('workflow.adviceHint') }}</p>
-        <BaseSelect
-          v-model="feature"
-          :options="featureOptions"
-          :disabled="wizard.isBusy || wizard.isAdvising"
-          :aria-label="$t('workflow.adviceTask')"
-        />
-        <BaseTextarea
-          v-model="prompt"
-          :maxlength="4000"
-          :placeholder="$t('workflow.advicePrompt')"
-          :disabled="wizard.isBusy || wizard.isAdvising"
-        />
-        <BaseCheckbox v-model="sourceConsent" :disabled="wizard.isAdvising">{{
-          $t('workflow.sourceConsent')
-        }}</BaseCheckbox>
-        <BaseButton
-          variant="tonal"
-          :disabled="!sourceConsent || !feature || wizard.isBusy || wizard.isAdvising"
-          :loading="wizard.isAdvising"
-          @click="feature && wizard.requestAdvice(feature, prompt)"
-          >{{ $t('workflow.askAdvice') }}</BaseButton
-        >
-        <div v-if="wizard.advice" class="tools__result" aria-live="polite">
-          <p v-if="wizard.advice.status !== 'ok'">{{ $t('workflow.adviceUnavailable') }} {{ wizard.advice.reason }}</p>
-          <template v-else>
-            <p class="tools__hint">
-              {{ $t('workflow.adviceStats', { rounds: wizard.advice.rounds, tools: wizard.advice.tool_calls }) }}
-            </p>
-            <div v-for="(suggestion, index) in wizard.advice.suggestions" :key="index" class="tools__suggestion">
-              <p>{{ suggestion.text }}</p>
-              <BaseButton
-                v-if="canApply(suggestion)"
-                variant="tonal"
-                size="sm"
-                :disabled="wizard.isBusy || applied.has(index)"
-                @click="apply(suggestion, index)"
-                >{{ applied.has(index) ? $t('workflow.applied') : $t('workflow.apply') }}</BaseButton
-              >
-            </div>
-            <ul v-if="wizard.advice.unknowns.length">
-              <li v-for="unknown in wizard.advice.unknowns" :key="unknown">{{ unknown }}</li>
-            </ul>
-          </template>
         </div>
       </div>
     </details>
@@ -331,13 +263,6 @@ async function downloadGraph() {
 .tools__result ul {
   list-style: disc;
   padding-left: 20px;
-}
-.tools__suggestion {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  white-space: pre-wrap;
-  line-height: 1.5;
 }
 .tools__error {
   color: var(--color-danger);

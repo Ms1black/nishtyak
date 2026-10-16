@@ -2,6 +2,8 @@ import { apiClient } from '@/shared/api'
 import type { ProjectApi } from './types'
 
 export const projectHttpApi: ProjectApi = {
+  capabilities: () => apiClient.get('/capabilities'),
+
   list: (teamId) => apiClient.get(`/teams/${teamId}/projects`),
 
   upload: (teamId, file) => {
@@ -12,7 +14,8 @@ export const projectHttpApi: ProjectApi = {
 
   getAnalysis: (projectId) => apiClient.get(`/projects/${projectId}/analysis`),
 
-  getFileContent: (projectId, path) => apiClient.get(`/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
+  getFileContent: (projectId, path) =>
+    apiClient.get(`/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 
   getDecisions: (projectId) => apiClient.get(`/projects/${projectId}/decisions`),
 
@@ -31,12 +34,10 @@ export const projectHttpApi: ProjectApi = {
       ...(authorEnvironment === undefined ? {} : { authorEnvironment }),
     }),
 
-  resolve: (projectId, target, decisions) => apiClient.post(`/projects/${projectId}/resolve`, { target, decisions }),
+  resolve: (projectId, target, decisions) =>
+    apiClient.post(`/projects/${projectId}/resolve`, { target, decisions }),
 
   getLock: (projectId) => apiClient.get(`/projects/${projectId}/lock`),
-
-  advice: (projectId, feature, description) =>
-    apiClient.post(`/projects/${projectId}/advice`, { feature, description, shareSource: true }),
 
   getGraph: (projectId) => apiClient.get(`/projects/${projectId}/graph`),
 

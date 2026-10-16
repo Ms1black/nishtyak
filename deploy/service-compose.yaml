@@ -34,6 +34,7 @@ services:
       NISHTYAK_SERVICE_TOKEN: ${NISHTYAK_SERVICE_TOKEN:?Set a random service token}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-}
+      NISHTYAK_AUTOMATIC_REVIEW: ${NISHTYAK_AUTOMATIC_REVIEW:-0}
     ports:
       - "127.0.0.1:8010:8010"
     volumes:

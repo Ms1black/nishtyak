@@ -199,6 +199,7 @@ class PreparationDTO(BaseModel):
     project_id: ObjectId
     plan: PackagePlan
     launch: LaunchAssessment
+    automatic_review: dict | None = None
 
 
 class ImportGraphDTO(BaseModel):
@@ -218,3 +219,4 @@ class JobDTO(BaseModel):
     expires_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
     analysis: AnalysisReport | None = None
     error: ErrorDTO | None = None
+    automatic_review: dict | None = None

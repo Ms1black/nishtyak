@@ -55,10 +55,10 @@ export const termsEn: TermsContent = {
     },
     {
       id: 'ai',
-      title: '6. AI assistant',
+      title: '6. Automatic project description',
       paragraphs: [
-        'If the AI assistant is enabled, the service may send an external provider a part of the analysis results with secrets removed, to produce suggestions (explanations, README text, package options).',
-        'AI suggestions are advisory and are applied only after you confirm them. The service works without the AI assistant.',
+        'If the operator enables automatic descriptions, the service sends DeepSeek filtered source excerpts and static analysis results after upload. Files with detected secrets are excluded from the transmitted context.',
+        'The description is automatically included in README and can be edited before building. Model hypotheses do not confirm library versions, data availability or successful execution. If the model is unavailable, the service prepares a package from static analysis.',
       ],
     },
     {

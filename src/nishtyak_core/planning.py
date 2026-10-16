@@ -228,6 +228,7 @@ class PackagePlanner:
             findings=tuple(findings),
             state=state,
             description=decisions.description,
+            description_origin="author" if decisions.description.strip() else "unknown",
             input_description=decisions.input_description,
             expected_output=decisions.expected_output,
             decisions=decisions,

@@ -104,9 +104,21 @@ class BrowserService:
         record = self._refresh(identity, self.store.get(identity.scope, project_id))
         job = json.loads(record["job"])
         preparation = None
-        if job["status"] == "succeeded":
+        if job["status"] == "succeeded" and (job.get("automatic_review") or {}).get(
+            "status"
+        ) not in {"pending", "running"}:
             preparation = self.client_factory(identity.scope).preparation(project_id)
         return analysis_to_web(project_id, job, preparation)
+
+    def capabilities(self, identity: WorkspaceIdentity) -> dict:
+        value = self.client_factory(identity.scope).capabilities()["automatic_review"]
+        return {
+            "automaticReview": {
+                "enabled": value["enabled"],
+                "provider": value["provider"],
+                "budgetSeconds": value["budget_seconds"],
+            }
+        }
 
     def file(self, identity: WorkspaceIdentity, project_id: str, path: str) -> dict:
         with self.store.locked(project_id):

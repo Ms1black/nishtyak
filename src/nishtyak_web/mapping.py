@@ -112,6 +112,21 @@ def plan_to_web(value: dict) -> dict:
         "pythonVersion": value.get("python_version"),
         "files": [item["path"] for item in value.get("files", [])],
         "decisions": decisions_to_web(value.get("decisions")),
+        "description": value.get("description", ""),
+        "descriptionOrigin": value.get("description_origin", "unknown"),
+        "automaticReview": review_to_web(value.get("automatic_review")),
+    }
+
+
+def review_to_web(value: dict | None) -> dict | None:
+    if value is None:
+        return None
+    return {
+        "status": value["status"],
+        "provider": value["provider"],
+        "applied": value.get("applied", False),
+        "reason": value.get("reason"),
+        "elapsedMs": value.get("elapsed_ms", 0),
     }
 
 
@@ -160,10 +175,14 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
     options = report.get("options", {})
     layout = report.get("layout") or {}
     plan = (preparation or {}).get("plan", {})
+    review = job.get("automatic_review")
     return {
         "analysisId": report.get("analysis_id", ""),
         "projectId": project_id,
-        "status": analysis_status(report or None, job["status"]),
+        "status": "analyzing"
+        if (review or {}).get("status") in {"pending", "running"}
+        else analysis_status(report or None, job["status"]),
+        "automaticReview": review_to_web(plan.get("automatic_review") or review),
         "error": (job.get("error") or {}).get("code"),
         "files": [
             {
