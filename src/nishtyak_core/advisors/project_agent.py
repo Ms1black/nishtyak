@@ -197,6 +197,20 @@ class ProjectAdvisoryService:
     max_rounds = 4
     max_tool_calls = 6
     wall_seconds = 15.0
+    _final_errors = frozenset(
+        {
+            "invalid_project_advice",
+            "invalid_project_suggestion",
+            "invalid_project_evidence",
+            "invalid_advisory_text",
+            "unknown_launch_candidate",
+            "unexpected_launch_candidate",
+            "invalid_package_hypothesis",
+            "unexpected_package_hypothesis",
+            "invalid_final_json",
+            "invalid_final_shape",
+        }
+    )
 
     def __init__(self, client: DeepSeekClient):
         self.client = client
@@ -224,6 +238,8 @@ class ProjectAdvisoryService:
         ):
             return ProjectAdvisoryResult(context.analysis_id, feature, "invalid_request")
         calls, rounds = 0, 0
+        repair_attempted = False
+        terminal_reason = None
         try:
             context = SafeProjectContext.from_dict(context.to_dict())
             if self.client.config.api_key:
@@ -257,6 +273,8 @@ class ProjectAdvisoryService:
                             "evidence_ids": [
                                 candidate
                                 if feature == "entrypoint"
+                                else context.files[0]["id"]
+                                if context.files
                                 else sorted(context.evidence_ids)[0]
                             ],
                             "candidate_id": candidate if feature == "entrypoint" else None,
@@ -285,6 +303,12 @@ class ProjectAdvisoryService:
                 "Write concise Russian. At most 10 suggestions and 10 unknowns. JSON example: "
                 + json.dumps(example)
             )
+            if feature in {"readme", "explain"}:
+                instructions += (
+                    " In this " + feature + " response EVERY candidate_id, module and package "
+                    "must be literal JSON null, including descriptions discussing launch targets. "
+                    "Supporting candidate IDs may occur in evidence_ids only."
+                )
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": instructions},
                 {
@@ -307,7 +331,11 @@ class ProjectAdvisoryService:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise AdvisorUnavailable("deadline_exceeded")
-                final = round_index == self.max_rounds - 1 or self.max_tool_calls - calls < 4
+                final = (
+                    repair_attempted
+                    or round_index == self.max_rounds - 1
+                    or self.max_tool_calls - calls < 4
+                )
                 messages.append(
                     {
                         "role": "system",
@@ -347,8 +375,40 @@ class ProjectAdvisoryService:
                     continue
                 if finish != "stop" or not isinstance(message.get("content"), str):
                     raise InvalidAdvisorResponse("incomplete_response")
-                document = json.loads(message["content"])
-                suggestions, unknowns = self._parse(document, context, feature)
+                try:
+                    document = json.loads(message["content"])
+                    suggestions, unknowns = self._parse(document, context, feature)
+                except (
+                    InvalidAdvisorResponse,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    IndexError,
+                    RecursionError,
+                    UnicodeError,
+                ) as error:
+                    terminal_reason = self._final_reason(error)
+                    if repair_attempted or round_index == self.max_rounds - 1:
+                        raise InvalidAdvisorResponse(terminal_reason) from error
+                    repair_attempted = True
+                    invalid = (
+                        ProjectTextFilter()
+                        .redact(
+                            message["content"].replace(self.client.config.api_key, "[REDACTED]")
+                            if self.client.config.api_key
+                            else message["content"]
+                        )
+                        .encode("utf-8")[:12_288]
+                        .decode("utf-8", errors="ignore")
+                    )
+                    messages.append({"role": "assistant", "content": invalid})
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": self._repair_instruction(context, feature, terminal_reason),
+                        }
+                    )
+                    continue
                 usage = TokenUsage(*counts) if any(counts) else None
                 return ProjectAdvisoryResult(
                     context.analysis_id, feature, "ok", suggestions, unknowns, usage, calls, rounds
@@ -373,8 +433,55 @@ class ProjectAdvisoryService:
             UnicodeError,
         ):
             return ProjectAdvisoryResult(
-                context.analysis_id, feature, "invalid_response", tool_calls=calls, rounds=rounds
+                context.analysis_id,
+                feature,
+                "invalid_response",
+                tool_calls=calls,
+                rounds=rounds,
+                reason=terminal_reason,
             )
+
+    @classmethod
+    def _final_reason(cls, error: Exception) -> str:
+        if isinstance(error, InvalidAdvisorResponse) and str(error) in cls._final_errors:
+            return str(error)
+        return (
+            "invalid_final_json"
+            if isinstance(error, json.JSONDecodeError)
+            else "invalid_final_shape"
+        )
+
+    @staticmethod
+    def _repair_instruction(context: SafeProjectContext, feature: str, reason: str) -> str:
+        rules = (
+            "The previous final JSON failed validation: " + reason + ". "
+            "Repair the entire final JSON once, using the exact supplied example schema. "
+            "Do not add fields or tools. unknowns must be an array of strings, never objects. "
+            "Every suggestion has exactly kind,text,evidence_ids,candidate_id,module,package. "
+            "All evidence_ids must be supplied IDs; file paths and line numbers are not IDs. "
+            "Do not invent facts to satisfy validation; empty suggestions and unknowns are valid. "
+        )
+        if feature == "entrypoint":
+            rules += (
+                "candidate_id must be an existing launch ID and also occur in evidence_ids. "
+                "module and package must be null. "
+            )
+        elif feature == "packages":
+            rules += (
+                "candidate_id must be null; module must be observed, package a name hypothesis. "
+            )
+        else:
+            rules += "candidate_id, module and package must all be null. "
+        return rules + json.dumps(
+            {
+                "schema_version": 2,
+                "analysis_id": context.analysis_id,
+                "feature": feature,
+                "kind": FEATURE_KINDS[feature],
+                "allowed_evidence_ids": sorted(context.evidence_ids)[:100],
+                "allowed_candidate_ids": [item["id"] for item in context.launches],
+            }
+        )
 
     @staticmethod
     def _message(envelope: Any) -> tuple[dict[str, Any], str]:

@@ -291,6 +291,78 @@ def test_live_provider_final_pattern_uses_exact_full_suggestion_schema(
     assert result.unknowns == ("Аргументы запуска не проверены.",)
 
 
+@pytest.mark.parametrize("mistake", ["candidate", "unknowns", "evidence"])
+def test_one_final_schema_repair_preserves_strict_validation(
+    context: SafeProjectContext,
+    mistake: str,
+) -> None:
+    suggestion = {
+        "kind": "readme_description",
+        "text": "Краткое описание проекта.",
+        "evidence_ids": [context.files[0]["id"]],
+        "candidate_id": None,
+        "module": None,
+        "package": None,
+    }
+    invalid = dict(suggestion)
+    changes = {"suggestions": [invalid]}
+    if mistake == "candidate":
+        invalid["candidate_id"] = context.launches[0]["id"]
+    elif mistake == "unknowns":
+        changes["unknowns"] = [{"text": "Неизвестно", "evidence_ids": []}]
+    else:
+        invalid["evidence_ids"] = ["fabricated"]
+    transport = Responses(
+        final(context, "readme", **changes),
+        final(context, "readme", suggestions=[suggestion]),
+    )
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "ok" and result.rounds == 2 and result.tool_calls == 0
+    assert result.suggestions[0].candidate_id is None
+    second = json.loads(transport.requests[1].body)
+    assert second["tool_choice"] == "none"
+    assert "Repair the entire final JSON once" in str(second["messages"])
+    assert "unknowns must be an array of strings" in str(second["messages"])
+
+
+def test_failed_repair_returns_fixed_reason_and_never_accepts_fabricated_evidence(
+    context: SafeProjectContext,
+) -> None:
+    suggestion = {
+        "kind": "readme_description",
+        "text": "Краткое описание.",
+        "evidence_ids": ["invented"],
+        "candidate_id": None,
+        "module": None,
+        "package": None,
+    }
+    response = final(context, "readme", suggestions=[suggestion])
+    transport = Responses(response, response)
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "invalid_response" and result.reason == "invalid_project_evidence"
+    assert result.rounds == 2 and not result.suggestions and len(transport.requests) == 2
+
+
+def test_json_decode_error_can_be_repaired_without_exposing_error_details(
+    context: SafeProjectContext,
+) -> None:
+    malformed = {"choices": [{"message": {"content": "{"}, "finish_reason": "stop"}]}
+    transport = Responses(malformed, final(context, "readme"))
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "ok" and result.rounds == 2
+    repair = json.loads(transport.requests[1].body)
+    assert "invalid_final_json" in str(repair["messages"])
+
+
+def test_schema_repair_consumes_existing_round_budget(context: SafeProjectContext) -> None:
+    call_result = tools(call("launch_candidates", {}))
+    invalid = final(context, "readme", unknowns=[{"text": "wrong type"}])
+    transport = Responses(call_result, call_result, call_result, invalid)
+    result = advisor(transport).advise_context(context, "readme")
+    assert result.status == "invalid_response" and result.rounds == 4
+    assert len(transport.requests) == 4 and result.reason == "invalid_advisory_text"
+
+
 def test_snapshot_staleness_prevents_any_provider_request(context: SafeProjectContext) -> None:
     snapshot = SnapshotBuilder().from_mapping(
         {"experiment.py": 'raise RuntimeError("must not run")'}

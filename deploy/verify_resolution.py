@@ -132,6 +132,9 @@ def main() -> None:
                     feature: client.project_advice(identifier, feature, share_source=True)
                     for feature in ("entrypoint", "readme")
                 }
+                (args.output_dir / "live-agent.json").write_text(
+                    json.dumps(result["ai"], ensure_ascii=False, indent=2) + "\n"
+                )
                 if any(value["status"] != "ok" for value in result["ai"].values()):
                     raise ValueError("Live project advisor did not complete")
             if args.reproduce:
