@@ -16,5 +16,17 @@
   "vast_container_environment": "https://docs.vast.ai/guides/instances/docker-environment",
   "fastapi_request_files": "https://fastapi.tiangolo.com/tutorial/request-files/",
   "fastapi_lifespan": "https://fastapi.tiangolo.com/advanced/events/",
-  "fastapi_security": "https://fastapi.tiangolo.com/tutorial/security/first-steps/"
+  "fastapi_security": "https://fastapi.tiangolo.com/tutorial/security/first-steps/",
+  "pipreqs": "https://github.com/bndr/pipreqs",
+  "pipreqs_implementation": "https://raw.githubusercontent.com/bndr/pipreqs/master/pipreqs/pipreqs.py",
+  "pigar": "https://github.com/damnever/pigar",
+  "deptry": "https://deptry.com/usage/",
+  "grimp_graph_api": "https://grimp.readthedocs.io/en/stable/usage.html",
+  "modulegraph2_implementation": "https://raw.githubusercontent.com/ronaldoussoren/modulegraph2/main/modulegraph2/_modulegraph.py",
+  "findimports": "https://github.com/mgedmin/findimports",
+  "stdlib_list": "https://github.com/pypi/stdlib-list",
+  "uv_export": "https://docs.astral.sh/uv/concepts/projects/export/",
+  "uv_build_safety": "https://docs.astral.sh/uv/reference/cli/",
+  "reprozip": "https://docs.reprozip.org/en/latest/",
+  "inline_script_metadata": "https://packaging.python.org/en/latest/specifications/inline-script-metadata/"
 }
