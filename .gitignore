@@ -7,4 +7,9 @@ build/
 dist/
 .env
 .env.*
+!.env.example
 var/
+node_modules/
+*.local
+.DS_Store
+*.tsbuildinfo

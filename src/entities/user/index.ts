@@ -1,0 +1,5 @@
+export type { User } from './model/types'
+export { useUserStore, type SessionStatus } from './model/userStore'
+export type { LoginCredentials } from './api'
+export { getInitials } from './lib/initials'
+export { default as UserAvatar } from './ui/UserAvatar.vue'

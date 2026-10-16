@@ -1,0 +1,78 @@
+<script setup lang="ts">
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { LoginForm } from '@/features/auth-login'
+import { RouteName } from '@/shared/config'
+import { BaseCard } from '@/shared/ui'
+
+const route = useRoute()
+const router = useRouter()
+
+function onSuccess() {
+  const redirect = route.query.redirect
+  const safe = typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')
+  router.replace(safe ? redirect : { name: RouteName.Upload })
+}
+</script>
+
+<template>
+  <div class="container login-page">
+    <BaseCard tag="section" padding="lg" class="login-page__card" aria-labelledby="login-title">
+      <h1 id="login-title" class="login-page__title">{{ $t('auth.title') }}</h1>
+      <p class="login-page__subtitle">{{ $t('auth.subtitle') }}</p>
+      <LoginForm class="login-page__form" @success="onSuccess" />
+    </BaseCard>
+    <p class="login-page__terms">
+      {{ $t('auth.agree') }}
+      <RouterLink :to="{ name: RouteName.Terms }">{{ $t('auth.agreeLink') }}</RouterLink>
+    </p>
+  </div>
+</template>
+
+<style scoped>
+.login-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-page__card {
+  width: min(440px, 100%);
+}
+
+.login-page__title {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.login-page__subtitle {
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.login-page__form {
+  margin-top: 32px;
+}
+
+.login-page__terms {
+  margin-top: 20px;
+  color: var(--color-text-subtle);
+  font-size: 13px;
+  text-align: center;
+}
+
+.login-page__terms a {
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--color-text-subtle);
+  text-underline-offset: 3px;
+}
+
+.login-page__terms a:hover {
+  color: var(--color-text);
+}
+</style>
