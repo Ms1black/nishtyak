@@ -18,6 +18,8 @@ from nishtyak_core.archives import ArchiveError
 from nishtyak_core.snapshot import SnapshotError
 from nishtyak_service.dto import AuthorEnvironmentDTO, ResolutionTargetDTO
 
+from .account_api import account_router
+from .accounts import AccountStore
 from .auth import GatewayBoundary
 from .config import WebSettings
 from .preview import COOKIE_NAME, PreviewAccess, PreviewLoginError, access_page, safe_next
@@ -67,6 +69,7 @@ def create_app(
 ) -> FastAPI:
     browser = service or BrowserService(settings)
     preview = PreviewAccess(settings) if settings.mode == "preview" else None
+    accounts = AccountStore(settings) if settings.mode == "accounts" else None
     workspace_started = datetime.now(UTC).isoformat()
 
     @asynccontextmanager
@@ -74,6 +77,8 @@ def create_app(
         async def expire_projects():
             while True:
                 await run_in_threadpool(browser.store.cleanup)
+                if accounts is not None:
+                    await run_in_threadpool(accounts.cleanup)
                 await asyncio.sleep(30)
 
         cleanup = asyncio.create_task(expire_projects())
@@ -93,7 +98,16 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.browser = browser
-    app.add_middleware(GatewayBoundary, settings=settings, preview=preview)
+    app.state.accounts = accounts
+    app.add_middleware(
+        GatewayBoundary,
+        settings=settings,
+        preview=preview,
+        accounts=accounts,
+        projects=browser.store,
+    )
+    if accounts is not None:
+        app.include_router(account_router(accounts, settings))
 
     @app.exception_handler(LogicClientError)
     async def client_error(request: Request, error: LogicClientError):
@@ -179,94 +193,96 @@ def create_app(
             response.delete_cookie(COOKIE_NAME, secure=True, httponly=True, samesite="strict")
             return response
 
-    def workspace_metadata(identity):
-        local = identity.mode == "local"
-        review = identity.mode == "preview"
-        user = {
-            "id": identity.user,
-            "name": "Участник проверки"
-            if review
-            else "Локальная интеграция"
-            if local
-            else identity.user,
-            "email": "local@localhost" if local else "",
-            "avatarUrl": None,
-        }
-        team = {
-            "id": identity.workspace,
-            "name": "Общая проверка"
-            if review
-            else "Локальный проект"
-            if local
-            else identity.workspace,
-            "myRole": "owner",
-            "membersCount": 1,
-            "avatarUrl": None,
-        }
-        return user, team
+    if accounts is None:
 
-    @app.get("/api/session")
-    def session(request: Request):
-        identity = request.state.identity
-        user, team = workspace_metadata(identity)
-        return {
-            "mode": identity.mode,
-            "user": user,
-            "team": team,
-            "capabilities": {
-                "accountManagement": False,
-                "teamManagement": False,
-                "sharedWorkspace": identity.mode == "preview",
-            },
-        }
+        def workspace_metadata(identity):
+            local = identity.mode == "local"
+            review = identity.mode == "preview"
+            user = {
+                "id": identity.user,
+                "name": "Участник проверки"
+                if review
+                else "Локальная интеграция"
+                if local
+                else identity.user,
+                "email": "local@localhost" if local else "",
+                "avatarUrl": None,
+            }
+            team = {
+                "id": identity.workspace,
+                "name": "Общая проверка"
+                if review
+                else "Локальный проект"
+                if local
+                else identity.workspace,
+                "myRole": "owner",
+                "membersCount": 1,
+                "avatarUrl": None,
+            }
+            return user, team
 
-    @app.get("/api/me")
-    def me(request: Request):
-        return workspace_metadata(request.state.identity)[0]
+        @app.get("/api/session")
+        def session(request: Request):
+            identity = request.state.identity
+            user, team = workspace_metadata(identity)
+            return {
+                "mode": identity.mode,
+                "user": user,
+                "team": team,
+                "capabilities": {
+                    "accountManagement": False,
+                    "teamManagement": False,
+                    "sharedWorkspace": identity.mode == "preview",
+                },
+            }
 
-    @app.get("/api/teams")
-    def teams(request: Request):
-        return [workspace_metadata(request.state.identity)[1]]
+        @app.get("/api/me")
+        def me(request: Request):
+            return workspace_metadata(request.state.identity)[0]
 
-    @app.get("/api/teams/{team_id}/members")
-    def members(request: Request, team_id: TeamId):
-        browser._team(request.state.identity, team_id)
-        user, _ = workspace_metadata(request.state.identity)
-        return [{**user, "role": "owner", "joinedAt": workspace_started, "isYou": True}]
+        @app.get("/api/teams")
+        def teams(request: Request):
+            return [workspace_metadata(request.state.identity)[1]]
 
-    @app.get("/api/teams/{team_id}/invites")
-    def invites(request: Request, team_id: TeamId):
-        browser._team(request.state.identity, team_id)
-        return []
+        @app.get("/api/teams/{team_id}/members")
+        def members(request: Request, team_id: TeamId):
+            browser._team(request.state.identity, team_id)
+            user, _ = workspace_metadata(request.state.identity)
+            return [{**user, "role": "owner", "joinedAt": workspace_started, "isYou": True}]
 
-    def account_unavailable():
-        return JSONResponse(
-            {
-                "code": "ACCOUNT_BACKEND_UNAVAILABLE",
-                "message": "Регистрацию, команды и приглашения разрабатываем отдельно",
-            },
-            501,
-        )
+        @app.get("/api/teams/{team_id}/invites")
+        def invites(request: Request, team_id: TeamId):
+            browser._team(request.state.identity, team_id)
+            return []
 
-    app.add_api_route("/api/me", account_unavailable, methods=["PATCH", "PUT"])
-    app.add_api_route("/api/teams", account_unavailable, methods=["POST"])
+        def account_unavailable():
+            return JSONResponse(
+                {
+                    "code": "ACCOUNT_BACKEND_UNAVAILABLE",
+                    "message": "Регистрацию, команды и приглашения разрабатываем отдельно",
+                },
+                501,
+            )
 
-    @app.delete("/api/teams/{team_id}")
-    @app.post("/api/teams/{team_id}/invites")
-    @app.delete("/api/teams/{team_id}/invites/{item_id}")
-    @app.patch("/api/teams/{team_id}/members/{item_id}")
-    @app.delete("/api/teams/{team_id}/members/{item_id}")
-    def team_mutation(request: Request, team_id: TeamId, item_id: str = ""):
-        browser._team(request.state.identity, team_id)
-        return account_unavailable()
+        app.add_api_route("/api/me", account_unavailable, methods=["PATCH", "PUT"])
+        app.add_api_route("/api/teams", account_unavailable, methods=["POST"])
 
-    @app.post("/api/auth/logout")
-    def logout():
-        if preview is None:
+        @app.delete("/api/teams/{team_id}")
+        @app.post("/api/teams/{team_id}/invites")
+        @app.delete("/api/teams/{team_id}/invites/{item_id}")
+        @app.patch("/api/teams/{team_id}/members/{item_id}")
+        @app.delete("/api/teams/{team_id}/members/{item_id}")
+        def team_mutation(request: Request, team_id: TeamId, item_id: str = ""):
+            browser._team(request.state.identity, team_id)
             return account_unavailable()
-        response = Response(status_code=204)
-        response.delete_cookie(COOKIE_NAME, secure=True, httponly=True, samesite="strict")
-        return response
+
+        @app.post("/api/auth/logout")
+        def logout():
+            if preview is None:
+                return account_unavailable()
+            response = Response(status_code=204)
+            response.delete_cookie(COOKIE_NAME, secure=True, httponly=True, samesite="strict")
+            return response
 
     @app.get("/api/teams/{team_id}/projects")
     def list_projects(request: Request, team_id: TeamId):
@@ -399,7 +415,7 @@ def create_app(
                         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
                         "base-uri 'self'; form-action 'self'"
                     ),
-                    "Referrer-Policy": "same-origin",
+                    "Referrer-Policy": "no-referrer",
                 },
             )
 

@@ -50,6 +50,7 @@ const SECTION: Record<string, AnalysisSection> = {
   RUN_TARGET_UNCERTAIN: 'run',
   RUN_TARGET_UNKNOWN: 'run',
   RUN_INFERRED: 'run',
+  RUN_AUTOMATIC: 'run',
   PYTHON_VERSION_UNKNOWN: 'run',
   PYTHON_VERSION_CONFLICT: 'run',
   DATA_NOT_CONFIRMED: 'data',

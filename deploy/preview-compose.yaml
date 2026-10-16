@@ -25,14 +25,15 @@ services:
     network_mode: host
     command: ["--host", "127.0.0.1", "--port", "8082"]
     environment:
-      NISHTYAK_WEB_MODE: preview
+      NISHTYAK_WEB_MODE: ${NISHTYAK_WEB_MODE:-preview}
       NISHTYAK_WEB_DATA_DIR: /data
       NISHTYAK_LOGIC_URL: http://127.0.0.1:8010
       NISHTYAK_SERVICE_TOKEN: ${NISHTYAK_SERVICE_TOKEN:?Use the internal logic service token}
       NISHTYAK_WEB_ORIGINS: ${NISHTYAK_WEB_ORIGINS:?Set the public HTTPS origin}
-      NISHTYAK_PREVIEW_PASSWORD_HASH: ${NISHTYAK_PREVIEW_PASSWORD_HASH:?Set the review password hash}
-      NISHTYAK_PREVIEW_COOKIE_SECRET: ${NISHTYAK_PREVIEW_COOKIE_SECRET:?Set a separate cookie secret}
+      NISHTYAK_PREVIEW_PASSWORD_HASH: ${NISHTYAK_PREVIEW_PASSWORD_HASH:-}
+      NISHTYAK_PREVIEW_COOKIE_SECRET: ${NISHTYAK_PREVIEW_COOKIE_SECRET:-}
       NISHTYAK_PREVIEW_SESSION_SECONDS: 14400
+      NISHTYAK_ACCOUNT_SESSION_SECONDS: ${NISHTYAK_ACCOUNT_SESSION_SECONDS:-604800}
     volumes:
       - preview:/data
     depends_on:

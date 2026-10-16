@@ -8,7 +8,10 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
+
+from nishtyak_client import LogicClientError
 
 from .config import WebSettings
 from .preview import PreviewAccess
@@ -19,6 +22,7 @@ class WorkspaceIdentity:
     user: str
     workspace: str
     mode: str
+    role: str = "owner"
 
     @property
     def scope(self) -> str:
@@ -29,9 +33,17 @@ class WorkspaceIdentity:
 class GatewayBoundary:
     """Authenticate before receiving a bounded body; never trust browser owner headers."""
 
-    def __init__(self, app, settings: WebSettings, preview: PreviewAccess | None = None):
+    def __init__(
+        self,
+        app,
+        settings: WebSettings,
+        preview: PreviewAccess | None = None,
+        accounts=None,
+        projects=None,
+    ):
         self.app, self.settings = app, settings
         self.preview = preview
+        self.accounts, self.projects = accounts, projects
         self._active = 0
 
     async def __call__(self, scope, receive, send) -> None:
@@ -69,7 +81,7 @@ class GatewayBoundary:
                 await self._error(scope, receive, send, 403, "HOST_FORBIDDEN")
                 return
         origin = headers.get(b"origin", b"").decode("latin1")
-        if self.settings.mode == "preview":
+        if self.settings.mode in {"preview", "accounts"}:
             host = headers.get(b"host", b"").decode("latin1").lower()
             if scope["path"] != "/api/healthz" and host not in {
                 urlsplit(value).netloc.lower() for value in self.settings.origins
@@ -85,10 +97,20 @@ class GatewayBoundary:
         if headers.get(b"sec-fetch-site") == b"cross-site":
             await self._error(scope, receive, send, 403, "ORIGIN_FORBIDDEN")
             return
-        if scope["path"] == "/api/healthz" or scope["path"] == "/preview/access":
+        public_account = self.settings.mode == "accounts" and scope["path"] in {
+            "/api/auth/register",
+            "/api/auth/login",
+            "/api/auth/logout",
+            "/api/invites/preview",
+        }
+        if scope["path"] == "/api/healthz" or scope["path"] == "/preview/access" or public_account:
             identity = None
         else:
-            identity = self._identity(scope, headers)
+            try:
+                identity = await run_in_threadpool(self._identity, scope, headers)
+            except LogicClientError as error:
+                await self._error(scope, receive, send, error.status, error.code)
+                return
             if identity is None:
                 code = (
                     "PREVIEW_AUTH_REQUIRED"
@@ -108,7 +130,7 @@ class GatewayBoundary:
                 if b"multipart/form-data" in headers.get(b"content-type", b"")
                 else 262144
             )
-            if scope["path"].startswith("/preview/"):
+            if scope["path"].startswith(("/preview/", "/api/auth/", "/api/invites/")):
                 maximum = 8192
             body = bytearray()
             try:
@@ -141,6 +163,7 @@ class GatewayBoundary:
                         *message.get("headers", []),
                         (b"cache-control", b"no-store"),
                         (b"x-content-type-options", b"nosniff"),
+                        (b"referrer-policy", b"no-referrer"),
                     ]
                 await send(message)
 
@@ -149,6 +172,28 @@ class GatewayBoundary:
             self._active -= 1
 
     def _identity(self, scope, headers) -> WorkspaceIdentity | None:
+        if self.settings.mode == "accounts":
+            user_id = self.accounts.authenticate(headers.get(b"cookie", b"").decode("latin1"))
+            if not user_id:
+                return None
+            parts = scope["path"].strip("/").split("/")
+            team_id = parts[2] if len(parts) >= 3 and parts[1] == "teams" else None
+            project_scope = None
+            if len(parts) >= 3 and parts[1] == "projects":
+                project_scope = self.projects.scope_for(parts[2])
+            membership = self.accounts.workspace(user_id, team_id, project_scope)
+            if membership["role"] == "viewer" and scope["method"] not in {"GET", "HEAD", "OPTIONS"}:
+                read_plan = (
+                    len(parts) == 4
+                    and parts[1] == "projects"
+                    and parts[3] == "plan"
+                    and scope["method"] == "POST"
+                )
+                project_write = len(parts) >= 3 and parts[1] == "projects"
+                team_upload = len(parts) == 4 and parts[1] == "teams" and parts[3] == "projects"
+                if (project_write or team_upload) and not read_plan:
+                    raise LogicClientError(403, "ROLE_FORBIDDEN", "Viewers cannot change projects")
+            return WorkspaceIdentity(user_id, membership["team_id"], "accounts", membership["role"])
         if self.settings.mode == "preview":
             valid = self.preview and self.preview.valid_cookie(
                 headers.get(b"cookie", b"").decode("latin1")

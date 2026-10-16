@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { safeAuthRedirect } from '@/shared/lib/authRedirect'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { LoginForm } from '@/features/auth-login'
 import { RouteName } from '@/shared/config'
@@ -7,20 +9,24 @@ import { isStandaloneWorkspace } from '@/shared/api'
 
 const route = useRoute()
 const router = useRouter()
+const register = computed(() => route.name === RouteName.Register)
+const redirect = computed(() => safeAuthRedirect(route.query.redirect))
 
 function onSuccess() {
-  const redirect = route.query.redirect
-  const safe = typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')
-  router.replace(safe ? redirect : { name: RouteName.Upload })
+  router.replace(redirect.value)
 }
 </script>
 
 <template>
   <div class="container login-page">
     <BaseCard tag="section" padding="lg" class="login-page__card" aria-labelledby="login-title">
-      <h1 id="login-title" class="login-page__title">{{ $t('auth.title') }}</h1>
-      <p class="login-page__subtitle">{{ $t('auth.subtitle') }}</p>
-      <LoginForm class="login-page__form" @success="onSuccess" />
+      <h1 id="login-title" class="login-page__title">{{ $t(register ? 'auth.registerTitle' : 'auth.title') }}</h1>
+      <p class="login-page__subtitle">{{ $t(register ? 'auth.registerSubtitle' : 'auth.subtitle') }}</p>
+      <LoginForm :key="String(register)" :register="register" class="login-page__form" @success="onSuccess" />
+      <p v-if="!isStandaloneWorkspace" class="login-page__preview">
+        {{ $t(register ? 'auth.haveAccount' : 'auth.noAccount') }}
+        <RouterLink :to="{ name: register ? RouteName.Login : RouteName.Register, query: { redirect } }">{{ $t(register ? 'auth.submit' : 'auth.registerSubmit') }}</RouterLink>
+      </p>
       <p v-if="isStandaloneWorkspace" class="login-page__preview">
         {{ $t('integration.authPending') }}
         <RouterLink :to="{ name: RouteName.Upload }">{{ $t('integration.openWorkspace') }}</RouterLink>

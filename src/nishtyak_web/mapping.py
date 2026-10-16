@@ -121,13 +121,23 @@ def plan_to_web(value: dict) -> dict:
 def review_to_web(value: dict | None) -> dict | None:
     if value is None:
         return None
-    return {
+    result = {
         "status": value["status"],
         "provider": value["provider"],
         "applied": value.get("applied", False),
         "reason": value.get("reason"),
         "elapsedMs": value.get("elapsed_ms", 0),
     }
+    entrypoint = value.get("entrypoint")
+    if entrypoint is not None:
+        result["entrypoint"] = {
+            "applied": entrypoint.get("applied", False),
+            "candidateId": entrypoint.get("candidate_id"),
+            "reason": entrypoint.get("reason"),
+            "evidenceIds": entrypoint.get("evidence_ids", []),
+            "explanation": entrypoint.get("explanation"),
+        }
+    return result
 
 
 def analysis_status(report: dict | None, status: str) -> str:

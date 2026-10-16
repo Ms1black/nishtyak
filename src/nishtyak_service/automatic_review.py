@@ -21,13 +21,14 @@ from .storage import JobRecord, SQLiteJobRepository
 
 
 class AutomaticProjectReview:
-    """Cache optional descriptive prose without changing the author's decisions.
+    """Cache descriptions and candidate choices without changing author decisions.
 
     The API process owns network access. The offline analysis dispatcher never
     receives provider credentials. Call ensure only inside a project operation.
     """
 
     budget_seconds = 15
+    policy = "source_description_and_entrypoint"
 
     def __init__(self, repository: SQLiteJobRepository):
         self.repository = repository
@@ -45,6 +46,7 @@ class AutomaticProjectReview:
             "enabled": self.enabled,
             "provider": "deepseek",
             "budget_seconds": self.budget_seconds,
+            "features": ["description", "entrypoint"],
         }
 
     def status(self, record: JobRecord, report: AnalysisReport) -> dict:
@@ -53,7 +55,7 @@ class AutomaticProjectReview:
         with self._lock:
             running = record.project_id in self._running
         if not running:
-            cached = self.repository.read_review(record, report.analysis_id)
+            cached = self._cached(record, report.analysis_id)
             if cached is not None:
                 return self.summary(cached)
             if self._remaining(record) <= 0:
@@ -95,7 +97,7 @@ class AutomaticProjectReview:
     def ensure(self, record: JobRecord, report: AnalysisReport) -> None:
         if not self.enabled or not record.automatic_review_eligible:
             return
-        cached = self.repository.read_review(record, report.analysis_id)
+        cached = self._cached(record, report.analysis_id)
         if cached is not None:
             # Identical source/options may have been analyzed again. Reuse its review.
             self.repository.save_review(record, report.analysis_id, cached)
@@ -115,17 +117,19 @@ class AutomaticProjectReview:
             )
             if remaining <= 0:
                 return
-            response = ProjectAdviceJobRunner(wall_time_seconds=remaining).run(context, "readme")
+            response = ProjectAdviceJobRunner(wall_time_seconds=remaining).run(context, "review")
             ProjectAdvisoryService(DeepSeekClient(DeepSeekConfig.from_env())).validate_result(
-                response, context, "readme"
+                response, context, "review"
             )
             paragraphs = self._paragraphs(response, context)
+            entrypoint = self._entrypoint(response, context)
             result = {
-                "status": "ready" if paragraphs else "unavailable",
+                "status": "ready" if paragraphs or entrypoint else "unavailable",
                 "paragraphs": paragraphs,
+                "entrypoint": entrypoint,
                 "reason": None
-                if paragraphs
-                else response.get("reason") or "no_grounded_description",
+                if paragraphs or entrypoint
+                else response.get("reason") or "no_grounded_review",
                 "usage": response.get("usage"),
                 "rounds": response.get("rounds", 0),
                 "tool_calls": response.get("tool_calls", 0),
@@ -142,15 +146,24 @@ class AutomaticProjectReview:
                     "analysis_id": report.analysis_id,
                     "provider": "deepseek",
                     "elapsed_ms": round((time.monotonic() - started) * 1000),
-                    "policy": "source_descriptions_only",
+                    "policy": self.policy,
                 }
             )
             self.repository.save_review(record, report.analysis_id, result)
 
+    def candidate_id(self, record: JobRecord, report: AnalysisReport) -> str | None:
+        if not record.automatic_review_eligible:
+            return None
+        cached = self._cached(record, report.analysis_id)
+        if cached is None or cached.get("status") != "ready":
+            return None
+        entrypoint = cached.get("entrypoint")
+        return entrypoint.get("candidate_id") if isinstance(entrypoint, dict) else None
+
     def enrich(self, plan: PackagePlan, record: JobRecord) -> PackagePlan:
         if not record.automatic_review_eligible:
             return plan
-        cached = self.repository.read_review(record, plan.analysis_id)
+        cached = self._cached(record, plan.analysis_id)
         if cached is None:
             return plan
         retained = {file.path for file in plan.files}
@@ -165,10 +178,30 @@ class AutomaticProjectReview:
             paragraphs = []
         authored = bool(plan.description.strip())
         applied = not authored and bool(paragraphs)
+        entrypoint = cached.get("entrypoint") or {}
+        entrypoint_applied = plan.run_spec_origin == "automatic"
+        entrypoint_reason = (
+            "selection_accepted"
+            if entrypoint_applied
+            else "author_override"
+            if plan.run_spec_origin == "author"
+            else "source_excluded"
+            if entrypoint and not source_files.issubset(retained)
+            else "candidate_unavailable"
+            if entrypoint
+            else "static_fallback"
+        )
         metadata = {
             **self.summary(cached),
             "applied": applied,
-            "policy": "source_descriptions_only",
+            "policy": cached.get("policy", "source_descriptions_only"),
+            "entrypoint": {
+                "applied": entrypoint_applied,
+                "candidate_id": entrypoint.get("candidate_id"),
+                "reason": entrypoint_reason,
+                "evidence_ids": entrypoint.get("evidence_ids", []),
+                "explanation": entrypoint.get("text"),
+            },
             "evidence_ids": sorted({key for item in paragraphs for key in item["evidence_ids"]})
             if applied
             else [],
@@ -201,6 +234,9 @@ class AutomaticProjectReview:
     def _remaining(self, record: JobRecord) -> float:
         return max(0, self.budget_seconds - (time.time() - (record.review_ready_at or 0)))
 
+    def _cached(self, record: JobRecord, analysis_id: str) -> dict | None:
+        return self.repository.read_review(record, analysis_id, reuse_policy=self.policy)
+
     @staticmethod
     def _paragraphs(response: dict, context: SafeProjectContext) -> list[dict]:
         if response["status"] != "ok":
@@ -213,6 +249,8 @@ class AutomaticProjectReview:
         blocked_sources = {item["id"] for item in context.files if not item.get("text")}
         paragraphs, seen, size = [], set(), 0
         for item in response["suggestions"]:
+            if item.get("kind") != "readme_description":
+                continue
             if blocked_sources.intersection(item["evidence_ids"]):
                 continue
             paths = sorted({sources[key] for key in item["evidence_ids"] if key in sources})
@@ -225,3 +263,17 @@ class AutomaticProjectReview:
             seen.add(text)
             size += len(text) + 2
         return paragraphs
+
+    @staticmethod
+    def _entrypoint(response: dict, context: SafeProjectContext) -> dict | None:
+        if response["status"] != "ok":
+            return None
+        candidates = {candidate["id"] for candidate in context.launches}
+        for item in response["suggestions"]:
+            if item["kind"] == "entrypoint_hypothesis" and item["candidate_id"] in candidates:
+                return {
+                    "candidate_id": item["candidate_id"],
+                    "text": TextRedactor().redact(item["text"]),
+                    "evidence_ids": item["evidence_ids"],
+                }
+        return None

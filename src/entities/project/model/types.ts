@@ -83,10 +83,11 @@ export interface AutomaticReview {
   applied: boolean
   reason?: string | null
   elapsedMs?: number
+  entrypoint?: { applied: boolean; candidateId?: string | null; reason: string; evidenceIds: string[]; explanation?: string }
 }
 
 export interface ServiceCapabilities {
-  automaticReview: { enabled: boolean; provider: 'deepseek'; budgetSeconds: number }
+  automaticReview: { enabled: boolean; provider: 'deepseek'; budgetSeconds: number; features?: string[] }
 }
 
 export interface AnalysisOptions {
@@ -145,7 +146,7 @@ export interface PackagePlan {
   requirements: string[]
   findings: Finding[]
   runSpec?: RunSpec | null
-  runSpecOrigin?: 'author' | 'inferred' | 'unknown'
+  runSpecOrigin?: 'author' | 'automatic' | 'inferred' | 'unknown'
   pythonVersion?: string | null
   files?: string[]
   decisions?: AnalysisDecisions

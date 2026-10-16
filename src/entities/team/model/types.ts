@@ -5,6 +5,7 @@ export type TeamMemberRole = 'owner' | TeamRole
 export interface Team {
   id: string
   name: string
+  personal?: boolean
   myRole: TeamMemberRole
   membersCount: number
   avatarUrl: string | null
@@ -22,7 +23,7 @@ export interface TeamMember {
 
 export interface TeamInvite {
   id: string
-  url: string
+  url: string | null
   role: TeamRole
   expiresAt: string
   createdAt: string

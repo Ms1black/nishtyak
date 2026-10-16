@@ -75,7 +75,13 @@ class PackagePlanner:
         }
     )
 
-    def prepare(self, report: AnalysisReport, decisions: UserDecisions) -> PackagePlan:
+    def prepare(
+        self,
+        report: AnalysisReport,
+        decisions: UserDecisions,
+        *,
+        automatic_candidate_id: str | None = None,
+    ) -> PackagePlan:
         if decisions.analysis_id != report.analysis_id:
             raise DecisionError(
                 "ANALYSIS_STALE",
@@ -95,6 +101,19 @@ class PackagePlanner:
         launch = LaunchDetector().detect(report, included)
         run_spec = decisions.run_spec
         run_spec_origin = "author" if run_spec is not None else "unknown"
+        source_paths = {file.path for file in report.files if file.path.endswith(".py")}
+        retained_paths = {file.path for file in included}
+        automatic_candidate = next(
+            (
+                candidate
+                for candidate in launch.candidates
+                if candidate.id == automatic_candidate_id and source_paths.issubset(retained_paths)
+            ),
+            None,
+        )
+        if run_spec is None and automatic_candidate is not None:
+            run_spec = automatic_candidate.run_spec
+            run_spec_origin = "automatic"
         if run_spec is None and launch.recommended is not None:
             run_spec = launch.recommended.run_spec
             run_spec_origin = "inferred"
@@ -141,7 +160,17 @@ class PackagePlanner:
                 )
             )
 
-        if run_spec_origin == "inferred":
+        if run_spec_origin == "automatic":
+            findings.append(
+                Finding(
+                    "RUN_AUTOMATIC",
+                    "The assistant selected an existing static launch candidate from project "
+                    "evidence. The command was not confirmed by the author or executed.",
+                    severity="info",
+                    evidence_ids=(automatic_candidate.id,),
+                )
+            )
+        elif run_spec_origin == "inferred":
             findings.append(
                 Finding(
                     "RUN_INFERRED",

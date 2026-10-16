@@ -54,14 +54,20 @@ class ReproducibilityService:
         )
         return replace(report, findings=findings)
 
-    def prepare(self, report: AnalysisReport, decisions: UserDecisions) -> PackagePlan:
+    def prepare(
+        self,
+        report: AnalysisReport,
+        decisions: UserDecisions,
+        *,
+        automatic_candidate_id: str | None = None,
+    ) -> PackagePlan:
         cleaned = replace(
             decisions,
             description=self.scanner.redact(decisions.description),
             input_description=self.scanner.redact(decisions.input_description),
             expected_output=self.scanner.redact(decisions.expected_output),
         )
-        return self.planner.prepare(report, cleaned)
+        return self.planner.prepare(report, cleaned, automatic_candidate_id=automatic_candidate_id)
 
     def render(self, plan: PackagePlan, include_dockerfile: bool = False) -> GeneratedFiles:
         generated = self.renderer.render(plan)

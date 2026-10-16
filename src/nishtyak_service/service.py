@@ -315,7 +315,14 @@ class LogicService:
         if decisions.analysis_id != report.analysis_id:
             raise ServiceError(409, "STALE_ANALYSIS", "Decisions belong to another analysis")
         try:
-            plan = self.core.prepare(report, decisions)
+            candidate = (
+                self.automatic_review.candidate_id(record, report) if record is not None else None
+            )
+            plan = (
+                self.core.prepare(report, decisions, automatic_candidate_id=candidate)
+                if candidate is not None
+                else self.core.prepare(report, decisions)
+            )
             return self.automatic_review.enrich(plan, record) if record is not None else plan
         except ValueError as error:
             if hasattr(error, "code") and hasattr(error, "field"):

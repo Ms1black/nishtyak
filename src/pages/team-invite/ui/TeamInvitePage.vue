@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { useTeamStore } from '@/entities/team'
+import { isStandaloneWorkspace } from '@/shared/api'
 import { RouterLink } from 'vue-router'
 import { RouteName } from '@/shared/config'
 import { BaseIcon } from '@/shared/ui'
 import { ActiveInvites, InviteInfoCard, InvitePanel } from '@/widgets/invite-panel'
 import { TeamTabs } from '@/widgets/team-tabs'
+const teamStore = useTeamStore()
 </script>
 
 <template>
@@ -11,7 +14,8 @@ import { TeamTabs } from '@/widgets/team-tabs'
     <h1 class="visually-hidden">{{ $t('routes.teamInvite') }}</h1>
     <TeamTabs />
 
-    <div class="team-invite__grid">
+    <p v-if="!teamStore.canManage && !isStandaloneWorkspace" role="note">{{ $t('invite.managerOnly') }}</p>
+    <div v-else class="team-invite__grid">
       <InvitePanel />
       <InviteInfoCard />
     </div>

@@ -16,6 +16,7 @@ class WebSettings:
     preview_password_hash: str = field(default="", repr=False)
     preview_cookie_secret: str = field(default="", repr=False)
     preview_session_seconds: int = 4 * 3600
+    account_session_seconds: int = 7 * 86400
     origins: tuple[str, ...] = (
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -29,8 +30,8 @@ class WebSettings:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_dir", Path(self.data_dir).absolute())
-        if self.mode not in {"local", "proxy", "preview"}:
-            raise ValueError("Gateway mode must be local, proxy or preview")
+        if self.mode not in {"local", "proxy", "preview", "accounts"}:
+            raise ValueError("Gateway mode must be local, proxy, preview or accounts")
         for name in ("service_token", "proxy_secret"):
             value = getattr(self, name)
             if name == "proxy_secret" and self.mode != "proxy" and not value:
@@ -69,6 +70,15 @@ class WebSettings:
                 raise ValueError("Preview cookie secret must contain 32 to 512 ASCII characters")
             if not self.origins or any(urlsplit(value).scheme != "https" for value in self.origins):
                 raise ValueError("Preview mode requires exact HTTPS browser origins")
+        if self.mode == "accounts" and (
+            not self.origins or any(urlsplit(value).scheme != "https" for value in self.origins)
+        ):
+            raise ValueError("Accounts mode requires exact HTTPS browser origins")
+        if (
+            type(self.account_session_seconds) is not int
+            or not 3600 <= self.account_session_seconds <= 30 * 86400
+        ):
+            raise ValueError("Account session lifetime must be between 1 hour and 30 days")
         if (
             type(self.preview_session_seconds) is not int
             or not 60 <= self.preview_session_seconds <= 86400
@@ -95,6 +105,9 @@ class WebSettings:
             preview_cookie_secret=os.environ.get("NISHTYAK_PREVIEW_COOKIE_SECRET", ""),
             preview_session_seconds=int(
                 os.environ.get("NISHTYAK_PREVIEW_SESSION_SECONDS", "14400")
+            ),
+            account_session_seconds=int(
+                os.environ.get("NISHTYAK_ACCOUNT_SESSION_SECONDS", "604800")
             ),
             origins=tuple(
                 part.strip()

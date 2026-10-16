@@ -1,7 +1,7 @@
 import { reactive, ref } from 'vue'
 import { getArchiveFileName, projectApi, useProjectStore, type Project } from '@/entities/project'
 import { downloadBlob } from '@/shared/lib'
-import { ApiError } from '@/shared/api'
+import { ApiError, sessionGeneration } from '@/shared/api'
 import { t } from '@/shared/i18n'
 
 export function useArchiveActions() {
@@ -11,11 +11,14 @@ export function useArchiveActions() {
 
   async function run<T>(id: string, task: () => Promise<T>): Promise<T | null> {
     if (pending.has(id)) return null
+    const generation = sessionGeneration.value
     pending.add(id)
     error.value = null
     try {
-      return await task()
+      const result = await task()
+      return generation === sessionGeneration.value ? result : null
     } catch (cause) {
+      if (generation !== sessionGeneration.value) return null
       error.value = cause instanceof ApiError ? cause.message : t('workflow.archiveError')
       return null
     } finally {

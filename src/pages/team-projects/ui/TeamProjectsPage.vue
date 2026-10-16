@@ -36,6 +36,7 @@ watch(
   () => teamStore.currentTeamId,
   (teamId) => {
     if (teamId) projectStore.fetchAll(teamId)
+    else projectStore.reset()
   },
   { immediate: true },
 )

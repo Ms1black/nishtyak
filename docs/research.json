@@ -33,5 +33,8 @@
   "deepseek_chat_api": "https://api-docs.deepseek.com/api/create-chat-completion/",
   "aider_repository_map": "https://aider.chat/docs/repomap.html",
   "readme_ai": "https://github.com/eli64s/readme-ai",
-  "github_readme_prompt": "https://docs.github.com/en/copilot/tutorials/customization-library/prompt-files/create-readme"
+  "github_readme_prompt": "https://docs.github.com/en/copilot/tutorials/customization-library/prompt-files/create-readme",
+  "owasp_password_storage": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html",
+  "owasp_sessions": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
+  "argon2_password_hasher": "https://argon2-cffi.readthedocs.io/en/stable/api.html"
 }

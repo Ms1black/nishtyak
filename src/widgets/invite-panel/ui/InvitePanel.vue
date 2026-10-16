@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { getTeamRoleOptions, type TeamRole } from '@/entities/team'
+import { ref, watch } from 'vue'
+import { getTeamRoleOptions, useTeamStore, type TeamRole } from '@/entities/team'
 import { storeToRefs } from 'pinia'
 import { InviteLinkField, useInviteStore } from '@/features/invite-member'
 import { BaseButton, BaseCard, BaseSelect } from '@/shared/ui'
 import { isStandaloneWorkspace } from '@/shared/api'
 
+const teamStore = useTeamStore()
 const inviteStore = useInviteStore()
 const { current: invite, isLoading, isCreating, isRotating, error, notice, expiresText } = storeToRefs(inviteStore)
 
 const role = ref<TeamRole | null>('member')
+watch(() => [teamStore.currentTeamId, teamStore.currentTeam?.myRole], () => { role.value = 'member' })
 </script>
 
 <template>
@@ -21,7 +23,7 @@ const role = ref<TeamRole | null>('member')
         :url="invite?.url ?? null"
         :loading="isLoading"
         :regenerating="isRotating"
-        :disabled="isStandaloneWorkspace"
+        :disabled="!inviteStore.canManage || !invite"
         @regenerate="inviteStore.rotate()"
       />
       <p class="invite__expires" :class="{ 'is-error': !!error }" aria-live="polite">
@@ -33,10 +35,10 @@ const role = ref<TeamRole | null>('member')
       <h3 id="invite-role-label" class="invite__label">{{ $t('invite.roleLabel') }}</h3>
       <BaseSelect
         v-model="role"
-        :options="getTeamRoleOptions()"
+        :options="getTeamRoleOptions(teamStore.currentTeam?.myRole)"
         icon="user"
         aria-labelledby="invite-role-label"
-        :disabled="isLoading || isStandaloneWorkspace"
+        :disabled="isLoading || !inviteStore.canManage"
       />
     </div>
 
@@ -45,7 +47,7 @@ const role = ref<TeamRole | null>('member')
         size="lg"
         class="invite__done"
         :loading="isCreating"
-        :disabled="isStandaloneWorkspace || isLoading || isRotating || !role"
+        :disabled="!inviteStore.canManage || isLoading || isRotating || !role"
         @click="role && inviteStore.add(role)"
       >
         {{ $t('invite.add') }}

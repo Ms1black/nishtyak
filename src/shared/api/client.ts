@@ -40,7 +40,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (response.status === 401 && code === 'PREVIEW_AUTH_REQUIRED') {
       const next = `${window.location.pathname}${window.location.search}`
       window.location.assign(`/preview/access?next=${encodeURIComponent(next)}`)
-    } else if (response.status === 401 && !path.startsWith('/me') && !path.startsWith('/auth/')) {
+    } else if (response.status === 401 && !path.startsWith('/me') && !path.startsWith('/session') && !path.startsWith('/auth/')) {
       onUnauthorized?.()
     }
     throw new ApiError(response.status, message, code)

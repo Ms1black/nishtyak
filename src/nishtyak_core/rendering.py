@@ -108,7 +108,16 @@ class DocumentRenderer:
         )
         if plan.run_spec:
             run = plan.run_spec
-            if plan.run_spec_origin == "inferred":
+            if plan.run_spec_origin == "automatic":
+                lines.extend(
+                    [
+                        "The assistant selected the following command from existing static "
+                        "launch candidates after reading project evidence. It has not been "
+                        "confirmed by the author or executed; arguments may still be required.",
+                        "",
+                    ]
+                )
+            elif plan.run_spec_origin == "inferred":
                 lines.extend(
                     [
                         "The following command was inferred from project structure and static "

@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useUserStore } from '@/entities/user'
-import { ApiError, isStandaloneWorkspace, USE_MOCK_API } from '@/shared/api'
+import { ApiError, isStandaloneWorkspace } from '@/shared/api'
 import { BaseButton, BaseIcon, BaseInput } from '@/shared/ui'
+
+const props = defineProps<{ register?: boolean }>()
+const name = ref('')
 
 const emit = defineEmits<{ success: [] }>()
 
@@ -16,19 +19,25 @@ const serverError = ref<string | null>(null)
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const emailError = computed(() => (touched.value && !EMAIL_RE.test(email.value) ? 'auth.errors.email' : null))
-const passwordError = computed(() => (touched.value && password.value.length < 6 ? 'auth.errors.password' : null))
+const passwordError = computed(() => (touched.value && (props.register ? password.value.length < 12 || password.value.length > 128 : !password.value) ? 'auth.errors.password' : null))
 
 async function submit() {
-  if (isStandaloneWorkspace.value) return
+  if (isStandaloneWorkspace.value || isSubmitting.value) return
   touched.value = true
   serverError.value = null
-  if (emailError.value || passwordError.value) return
+  if (emailError.value || passwordError.value || (props.register && !name.value.trim())) return
   isSubmitting.value = true
   try {
-    await userStore.login({ email: email.value, password: password.value })
+    if (props.register) await userStore.register({ name: name.value.trim(), email: email.value.trim(), password: password.value })
+    else await userStore.login({ email: email.value.trim(), password: password.value })
     emit('success')
   } catch (e) {
-    serverError.value = e instanceof ApiError && (e.status === 401 || e.status === 400) ? 'auth.errors.invalid' : 'auth.errors.network'
+    serverError.value = e instanceof ApiError
+      ? e.code === 'EMAIL_EXISTS' ? 'auth.errors.emailExists'
+        : e.status === 429 ? 'auth.errors.rateLimit'
+          : [400, 401, 422].includes(e.status) ? (props.register ? 'auth.errors.registration' : 'auth.errors.invalid')
+            : 'auth.errors.network'
+      : 'auth.errors.network'
   } finally {
     isSubmitting.value = false
   }
@@ -37,6 +46,11 @@ async function submit() {
 
 <template>
   <form class="login" novalidate @submit.prevent="submit">
+    <div v-if="register" class="login__field">
+      <label for="register-name" class="login__label">{{ $t('auth.name') }}</label>
+      <BaseInput id="register-name" v-model="name" autocomplete="name" :maxlength="80" :disabled="isSubmitting" :aria-invalid="touched && !name.trim()" />
+      <p v-if="touched && !name.trim()" class="login__error">{{ $t('auth.errors.name') }}</p>
+    </div>
     <div class="login__field">
       <label for="login-email" class="login__label">{{ $t('auth.email') }}</label>
       <BaseInput
@@ -59,7 +73,8 @@ async function submit() {
           id="login-password"
           v-model="password"
           :type="showPassword ? 'text' : 'password'"
-          autocomplete="current-password"
+          :autocomplete="register ? 'new-password' : 'current-password'"
+          :maxlength="128"
           :disabled="isSubmitting || isStandaloneWorkspace"
           :aria-invalid="!!passwordError"
           :aria-describedby="passwordError ? 'login-password-error' : undefined"
@@ -82,9 +97,9 @@ async function submit() {
       {{ $t(serverError) }}
     </p>
 
-    <BaseButton type="submit" size="lg" block :loading="isSubmitting" :disabled="isStandaloneWorkspace">{{ $t('auth.submit') }}</BaseButton>
+    <BaseButton type="submit" size="lg" block :loading="isSubmitting" :disabled="isStandaloneWorkspace">{{ $t(register ? 'auth.registerSubmit' : 'auth.submit') }}</BaseButton>
 
-    <p v-if="USE_MOCK_API" class="login__demo">{{ $t('auth.demo') }}</p>
+    <p v-if="register" class="login__demo">{{ $t('auth.passwordHint') }}</p>
   </form>
 </template>
 

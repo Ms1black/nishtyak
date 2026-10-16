@@ -25,12 +25,13 @@ services:
     network_mode: host
     command: ["--host", "127.0.0.1", "--port", "${NISHTYAK_WEB_PORT:-8081}"]
     environment:
-      NISHTYAK_WEB_MODE: local
+      NISHTYAK_WEB_MODE: ${NISHTYAK_WEB_MODE:-local}
       NISHTYAK_WEB_PORT: ${NISHTYAK_WEB_PORT:-8081}
       NISHTYAK_WEB_DATA_DIR: /data
       NISHTYAK_LOGIC_URL: http://127.0.0.1:8010
       NISHTYAK_SERVICE_TOKEN: ${NISHTYAK_SERVICE_TOKEN:?Use the internal logic service token}
       NISHTYAK_WEB_ORIGINS: ${NISHTYAK_WEB_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081}
+      NISHTYAK_ACCOUNT_SESSION_SECONDS: ${NISHTYAK_ACCOUNT_SESSION_SECONDS:-604800}
     volumes:
       - web:/data
     depends_on:
@@ -50,7 +51,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 35s
     healthcheck:
-      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('NISHTYAK_WEB_PORT', '8081') + '/api/session', timeout=3)"]
+      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('NISHTYAK_WEB_PORT', '8081') + '/api/healthz', timeout=3)"]
       interval: 15s
       timeout: 4s
       retries: 3

@@ -511,24 +511,26 @@ def test_new_tools_reject_unbounded_or_host_file_arguments(
         ProjectTools(context).call(name, arguments)
 
 
+@pytest.mark.parametrize("feature", ["readme", "review"])
 def test_model_response_arriving_after_shared_deadline_is_not_accepted(
-    context: SafeProjectContext, monkeypatch: pytest.MonkeyPatch
+    context: SafeProjectContext, monkeypatch: pytest.MonkeyPatch, feature: str
 ) -> None:
     ticks = iter([0.0, 0.0, 15.1])
     monkeypatch.setattr("nishtyak_core.advisors.project_agent.time.monotonic", lambda: next(ticks))
-    transport = Responses(final(context, "readme"))
-    result = advisor(transport).advise_context(context, "readme")
+    transport = Responses(final(context, feature))
+    result = advisor(transport).advise_context(context, feature)
     assert result.status == "unavailable" and result.reason == "deadline_exceeded"
     assert result.rounds == 1 and not result.suggestions
 
 
+@pytest.mark.parametrize("feature", ["readme", "review"])
 def test_time_budget_reserves_final_response_instead_of_more_tool_turns(
-    context: SafeProjectContext, monkeypatch: pytest.MonkeyPatch
+    context: SafeProjectContext, monkeypatch: pytest.MonkeyPatch, feature: str
 ) -> None:
     ticks = iter([0.0, 0.0, 9.0, 9.0, 10.0])
     monkeypatch.setattr("nishtyak_core.advisors.project_agent.time.monotonic", lambda: next(ticks))
-    transport = Responses(tools(call("launch_candidates", {})), final(context, "readme"))
-    result = advisor(transport).advise_context(context, "readme")
+    transport = Responses(tools(call("launch_candidates", {})), final(context, feature))
+    result = advisor(transport).advise_context(context, feature)
     assert result.status == "ok" and result.rounds == 2
     assert transport.requests[1].timeout == 6.0
     assert json.loads(transport.requests[1].body)["tool_choice"] == "none"
@@ -650,3 +652,120 @@ def test_source_map_never_executes_imports_or_top_level_calls(tmp_path) -> None:
     context = SafeProjectContext.from_project(ReproducibilityService().analyze(snapshot), snapshot)
     assert context.facts["code_map"][0]["parsed"] is True
     assert not marker.exists()
+
+
+def combined_review_suggestions(context):
+    source = next(item for item in context.files if item["path"] == "experiment.py")
+    launch = context.launches[0]
+    return [
+        {
+            "kind": "readme_description",
+            "text": "Скрипт вычисляет среднее чисел.",
+            "evidence_ids": [source["id"]],
+            "candidate_id": None,
+            "module": None,
+            "package": None,
+        },
+        {
+            "kind": "entrypoint_hypothesis",
+            "text": "Этот скрипт выполняет основной расчёт.",
+            "evidence_ids": [launch["id"], source["id"]],
+            "candidate_id": launch["id"],
+            "module": None,
+            "package": None,
+        },
+    ]
+
+
+def test_combined_review_generates_description_and_selects_launch_in_one_request(context):
+    transport = Responses(
+        final(context, "review", suggestions=combined_review_suggestions(context))
+    )
+    service = advisor(transport)
+    result = service.advise_context(context, "review")
+    assert result.status == "ok" and result.rounds == 1 and result.tool_calls == 0
+    assert {item.kind for item in result.suggestions} == {
+        "readme_description",
+        "entrypoint_hypothesis",
+    }
+    service.validate_result(json.loads(json.dumps(result.to_dict())), context, "review")
+    system = json.loads(transport.requests[0].body)["messages"][0]["content"]
+    assert "static recommended flag is only a heuristic" in system
+    assert "at most ONE entrypoint_hypothesis" in system
+
+
+@pytest.mark.parametrize("failure", ["unknown", "no_source", "multiple", "command"])
+def test_combined_review_rejects_unsupported_or_ambiguous_launch_choices(context, failure):
+    suggestions = combined_review_suggestions(context)
+    if failure == "unknown":
+        suggestions[1]["candidate_id"] = "invented"
+    elif failure == "no_source":
+        suggestions[1]["evidence_ids"] = [context.launches[0]["id"]]
+    elif failure == "multiple":
+        suggestions.append(dict(suggestions[1]))
+    else:
+        suggestions[1]["text"] = "python -c 'arbitrary code'"
+    response = final(context, "review", suggestions=suggestions)
+    transport = Responses(response, response)
+    result = advisor(transport).advise_context(context, "review")
+    assert result.status == "invalid_response" and not result.suggestions
+    assert len(transport.requests) == 2  # One bounded repair, never an unbounded agent loop.
+
+
+def test_combined_review_can_leave_launch_unknown_without_losing_description(context):
+    transport = Responses(
+        final(context, "review", suggestions=combined_review_suggestions(context)[:1])
+    )
+    result = advisor(transport).advise_context(context, "review")
+    assert result.status == "ok" and result.suggestions[0].kind == "readme_description"
+
+
+def test_combined_review_uses_existing_multi_tool_budget(context):
+    source = next(item for item in context.files if item["path"] == "experiment.py")
+    transport = Responses(
+        tools(
+            call("launch_candidates", {}, "launches"),
+            call("read_sources", {"file_ids": [source["id"]], "line_count": 30}, "sources"),
+        ),
+        final(context, "review", suggestions=combined_review_suggestions(context)),
+    )
+    result = advisor(transport).advise_context(context, "review")
+    assert result.status == "ok" and result.rounds == 2 and result.tool_calls == 2
+    assert len(transport.requests) == 2
+
+
+@pytest.mark.parametrize("kind", ["module", "callable"])
+def test_combined_review_requires_the_selected_launch_source_with_src_layout(kind):
+    files = {"src/science/__init__.py": "def main():\n    print(42)\n"}
+    if kind == "module":
+        files["src/science/__main__.py"] = "from . import main\nmain()\n"
+        launch_path = "src/science/__main__.py"
+    else:
+        files["pyproject.toml"] = (
+            '[project]\nname="science"\nversion="1.0"\n'
+            '[project.scripts]\nexperiment="science:main"\n'
+        )
+        launch_path = "src/science/__init__.py"
+    files["utility.py"] = "print('unrelated')\n"
+    snapshot = SnapshotBuilder().from_mapping(files)
+    report = ReproducibilityService().analyze(
+        snapshot, AnalysisOptions(project_root=".", source_roots=("src", "."))
+    )
+    context = SafeProjectContext.from_project(report, snapshot)
+    launch = next(item for item in context.launches if item["run_spec"]["kind"] == kind)
+    source = next(item for item in context.files if item["path"] == launch_path)
+    unrelated = next(item for item in context.files if item["path"] == "utility.py")
+    suggestion = {
+        "kind": "entrypoint_hypothesis",
+        "text": "Основной расчёт проекта.",
+        "evidence_ids": [launch["id"], source["id"]],
+        "candidate_id": launch["id"],
+        "module": None,
+        "package": None,
+    }
+    good = advisor(Responses(final(context, "review", suggestions=[suggestion])))
+    assert good.advise_context(context, "review").status == "ok"
+    suggestion["evidence_ids"] = [launch["id"], unrelated["id"]]
+    invalid = final(context, "review", suggestions=[suggestion])
+    result = advisor(Responses(invalid, invalid)).advise_context(context, "review")
+    assert result.status == "invalid_response" and not result.suggestions

@@ -99,6 +99,18 @@ class ProjectStore:
             )
         return dict(row)
 
+    def scope_for(self, project_id: str) -> str:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT scope FROM projects WHERE id=? AND expires_at>?",
+                (project_id, time.time()),
+            ).fetchone()
+        if row is None:
+            raise LogicClientError(
+                404, "RESOURCE_NOT_FOUND", "Project was not found or has expired"
+            )
+        return row[0]
+
     def create(
         self,
         scope: str,

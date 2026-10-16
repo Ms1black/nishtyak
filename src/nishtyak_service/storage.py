@@ -229,15 +229,26 @@ class SQLiteJobRepository:
             ).fetchall()
         return [self._record(row) for row in rows]
 
-    def read_review(self, record: JobRecord, analysis_id: str) -> dict | None:
+    def read_review(
+        self, record: JobRecord, analysis_id: str, *, reuse_policy: str | None = None
+    ) -> dict | None:
         self.get_project(record.owner_id, record.project_id)
         with self._connect() as connection:
             row = connection.execute(
-                """SELECT result_json FROM automatic_reviews
+                """SELECT result_json, job_id FROM automatic_reviews
                 WHERE project_id = ? AND analysis_id = ?""",
                 (record.project_id, analysis_id),
             ).fetchone()
-        return json.loads(row["result_json"]) if row is not None else None
+        if row is None:
+            return None
+        result = json.loads(row["result_json"])
+        if (
+            reuse_policy is not None
+            and row["job_id"] != record.job_id
+            and result.get("policy") != reuse_policy
+        ):
+            return None
+        return result
 
     def save_review(self, record: JobRecord, analysis_id: str, result: dict) -> None:
         payload = bounded_json(result, 256 * 1024).decode("ascii")

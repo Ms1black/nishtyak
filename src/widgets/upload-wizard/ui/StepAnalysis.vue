@@ -168,7 +168,7 @@ function focusFinding(finding: Finding) {
           <div class="overview__run">
             <div class="overview__run-head">
               <span>{{ $t('analysis.run.command') }}</span>
-              <button type="button" class="overview__link" @click="focusSection('run')">
+              <button v-if="wizard.canEdit" type="button" class="overview__link" @click="focusSection('run')">
                 {{ $t('analysis.review.editRun') }}
               </button>
             </div>
@@ -176,14 +176,14 @@ function focusFinding(finding: Finding) {
             <p v-else>{{ $t('analysis.review.runUnknown') }}</p>
             <p v-if="command" class="overview__hint">
               {{
-                wizard.decisions.runSpec ? $t('analysis.review.runAuthor') : $t('analysis.review.runInferred')
+                wizard.decisions.runSpec ? $t('analysis.review.runAuthor') : visiblePlan?.runSpecOrigin === 'automatic' ? $t('analysis.review.runAutomatic') : $t('analysis.review.runInferred')
               }}
             </p>
           </div>
           <div v-if="visiblePlan?.description" class="overview__description">
             <div class="overview__run-head">
               <span>{{ $t('analysis.review.descriptionTitle') }}</span>
-              <button type="button" class="overview__link" @click="focusSection('data')">
+              <button v-if="wizard.canEdit" type="button" class="overview__link" @click="focusSection('data')">
                 {{ $t('analysis.review.editRun') }}
               </button>
             </div>
@@ -194,7 +194,7 @@ function focusFinding(finding: Finding) {
           </div>
         </BaseCard>
 
-        <BaseCard v-if="questions.length && !questionsDismissed" padding="lg" class="questions">
+        <BaseCard v-if="wizard.canEdit && questions.length && !questionsDismissed" padding="lg" class="questions">
           <h3 class="questions__title">{{ $t('analysis.review.questionsTitle') }}</h3>
           <p class="overview__text">{{ $t('analysis.review.questionsHint') }}</p>
           <ul class="questions__list">
@@ -206,20 +206,20 @@ function focusFinding(finding: Finding) {
               <BaseButton
                 variant="tonal"
                 size="sm"
-                :disabled="wizard.isBusy"
+                :disabled="wizard.isBusy || !wizard.canEdit"
                 @click="focusSection(question.section)"
               >
                 {{ $t('analysis.review.clarify') }}
               </BaseButton>
             </li>
           </ul>
-          <button type="button" class="overview__link" @click="questionsDismissed = true">
+          <button v-if="wizard.canEdit" type="button" class="overview__link" @click="questionsDismissed = true">
             {{ $t('analysis.review.leaveUnknown') }}
           </button>
         </BaseCard>
         <p v-else-if="questionsDismissed && questions.length" class="analysis__deferred">
           {{ $t('analysis.review.deferred') }}
-          <button type="button" class="overview__link" @click="questionsDismissed = false">
+          <button v-if="wizard.canEdit" type="button" class="overview__link" @click="questionsDismissed = false">
             {{ $t('analysis.review.clarify') }}
           </button>
         </p>
@@ -237,13 +237,14 @@ function focusFinding(finding: Finding) {
             :packages="wizard.decisions.packages"
             :versions="wizard.decisions.versions"
             :excluded-modules="wizard.decisions.excludedModules"
-            :disabled="wizard.isBusy"
+            :disabled="wizard.isBusy || !wizard.canEdit"
             @set-package="wizard.setPackage"
             @set-version="wizard.setVersion"
             @toggle="wizard.toggleModule"
           />
         </SectionCard>
 
+        <p v-if="!wizard.canEdit" class="analysis__optional">{{ $t('teams.readOnly') }}</p>
         <p class="analysis__optional">{{ $t('analysis.review.optional') }}</p>
         <SectionCard
           id="section-run"
@@ -261,7 +262,7 @@ function focusFinding(finding: Finding) {
             :script-files="scriptFiles"
             :python-requires="wizard.analysis.pythonRequires"
             :candidates="wizard.analysis.launchCandidates"
-            :disabled="wizard.isBusy"
+            :disabled="wizard.isBusy || !wizard.canEdit"
           />
         </SectionCard>
         <SectionCard
@@ -277,7 +278,7 @@ function focusFinding(finding: Finding) {
             v-model:expected-output="expectedOutput"
             v-model:description="description"
             :data-files="dataFiles"
-            :disabled="wizard.isBusy"
+            :disabled="wizard.isBusy || !wizard.canEdit"
           />
         </SectionCard>
         <SectionCard
@@ -295,11 +296,12 @@ function focusFinding(finding: Finding) {
             :project-name="wizard.project.name"
             :files="wizard.analysis.files"
             :excluded-files="wizard.decisions.excludedFiles"
-            :disabled="wizard.isBusy"
+            :disabled="wizard.isBusy || !wizard.canEdit"
             @toggle="wizard.toggleFile"
           />
         </SectionCard>
         <SectionCard
+          v-if="wizard.canEdit"
           id="section-tools"
           v-model:open="expanded.tools"
           collapsible
@@ -321,6 +323,7 @@ function focusFinding(finding: Finding) {
       </div>
 
       <ReadinessPanel
+        v-if="wizard.canEdit"
         class="analysis__aside"
         :project="wizard.project"
         :plan="visiblePlan"

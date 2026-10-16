@@ -30,7 +30,7 @@ defineExpose({ focusCreate: () => createForm.value?.focus() })
         <span v-if="team.id === teamStore.currentTeamId" class="team__current">{{ $t('teams.current') }}</span>
         <button v-else type="button" class="team__switch" @click="teamStore.switchTeam(team.id)">{{ $t('teams.switch') }}</button>
         <div class="team__delete">
-          <DeleteTeamButton v-if="team.myRole === 'owner'" :team="team" />
+          <DeleteTeamButton v-if="team.myRole === 'owner' && !team.personal" :team="team" />
           <span v-else class="team__hint" :title="$t('teams.ownerOnly')">—</span>
         </div>
       </li>

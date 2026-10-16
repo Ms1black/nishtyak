@@ -117,6 +117,7 @@ class BrowserService:
                 "enabled": value["enabled"],
                 "provider": value["provider"],
                 "budgetSeconds": value["budget_seconds"],
+                "features": value.get("features", []),
             }
         }
 

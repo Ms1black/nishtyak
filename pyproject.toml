@@ -13,6 +13,7 @@ dependencies = ["packaging>=24", "stdlib-list>=0.11,<1"]
 conda = ["PyYAML>=6"]
 resolve = ["uv==0.12.3"]
 web = [
+    "argon2-cffi>=25.1,<26",
     "fastapi>=0.143,<1",
     "uvicorn>=0.54,<1",
     "python-multipart>=0.0.32,<1",
@@ -25,6 +26,7 @@ service = [
     "PyYAML>=6",
 ]
 dev = [
+    "argon2-cffi>=25.1,<26",
     "pytest>=8",
     "ruff>=0.11",
     "PyYAML>=6",

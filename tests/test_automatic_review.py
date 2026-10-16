@@ -16,7 +16,7 @@ from nishtyak_core import ArchiveReader, ReproducibilityService
 from nishtyak_core.advisors import ProjectAdvisoryResult
 from nishtyak_core.advisors.project_agent import ProjectAdvisorySuggestion
 from nishtyak_core.jobs import AnalysisJobResult
-from nishtyak_core.models import AnalysisOptions, UserDecisions
+from nishtyak_core.models import AnalysisOptions, RunSpec, UserDecisions
 from nishtyak_service.api import create_app
 from nishtyak_service.automatic_review import AutomaticProjectReview
 from nishtyak_service.config import Settings
@@ -30,11 +30,17 @@ HEADERS = {"Authorization": "Bearer " + TOKEN, "X-Owner-ID": "alice"}
 DESCRIPTION = "experiment.py prints the result returned by helpers.compute()."
 
 
-def create_project(repository, owner="alice"):
+def create_project(repository, owner="alice", files=None):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
-        archive.writestr("experiment.py", "from helpers import compute\nprint(compute())\n")
-        archive.writestr("helpers.py", "def compute():\n    return 42\n")
+        for path, source in (
+            files
+            or {
+                "experiment.py": "from helpers import compute\nprint(compute())\n",
+                "helpers.py": "def compute():\n    return 42\n",
+            }
+        ).items():
+            archive.writestr(path, source)
     source = stream.getvalue()
     record = repository.submit(owner, source, AnalysisOptions())
     repository.claim()
@@ -58,12 +64,12 @@ def reviewed(tmp_path, monkeypatch):
     record, report = create_project(repository)
     calls = []
 
-    def run(runner, context, feature="readme", description=""):
+    def run(runner, context, feature="review", description=""):
         calls.append((context, feature, runner.wall_time_seconds))
         evidence = tuple(file["id"] for file in context.files if file["text"])
         result = ProjectAdvisoryResult(
             context.analysis_id,
-            "readme",
+            feature,
             "ok",
             (ProjectAdvisorySuggestion("readme_description", DESCRIPTION, evidence),),
             rounds=1,
@@ -86,7 +92,7 @@ def test_background_review_is_cached_and_preserves_decisions_and_requirements(re
     assert plan["requirements"] == ()
     assert plan["automatic_review"]["applied"] is True
     assert plan["automatic_review"]["source_paths"] == ["experiment.py", "helpers.py"]
-    assert calls[0][1] == "readme" and 0 < calls[0][2] <= 15
+    assert calls[0][1] == "review" and 0 < calls[0][2] <= 15
     with zipfile.ZipFile(io.BytesIO(logic.bundle("alice", record.project_id))) as archive:
         readme = archive.read("README.md").decode()
         assert DESCRIPTION in readme and "generated automatically" in readme
@@ -146,6 +152,7 @@ def test_provider_failure_is_terminal_and_never_blocks_archive(reviewed, monkeyp
     assert logic.get_job("alice", record.job_id)["status"] == "succeeded"
     assert logic.get_job("alice", record.job_id)["automatic_review"]["status"] == "unavailable"
     assert logic.plan("alice", record.project_id)["description"] == ""
+    assert logic.plan("alice", record.project_id)["run_spec_origin"] == "inferred"
     assert logic.bundle("alice", record.project_id).startswith(b"PK")
     logic.review_pending()
     assert len(calls) == 1
@@ -185,6 +192,7 @@ def test_api_lifespan_runs_review_and_exposes_non_secret_capabilities(reviewed):
             "enabled": True,
             "provider": "deepseek",
             "budget_seconds": 15,
+            "features": ["description", "entrypoint"],
         }
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
@@ -275,7 +283,7 @@ def test_unsupported_provider_claims_cannot_change_package_decisions(reviewed, m
             json.dumps(
                 ProjectAdvisoryResult(
                     context.analysis_id,
-                    "readme",
+                    "review",
                     "ok",
                     (
                         ProjectAdvisorySuggestion(
@@ -324,7 +332,7 @@ def test_excluding_uncited_source_still_invalidates_automatic_description(review
             json.dumps(
                 ProjectAdvisoryResult(
                     context.analysis_id,
-                    "readme",
+                    "review",
                     "ok",
                     (ProjectAdvisorySuggestion("readme_description", DESCRIPTION, (identifier,)),),
                     rounds=1,
@@ -368,3 +376,195 @@ with repository.operation('alice', sys.argv[2], lease_seconds=20):
     assert reopened.get_job("alice", record.job_id)["automatic_review"]["status"] == "skipped"
     assert reopened.plan("alice", record.project_id)["description"] == ""
     assert not calls
+
+
+def choose_entrypoint(monkeypatch, calls, target="experiment.py"):
+    def run(runner, context, feature, description=""):
+        calls.append((context, feature, runner.wall_time_seconds))
+        source = next(file for file in context.files if file["path"] == target)
+        launch = next(item for item in context.launches if item["run_spec"]["target"] == target)
+        result = ProjectAdvisoryResult(
+            context.analysis_id,
+            feature,
+            "ok",
+            (
+                ProjectAdvisorySuggestion("readme_description", DESCRIPTION, (source["id"],)),
+                ProjectAdvisorySuggestion(
+                    "entrypoint_hypothesis",
+                    "This source coordinates the main computation.",
+                    (launch["id"], source["id"]),
+                    candidate_id=launch["id"],
+                ),
+            ),
+            rounds=1,
+        )
+        return json.loads(json.dumps(result.to_dict()))
+
+    monkeypatch.setattr("nishtyak_service.automatic_review.ProjectAdviceJobRunner.run", run)
+
+
+def test_model_choice_precedes_static_recommendation_and_replans_local_findings(
+    reviewed, monkeypatch
+):
+    logic, _, _, calls = reviewed
+    record, report = create_project(
+        logic.repository,
+        "bob",
+        {
+            "utility.py": "if __name__ == '__main__':\n    print('utility')\n",
+            "workflow/experiment.py": "from helpers import compute\nprint(compute())\n",
+            "workflow/helpers.py": "def compute():\n    return 42\n",
+        },
+    )
+    choose_entrypoint(monkeypatch, calls, "workflow/experiment.py")
+    static = logic.core.prepare(report, UserDecisions(report.analysis_id))
+    assert static.run_spec.target == "utility.py"
+    assert "LOCAL_IMPORT_CONTEXT_REQUIRED" in {item.code for item in static.findings}
+    plan = logic.plan("bob", record.project_id)
+    assert plan["run_spec"]["target"] == "workflow/experiment.py"
+    assert plan["run_spec_origin"] == "automatic"
+    assert plan["decisions"]["run_spec"] is None
+    codes = {item["code"] for item in plan["findings"]}
+    assert "RUN_AUTOMATIC" in codes and "RUN_INFERRED" not in codes
+    assert "LOCAL_IMPORT_CONTEXT_REQUIRED" not in codes
+    assert plan["automatic_review"]["entrypoint"]["applied"] is True
+    with zipfile.ZipFile(io.BytesIO(logic.bundle("bob", record.project_id))) as archive:
+        readme = archive.read("README.md").decode()
+        assert "python run_project.py" in readme
+        assert '"target": "workflow/experiment.py"' in archive.read("run_project.py").decode()
+        assert "python utility.py" not in readme
+        assert "assistant selected" in readme
+        assert "LOCAL_IMPORT_CONTEXT_REQUIRED" not in readme
+    assert len(calls) == 1 and calls[0][1] == "review"
+    assert 0 < calls[0][2] <= 15
+
+
+def test_explicit_author_launch_wins_and_reset_restores_cached_model_choice(reviewed, monkeypatch):
+    logic, record, report, calls = reviewed
+    choose_entrypoint(monkeypatch, calls)
+    authored = UserDecisions(report.analysis_id, run_spec=RunSpec("helpers.py"))
+    logic.save_decisions("alice", record.project_id, authored, 0)
+    plan = logic.plan("alice", record.project_id)
+    assert plan["run_spec"]["target"] == "helpers.py"
+    assert plan["run_spec_origin"] == "author"
+    assert plan["automatic_review"]["entrypoint"]["reason"] == "author_override"
+    assert not plan["automatic_review"]["entrypoint"]["applied"]
+    logic.save_decisions("alice", record.project_id, UserDecisions(report.analysis_id), 1)
+    reset = logic.plan("alice", record.project_id)
+    assert reset["run_spec"]["target"] == "experiment.py"
+    assert reset["run_spec_origin"] == "automatic"
+    assert len(calls) == 1
+
+
+def test_excluded_source_invalidates_model_choice_without_another_request(reviewed, monkeypatch):
+    logic, record, report, calls = reviewed
+    choose_entrypoint(monkeypatch, calls)
+    logic.review_pending()
+    plan = logic.plan(
+        "alice",
+        record.project_id,
+        UserDecisions(report.analysis_id, excluded_files=("helpers.py",)),
+    )
+    assert plan["run_spec_origin"] != "automatic"
+    assert plan["automatic_review"]["entrypoint"]["reason"] == "source_excluded"
+    assert plan["automatic_review"]["entrypoint"]["applied"] is False
+    assert plan["state"] == "blocked"  # The retained importer lost its local dependency.
+    assert len(calls) == 1
+
+
+def test_invalid_candidate_causes_static_fallback_and_never_changes_decisions(
+    reviewed, monkeypatch
+):
+    logic, record, report, calls = reviewed
+
+    def run(runner, context, feature, description=""):
+        calls.append(feature)
+        source = next(item for item in context.files if item["path"] == "experiment.py")
+        result = ProjectAdvisoryResult(
+            context.analysis_id,
+            feature,
+            "ok",
+            (
+                ProjectAdvisorySuggestion(
+                    "entrypoint_hypothesis",
+                    "Invented target",
+                    (source["id"],),
+                    candidate_id="attacker-target",
+                ),
+            ),
+            rounds=1,
+        )
+        return json.loads(json.dumps(result.to_dict()))
+
+    monkeypatch.setattr("nishtyak_service.automatic_review.ProjectAdviceJobRunner.run", run)
+    plan = logic.plan("alice", record.project_id)
+    assert plan["run_spec_origin"] == "inferred"
+    assert plan["run_spec"]["target"] == "experiment.py"
+    assert plan["automatic_review"]["status"] == "unavailable"
+    assert plan["decisions"]["run_spec"] is None
+    assert len(calls) == 1
+
+
+def test_absent_token_and_provider_quota_use_static_launch(reviewed, monkeypatch):
+    logic, record, _, calls = reviewed
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    no_token = logic.plan("alice", record.project_id)
+    assert no_token["run_spec_origin"] == "inferred"
+    assert no_token["run_spec"]["target"] == "experiment.py"
+    assert not calls
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "private-test-key")
+    for _ in range(10):
+        logic.repository.consume_rate("alice", "advice-daily", 10, 86400)
+    plan = logic.plan("alice", record.project_id)
+    assert plan["run_spec_origin"] == "inferred"
+    assert plan["automatic_review"]["reason"] == "review_quota"
+    assert not calls
+
+
+def test_legacy_description_cache_only_upgrades_on_explicit_reanalysis(reviewed, monkeypatch):
+    logic, record, report, calls = reviewed
+    legacy = {
+        "status": "ready",
+        "paragraphs": [],
+        "analysis_id": report.analysis_id,
+        "provider": "deepseek",
+        "policy": "source_descriptions_only",
+    }
+    logic.repository.save_review(record, report.analysis_id, legacy)
+    choose_entrypoint(monkeypatch, calls)
+    assert logic.plan("alice", record.project_id)["run_spec_origin"] == "inferred"
+    assert not calls
+    submission = logic.reanalyze("alice", record.project_id, AnalysisOptions())
+    logic.repository.claim()
+    logic.repository.finish(submission["job_id"], AnalysisJobResult("succeeded", report))
+    assert logic.get_job("alice", submission["job_id"])["automatic_review"]["status"] == "pending"
+    logic.review_pending()
+    plan = logic.plan("alice", record.project_id)
+    assert plan["run_spec_origin"] == "automatic"
+    assert len(calls) == 1
+    # A same-analysis re-run with the current policy reuses both description and choice.
+    submission = logic.reanalyze("alice", record.project_id, AnalysisOptions())
+    logic.repository.claim()
+    logic.repository.finish(submission["job_id"], AnalysisJobResult("succeeded", report))
+    logic.review_pending()
+    assert logic.plan("alice", record.project_id)["run_spec_origin"] == "automatic"
+    assert len(calls) == 1
+
+
+def test_changed_root_analysis_never_reuses_previous_launch_choice(reviewed, monkeypatch):
+    logic, record, report, calls = reviewed
+    choose_entrypoint(monkeypatch, calls)
+    logic.review_pending()
+    changed = replace(report, analysis_id="changed-analysis")
+    submission = logic.reanalyze("alice", record.project_id, AnalysisOptions(project_root="."))
+    logic.repository.claim()
+    logic.repository.finish(submission["job_id"], AnalysisJobResult("succeeded", changed))
+    assert (
+        logic.automatic_review.candidate_id(
+            logic.repository.get_project("alice", record.project_id), changed
+        )
+        is None
+    )
+    logic.review_pending()
+    assert logic.plan("alice", record.project_id)["run_spec_origin"] == "automatic"
+    assert len(calls) == 2

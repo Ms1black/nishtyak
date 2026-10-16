@@ -1,10 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { AnalysisDecisions, PackagePlan, Project, ProjectAnalysis } from '@/entities/project/model/types'
-import { ApiError } from '@/shared/api'
+import { ApiError, resetIntegrationSession } from '@/shared/api'
 import { useUploadWizardStore } from './uploadWizardStore'
 
-const { api, projects } = vi.hoisted(() => ({
+const { api, projects, team } = vi.hoisted(() => ({
+  team: { canEditProjects: true },
   api: {
     getAnalysis: vi.fn(),
     getDecisions: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('@/entities/project', async () => ({
   projectApi: api,
   useProjectStore: () => projects,
 }))
+vi.mock('@/entities/team', () => ({ useTeamStore: () => team }))
 vi.mock('@/shared/lib', async () => ({ debounce: (await import('@/shared/lib/debounce')).debounce }))
 
 function project(id: string): Project {
@@ -79,6 +81,7 @@ describe('upload wizard request coordination', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.resetAllMocks()
+    team.canEditProjects = true
     setActivePinia(createPinia())
     api.getAnalysis.mockImplementation(async (id: string) => analysis(id))
     api.getDecisions.mockResolvedValue({ revision: 0, decisions: null, updatedAt: null })
@@ -229,4 +232,41 @@ describe('upload wizard request coordination', () => {
     await store.build()
     expect(api.buildArchive).toHaveBeenCalledOnce()
   })
+  it('retains automatic launch provenance while saving data clarifications', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({ ...plan(decisions), runSpecOrigin: 'automatic' }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('example'))
+    store.update({ inputDescription: 'Ask the author for input.csv.' })
+    await store.build()
+    expect(api.saveDecisions.mock.calls[0]![1].runSpec).toBeNull()
+    expect(store.plan?.runSpecOrigin).toBe('automatic')
+  })
+
+  it('lets viewers read a plan without sending edits or a build', async () => {
+    team.canEditProjects = false
+    const store = useUploadWizardStore()
+    await store.openProject(project('example'))
+    expect(store.plan).not.toBeNull()
+    expect(store.canBuild).toBe(false)
+    store.update({ description: 'not allowed' })
+    await store.build()
+    await store.refreshPlan()
+    expect(store.decisions?.description).toBe('')
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('clears project data and rejects pending responses when the account changes', async () => {
+    const result = deferred<ProjectAnalysis>()
+    api.getAnalysis.mockReturnValueOnce(result.promise)
+    const store = useUploadWizardStore()
+    const opening = store.openProject(project('private'))
+    resetIntegrationSession()
+    result.resolve(analysis('private'))
+    await opening
+    expect(store.project).toBeNull()
+    expect(store.analysis).toBeNull()
+    expect(api.plan).not.toHaveBeenCalled()
+  })
+
 })

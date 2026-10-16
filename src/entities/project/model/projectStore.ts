@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { sessionGeneration } from '@/shared/api'
 import { projectApi } from '../api'
 import type { Project } from './types'
 
@@ -24,6 +25,14 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  function reset() {
+    requestId += 1
+    items.value = []
+    status.value = 'idle'
+  }
+
+  watch(sessionGeneration, reset, { flush: 'sync' })
+
   function getById(id: string): Project | undefined {
     return items.value.find((p) => p.id === id)
   }
@@ -43,5 +52,5 @@ export const useProjectStore = defineStore('project', () => {
     items.value = items.value.filter((project) => project.id !== id)
   }
 
-  return { items, status, fetchAll, getById, upsert, patch, remove }
+  return { items, status, reset, fetchAll, getById, upsert, patch, remove }
 })

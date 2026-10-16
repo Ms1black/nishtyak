@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { APP_NAME, RouteName } from '@/shared/config'
 import { useUserStore } from '@/entities/user'
 import { isStandaloneWorkspace, setUnauthorizedHandler } from '@/shared/api'
+import { safeAuthRedirect } from '@/shared/lib/authRedirect'
 import { locale, t } from '@/shared/i18n'
 
 export const router = createRouter({
@@ -52,6 +53,8 @@ export const router = createRouter({
       component: () => import('@/pages/login'),
       meta: { title: 'routes.login', public: true, guestOnly: true, layout: 'blank' },
     },
+    { path: '/register', name: RouteName.Register, component: () => import('@/pages/login'), meta: { title: 'auth.registerTitle', public: true, guestOnly: true, layout: 'blank' } },
+    { path: '/invite/team', name: RouteName.AcceptInvite, component: () => import('@/pages/accept-invite'), meta: { title: 'invite.join.title', public: true, layout: 'blank' } },
     { path: '/:pathMatch(.*)*', redirect: { name: RouteName.Upload } },
   ],
   scrollBehavior: (_to, _from, saved) => saved ?? { top: 0 },
@@ -61,7 +64,7 @@ router.beforeEach(async (to) => {
   const userStore = useUserStore()
   await userStore.ensureSession()
   if (isStandaloneWorkspace.value) return true
-  if (to.meta.guestOnly && userStore.isAuthenticated) return { name: RouteName.Upload }
+  if (to.meta.guestOnly && userStore.isAuthenticated) return safeAuthRedirect(to.query.redirect)
   if (!to.meta.public && !userStore.isAuthenticated) {
     return { name: RouteName.Login, query: to.fullPath !== '/' ? { redirect: to.fullPath } : {} }
   }

@@ -26,6 +26,7 @@ function onCopy() {
         class="invite-link__value"
         :class="{ 'is-loading': loading || regenerating }"
         :value="url ?? ''"
+        :placeholder="$t('invite.createHint')"
         aria-labelledby="invite-link-label"
         readonly
         @focus="($event.target as HTMLInputElement).select()"

@@ -8,7 +8,7 @@ const emit = defineEmits<{ revoke: [id: string] }>()
 
 <template>
   <li class="link-row">
-    <span class="link-row__url">{{ invite.url }}</span>
+    <span class="link-row__url">{{ invite.url ?? $t('invite.savedLink', { date: new Date(invite.createdAt).toLocaleDateString() }) }}</span>
     <span v-if="invite.role !== 'member'" class="link-row__role">{{ getRoleLabel(invite.role) }}</span>
     <span class="link-row__expires">{{ $t('invite.activeExpires', { days: formatDaysLeft(daysLeft(invite)) }) }}</span>
     <button type="button" class="link-row__revoke" :disabled="revoking" @click="emit('revoke', invite.id)">

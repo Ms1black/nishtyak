@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref, toRaw } from 'vue'
+import { computed, ref, toRaw, watch } from 'vue'
 import {
   createDefaultDecisions,
   projectApi,
@@ -13,7 +13,8 @@ import {
   type RunSpec,
   type TargetPlatform,
 } from '@/entities/project'
-import { ApiError } from '@/shared/api'
+import { ApiError, sessionGeneration } from '@/shared/api'
+import { useTeamStore } from '@/entities/team'
 import { debounce } from '@/shared/lib'
 
 export type WizardStep = 1 | 2 | 3
@@ -23,6 +24,8 @@ const POLL_INTERVAL_MS = 2000
 const SYNC_DELAY_MS = 500
 
 export const useUploadWizardStore = defineStore('upload-wizard', () => {
+  const teamStore = useTeamStore()
+  const canEdit = computed(() => teamStore.canEditProjects)
   const projectStore = useProjectStore()
   const step = ref<WizardStep>(1)
   const project = ref<Project | null>(null)
@@ -50,7 +53,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const isBusy = computed(
     () => isBuilding.value || isResolving.value || isRefreshing.value || isLoading.value || isAnalyzing.value,
   )
-  const canBuild = computed(() => !!plan.value && plan.value.state !== 'blocked' && !isBusy.value)
+  const canBuild = computed(() => canEdit.value && !!plan.value && plan.value.state !== 'blocked' && !isBusy.value)
   const canIncludeDockerfile = computed(() => {
     const current = plan.value
     if (current?.state !== 'ready_to_verify' || !current.pythonVersion || !current.runSpec) return false
@@ -115,7 +118,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function sync(): Promise<boolean> {
-    if (!project.value || !decisions.value) return false
+    if (!canEdit.value || !project.value || !decisions.value) return false
     if (syncing?.epoch === epoch) return syncing.promise
     const requestEpoch = epoch
     const projectId = project.value.id
@@ -154,7 +157,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const scheduleSync = debounce(() => void sync(), SYNC_DELAY_MS)
 
   function update(changes: Partial<AnalysisDecisions>) {
-    if (!decisions.value || isBusy.value) return
+    if (!canEdit.value || !decisions.value || isBusy.value) return
     decisions.value = { ...decisions.value, ...changes }
     editVersion += 1
     plan.value = null
@@ -165,12 +168,12 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function reloadDecisions() {
-    if (!project.value || isBusy.value) return
+    if (!canEdit.value || !project.value || isBusy.value) return
     await openProject(project.value)
   }
 
   async function refreshPlan() {
-    if (!project.value || !decisions.value || isBusy.value) return
+    if (!canEdit.value || !project.value || !decisions.value || isBusy.value) return
     const requestEpoch = epoch
     scheduleSync.cancel()
     isRefreshing.value = true
@@ -204,7 +207,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const setRunSpec = (runSpec: RunSpec | null) => update({ runSpec })
 
   async function build() {
-    if (!project.value || !decisions.value || isBusy.value) return
+    if (!canEdit.value || !project.value || !decisions.value || isBusy.value) return
     const requestEpoch = epoch
     const projectId = project.value.id
     isBuilding.value = true
@@ -237,7 +240,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function reanalyze(options: AnalysisOptions, authorEnvironment?: unknown) {
-    if (!project.value || isBusy.value) return
+    if (!canEdit.value || !project.value || isBusy.value) return
     const requestEpoch = epoch
     isLoading.value = true
     error.value = null
@@ -257,7 +260,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function resolve(target: { pythonVersion: string; platform: TargetPlatform }) {
-    if (!project.value || !decisions.value || isBusy.value) return
+    if (!canEdit.value || !project.value || !decisions.value || isBusy.value) return
     const requestEpoch = epoch
     isResolving.value = true
     error.value = null
@@ -307,7 +310,11 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     return cause instanceof ApiError ? cause.message : fallback
   }
 
+  watch(sessionGeneration, reset, { flush: 'sync' })
+  watch(() => teamStore.currentTeamId, reset, { flush: 'sync' })
+
   return {
+    canEdit,
     step,
     project,
     analysis,

@@ -553,3 +553,37 @@ def test_revalidation_uses_configured_source_roots():
     )
     assert plan.state == "blocked"
     assert "LOCAL_MODULE_EXCLUDED" in codes(plan)
+
+
+def test_automatic_candidate_is_validated_against_current_root_cwd_and_author_choices():
+    from nishtyak_core.launches import LaunchDetector
+
+    core = ReproducibilityService()
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "example/run.py": "print('example')\n",
+            "research/run.py": "print('experiment')\n",
+            "research/pyproject.toml": (
+                '[project]\nname="experiment"\nversion="1.0"\n'
+                '[project.optional-dependencies]\nplots=["matplotlib>=3"]\n'
+            ),
+        }
+    )
+    report = core.analyze(snapshot, AnalysisOptions(project_root="research"))
+    candidate = LaunchDetector().detect(report).recommended
+    assert candidate is not None
+    decisions = UserDecisions(report.analysis_id, selected_extras=("plots",))
+    automatic = core.prepare(report, decisions, automatic_candidate_id=candidate.id)
+    assert automatic.run_spec == RunSpec("run.py", working_directory="research")
+    assert automatic.run_spec_origin == "automatic"
+    assert "matplotlib>=3" in automatic.requirements
+    assert automatic.decisions == decisions
+    assert automatic.decisions.run_spec is None
+    unknown = core.prepare(report, decisions, automatic_candidate_id="another-analysis-candidate")
+    assert unknown.run_spec_origin == "inferred" and unknown.run_spec == automatic.run_spec
+    author = RunSpec("run.py", args=("--seed", "42"), working_directory="example")
+    overridden = core.prepare(
+        report, replace(decisions, run_spec=author), automatic_candidate_id=candidate.id
+    )
+    assert overridden.run_spec == author and overridden.run_spec_origin == "author"
+    assert "matplotlib>=3" in overridden.requirements

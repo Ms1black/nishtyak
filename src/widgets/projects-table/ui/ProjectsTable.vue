@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useTeamStore } from '@/entities/team'
 import {
   AnalysisBadge,
   ArchiveStatusLabel,
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   open: [project: Project]
 }>()
 
+const teamStore = useTeamStore()
 const archive = useArchiveActions()
 const projectStore = useProjectStore()
 const deleteTarget = ref<Project | null>(null)
@@ -41,7 +43,7 @@ function askDelete(project: Project) {
 
 async function removeProject() {
   const target = deleteTarget.value
-  if (!target || deleting.value) return
+  if (!target || deleting.value || !teamStore.canEditProjects) return
   deleting.value = target.id
   deleteError.value = null
   try {
@@ -61,7 +63,7 @@ function runAction(project: Project) {
     case 'download':
       return archive.download(project)
     case 'build':
-      return archive.build(project)
+      return teamStore.canEditProjects ? archive.build(project) : emit('open', project)
     default:
       emit('open', project)
   }
@@ -69,6 +71,7 @@ function runAction(project: Project) {
 
 function actionLabel(project: Project): string {
   if (project.archive.status === 'building') return t('project.archive.building')
+  if (!teamStore.canEditProjects && getProjectAction(project).kind === 'build') return t('project.action.details')
   return t(getProjectAction(project).label)
 }
 </script>
@@ -146,6 +149,7 @@ function actionLabel(project: Project): string {
               {{ $t('project.action.details') }}
             </button>
             <button
+              v-if="teamStore.canEditProjects"
               type="button"
               :disabled="archive.isPending(project.id) || !!deleting"
               :aria-label="$t('projects.deleteProject', { name: project.name })"

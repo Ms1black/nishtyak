@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { getRoleLabel, getTeamRoleOptions, type TeamMember, type TeamRole } from '@/entities/team'
+import { getRoleLabel, getTeamRoleOptions, canManageMember, useTeamStore, type TeamMember, type TeamRole } from '@/entities/team'
 import { UserAvatar } from '@/entities/user'
 import { formatDayMonth } from '@/shared/lib'
 import { BaseButton, BaseDialog, BaseSelect } from '@/shared/ui'
@@ -13,9 +13,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{ setRole: [id: string, role: TeamRole]; remove: [id: string] }>()
 
+const teamStore = useTeamStore()
 const confirmOpen = ref(false)
 
-const editable = computed(() => props.canManage && props.member.role !== 'owner' && !props.member.isYou)
+const editable = computed(() => props.canManage && !!teamStore.currentTeam && canManageMember(teamStore.currentTeam.myRole, props.member.role, props.member.isYou))
 
 const role = computed<TeamRole | null>({
   get: () => (props.member.role === 'owner' ? null : props.member.role),
@@ -48,7 +49,7 @@ function confirmRemove() {
       <BaseSelect
         v-if="editable"
         v-model="role"
-        :options="getTeamRoleOptions()"
+        :options="getTeamRoleOptions(teamStore.currentTeam?.myRole)"
         size="sm"
         :aria-label="$t('members.roleFor', { name: member.name })"
         :disabled="pending"
