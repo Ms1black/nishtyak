@@ -36,7 +36,6 @@ function download() {
 }
 
 function toProjects() {
-  wizard.reset()
   router.push({ name: RouteName.TeamProjects })
 }
 </script>

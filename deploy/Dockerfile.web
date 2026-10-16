@@ -10,7 +10,10 @@ RUN npm run build
 FROM python:3.11-slim AS builder
 WORKDIR /build
 COPY pyproject.toml LICENSE ./
-COPY src ./src
+COPY src/nishtyak_core ./src/nishtyak_core
+COPY src/nishtyak_client ./src/nishtyak_client
+COPY src/nishtyak_service ./src/nishtyak_service
+COPY src/nishtyak_web ./src/nishtyak_web
 RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels '.[web]'
 
 FROM python:3.11-slim
