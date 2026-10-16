@@ -6,11 +6,11 @@ import { BaseCard } from '@/shared/ui'
 <template>
   <BaseCard tag="aside" class="example">
     <h2 class="example__title">{{ $t('upload.example.title') }}</h2>
-    <ArchiveTree root-name="project-ready.zip" :items="['README.md', 'requirements.txt', $t('upload.example.sources')]" />
+    <ArchiveTree root-name="scientific-measurements.zip" :items="['experiment.py', 'calculations.py']" />
     <div class="example__downloads">
       <span>{{ $t('upload.example.download') }}</span>
-      <a href="/examples/scientific-measurements.zip" download>{{ $t('upload.example.scientific') }}</a>
-      <a href="/examples/local-calibration.zip" download>{{ $t('upload.example.local') }}</a>
+      <a href="/examples/scientific-measurements.zip?raw=1" download>{{ $t('upload.example.scientific') }}</a>
+      <a href="/examples/local-calibration.zip?raw=1" download>{{ $t('upload.example.local') }}</a>
     </div>
     <p class="example__note">{{ $t('upload.example.note') }}</p>
   </BaseCard>
