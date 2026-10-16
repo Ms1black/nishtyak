@@ -2486,6 +2486,12 @@ components:
             type: object
           - type: 'null'
           title: Automatic Resolution
+        automation:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automation
       additionalProperties: false
       type: object
       required:
@@ -2616,6 +2622,17 @@ components:
             type: object
           - type: 'null'
           title: Automatic Resolution
+        automatic_packages:
+          additionalProperties:
+            type: string
+          type: object
+          title: Automatic Packages
+        automation:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automation
       type: object
       required:
       - report
@@ -2649,6 +2666,12 @@ components:
             type: object
           - type: 'null'
           title: Automatic Resolution
+        automation:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Automation
       additionalProperties: false
       type: object
       required:

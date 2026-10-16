@@ -152,6 +152,23 @@ class AutomaticDependencyResolution:
                 continue
             return
 
+    def ensure(self, record: JobRecord, plan: PackagePlan) -> None:
+        cached = self.repository.read_resolution(record)
+        if cached is None:
+            return
+        try:
+            target, _ = self._target(plan, cached)
+            identifier = resolution_input_id(plan, target)
+        except ResolutionError:
+            identifier = None
+        if (
+            cached.get("status") in {"ready", "needs_input", "unavailable"}
+            and cached.get("input_id") == identifier
+            and cached.get("context_id") == self._context_id(plan)
+        ):
+            return
+        self._resolve(record, plan)
+
     def _resolve(self, record: JobRecord, plan: PackagePlan) -> None:
         started = time.monotonic()
         result = {

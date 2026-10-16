@@ -197,6 +197,8 @@ class PackagePlan:
     automatic_review: dict[str, Any] | None = None
     python_version_origin: str = "unknown"
     automatic_resolution: dict[str, Any] | None = None
+    automatic_packages: dict[str, str] = field(default_factory=dict)
+    automation: dict[str, Any] | None = None
 
     @property
     def analysis_id(self) -> str:

@@ -239,6 +239,30 @@ export const en: MessageSchema = {
     found: 'Found {shown} of {total}',
   },
   analysis: {
+    automation: {
+      preparing: 'Preparing package…',
+      assisting: 'Clarifying {aspect} from sources: attempt {attempt} of {max}.',
+      assistingBrief: 'Clarifying {aspect} from sources.',
+      phases: {
+        static: 'Analyzing sources and identifying what the package still needs.',
+        validating: 'Validating findings and selecting a compatible environment.',
+      },
+      aspects: {
+        dependencies: 'dependencies',
+        entrypoint: 'the launch command',
+        description: 'the project description',
+        environment: 'the environment and versions',
+      },
+      questions: {
+        package_mapping: 'Which package provides import {module}?',
+        entrypoint: 'Which scenario should be launched?',
+        version_constraint: 'Which version constraint should be used?',
+        text: 'One project setting needs clarification',
+      },
+      questionHint: 'Automatic detection was unsuccessful. Preparation will continue after your answer.',
+      continue: 'Continue preparation',
+      openSettings: 'Open the relevant settings',
+    },
     automatic: {
       environmentTitle: 'Dependencies and environment',
       resolving: 'Selecting compatible library versions…',
@@ -263,6 +287,7 @@ export const en: MessageSchema = {
       descriptionTitle: 'README description',
       descriptionAutomatic:
         'Prepared automatically from the sources and included in README. You can edit it under “Data and description”.',
+      descriptionInferred: 'Description prepared from the project structure and source files.',
       questionsTitle: 'Optional details before building',
       questionsHint:
         'Only details that cannot be reliably determined from the code. All answers are optional.',

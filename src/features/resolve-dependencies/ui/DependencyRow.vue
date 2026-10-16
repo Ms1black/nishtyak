@@ -13,7 +13,6 @@ const props = defineProps<{
   disabled?: boolean
   variant?: 'editor' | 'mapping'
   unresolved?: boolean
-  hideSkip?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -70,7 +69,6 @@ const version = computed({
         {{ $t('analysis.deps.applyPackage') }}
       </BaseButton>
       <button
-        v-if="!hideSkip"
         type="button"
         class="mapping__skip"
         :disabled="disabled"

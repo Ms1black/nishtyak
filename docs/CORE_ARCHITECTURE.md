@@ -23,6 +23,8 @@
 | `ProjectLauncher` | Переносимый `run_project.py` для выбранных корней импортов и console callable |
 | `BundleWriter` | ZIP строго по списку и хешам плана |
 | `AdvisoryService` / `ProjectAdvisoryService` | Прежний режим по metadata и ограниченный агент DeepSeek с инструментами чтения |
+| `PreparationAutomation` | Условный цикл статических фактов, resolver, адресного AI и одного вопроса; серверные счётчики аспектов |
+| `PublishedPackageVerifier` | Ограниченное чтение PyPI wheel, проверка хеша/идентичности/модуля без установки |
 | `VersionResolver` / `LockExporter` | Разрешение named pip-требований через uv под целевой Python/OS и экспорт точных версий с хешами |
 | `DockerfileGenerator` | Необязательный шаблон для обычного pip-проекта |
 | `AuthorEnvironmentInspector` | Явный сбор и применение сведений среды автора |

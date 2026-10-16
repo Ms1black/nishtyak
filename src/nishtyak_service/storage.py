@@ -249,6 +249,48 @@ class SQLiteJobRepository:
             ).fetchall()
         return [self._record(row) for row in rows]
 
+    def pending_automation(self) -> list[JobRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.* FROM projects p JOIN automation_flows f
+                ON f.project_id = p.project_id AND f.job_id = p.job_id
+                WHERE p.status = 'succeeded' AND p.deleted = 0 AND p.expires_at > ?
+                AND (f.phase = 'static' OR (f.phase IN ('assisting', 'validating')
+                AND f.updated_at < ?)) ORDER BY p.created_at LIMIT 8""",
+                (time.time(), time.time() - 60),
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def read_automation(self, record: JobRecord) -> dict | None:
+        self.get_project(record.owner_id, record.project_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT result_json FROM automation_flows
+                WHERE project_id = ? AND job_id = ?""",
+                (record.project_id, record.job_id),
+            ).fetchone()
+        return json.loads(row["result_json"]) if row is not None else None
+
+    def save_automation(self, record: JobRecord, result: dict) -> None:
+        payload = bounded_json(result, 64 * 1024).decode("ascii")
+        with self._transaction() as connection:
+            current = self._accessible(
+                connection.execute(
+                    "SELECT * FROM projects WHERE project_id = ? AND owner_id = ?",
+                    (record.project_id, record.owner_id),
+                ).fetchone()
+            )
+            if current.job_id != record.job_id or current.status != "succeeded":
+                raise ServiceError(409, "ANALYSIS_STALE", "Preparation belongs to old analysis")
+            connection.execute(
+                """INSERT INTO automation_flows
+                (project_id, job_id, phase, result_json, updated_at) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET job_id = excluded.job_id,
+                phase = excluded.phase, result_json = excluded.result_json,
+                updated_at = excluded.updated_at""",
+                (record.project_id, record.job_id, result["phase"], payload, time.time()),
+            )
+
     def read_resolution(self, record: JobRecord) -> dict | None:
         self.get_project(record.owner_id, record.project_id)
         with self._connect() as connection:
@@ -288,6 +330,14 @@ class SQLiteJobRepository:
             status = excluded.status, result_json = excluded.result_json,
             updated_at = excluded.updated_at""",
             (project_id, job_id, json.dumps({"status": "pending"}), time.time()),
+        )
+        connection.execute(
+            """INSERT INTO automation_flows
+            (project_id, job_id, phase, result_json, updated_at) VALUES (?, ?, 'static', ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET job_id = excluded.job_id,
+            phase = excluded.phase, result_json = excluded.result_json,
+            updated_at = excluded.updated_at""",
+            (project_id, job_id, json.dumps({"phase": "static", "max_attempts": 2}), time.time()),
         )
 
     def read_review(
@@ -854,6 +904,13 @@ class SQLiteJobRepository:
                     project_id TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
                     job_id TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS automation_flows (
+                    project_id TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
+                    job_id TEXT NOT NULL,
+                    phase TEXT NOT NULL,
                     result_json TEXT NOT NULL,
                     updated_at REAL NOT NULL
                 );

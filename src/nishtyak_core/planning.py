@@ -85,6 +85,7 @@ class PackagePlanner:
         decisions: UserDecisions,
         *,
         automatic_candidate_id: str | None = None,
+        automatic_packages: dict[str, str] | None = None,
     ) -> PackagePlan:
         if decisions.analysis_id != report.analysis_id:
             raise DecisionError(
@@ -94,6 +95,10 @@ class PackagePlanner:
             )
 
         self._validate_decisions(report, decisions)
+        automatic_packages = self._automatic_packages(report, automatic_packages or {}, decisions)
+        effective_decisions = replace(
+            decisions, packages={**automatic_packages, **decisions.packages}
+        )
         try:
             included, excluded = self._select_files(report.files, decisions.excluded_files)
         except ValueError as error:
@@ -175,7 +180,7 @@ class PackagePlanner:
                 draft = True
 
         requirements, dependency_findings, unresolved = self._requirements(
-            runtime_report, decisions, automatic_extras=runtime.automatic_extras
+            runtime_report, effective_decisions, automatic_extras=runtime.automatic_extras
         )
         if runtime.automatic_extras:
             findings.append(
@@ -297,7 +302,31 @@ class PackagePlanner:
             else "author_environment"
             if report.author_python_version
             else "unknown",
+            automatic_packages=automatic_packages,
         )
+
+    @staticmethod
+    def _automatic_packages(
+        report: AnalysisReport, values: dict[str, str], decisions: UserDecisions
+    ) -> dict[str, str]:
+        candidates = {
+            item.module
+            for item in report.dependencies
+            if item.category in {"external", "unresolved"} and not item.module.startswith(".")
+        }
+        selected = {}
+        for module, raw in values.items():
+            if (
+                module not in candidates
+                or module in decisions.packages
+                or module in decisions.excluded_modules
+            ):
+                continue
+            requirement = Requirement(raw)
+            if requirement.url or requirement.specifier or requirement.marker or requirement.extras:
+                raise ValueError("Automatic package mappings must contain bare package names")
+            selected[module] = requirement.name
+        return selected
 
     def _validate_decisions(self, report: AnalysisReport, decisions: UserDecisions) -> None:
         declarations = {item.id: item for item in report.declarations}

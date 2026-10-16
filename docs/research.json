@@ -36,5 +36,7 @@
   "github_readme_prompt": "https://docs.github.com/en/copilot/tutorials/customization-library/prompt-files/create-readme",
   "owasp_password_storage": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html",
   "owasp_sessions": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
-  "argon2_password_hasher": "https://argon2-cffi.readthedocs.io/en/stable/api.html"
+  "argon2_password_hasher": "https://argon2-cffi.readthedocs.io/en/stable/api.html",
+  "pypi_json_api": "https://docs.pypi.org/api/json/",
+  "wheel_binary_distribution_format": "https://packaging.python.org/en/latest/specifications/binary-distribution-format/"
 }

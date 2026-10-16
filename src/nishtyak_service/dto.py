@@ -205,6 +205,7 @@ class PreparationDTO(BaseModel):
     launch: LaunchAssessment
     automatic_review: dict | None = None
     automatic_resolution: dict | None = None
+    automation: dict | None = None
 
 
 class ImportGraphDTO(BaseModel):
@@ -226,3 +227,4 @@ class JobDTO(BaseModel):
     error: ErrorDTO | None = None
     automatic_review: dict | None = None
     automatic_resolution: dict | None = None
+    automation: dict | None = None

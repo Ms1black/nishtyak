@@ -12,12 +12,14 @@ import {
 import { DataConfirmation } from '@/features/confirm-data'
 import { RunSettings } from '@/features/configure-run'
 import { ProjectFileExplorer } from '@/features/exclude-files'
-import { DependencyList, DependencyRow } from '@/features/resolve-dependencies'
+import { DependencyList } from '@/features/resolve-dependencies'
+import { t } from '@/shared/i18n'
 import { BaseButton, BaseCard, BaseIcon } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 import ReadinessPanel from './ReadinessPanel.vue'
 import SectionCard from './SectionCard.vue'
 import ProjectToolsPanel from './ProjectToolsPanel.vue'
+import AutomationQuestion from './AutomationQuestion.vue'
 
 const wizard = useUploadWizardStore()
 const explorer = ref<InstanceType<typeof ProjectFileExplorer> | null>(null)
@@ -77,17 +79,31 @@ const unresolvedModules = computed(() => {
   return modules
 })
 const resolution = computed(() => visiblePlan.value?.automaticResolution)
+const automationQuestion = computed(() =>
+  wizard.automation?.phase === 'needs_input' ? wizard.automation.question : null,
+)
+const progressText = computed(() => {
+  const automation = wizard.automation
+  if (!automation || !wizard.isAutomating) return null
+  const aspect = automation.aspect ? t(`analysis.automation.aspects.${automation.aspect}`) : ''
+  if (automation.phase === 'assisting') {
+    if (automation.attempt === undefined || automation.maxAttempts === undefined) {
+      return t('analysis.automation.assistingBrief', { aspect })
+    }
+    return t('analysis.automation.assisting', {
+      aspect, attempt: automation.attempt, max: automation.maxAttempts,
+    })
+  }
+  return t(`analysis.automation.phases.${automation.phase}`)
+})
 const blockingFinding = computed(() => {
+  if (wizard.isAutomating) return undefined
   const blocker = findings.value.find((finding) => getFindingKind(finding) === 'blocker')
   if (blocker) return blocker
-  if (resolution.value?.status === 'needs_input') {
+  if (!wizard.automation && resolution.value?.status === 'needs_input') {
     return findings.value.find((finding) => getFindingKind(finding) === 'question')
   }
   return undefined
-})
-const questionDependency = computed(() => {
-  if (!blockingFinding.value || getFindingKind(blockingFinding.value) !== 'question') return null
-  return wizard.analysis?.dependencies.find((dependency) => dependency.module === blockingFinding.value?.module) ?? null
 })
 const resolvedRequirements = computed(() =>
   wizard.lock?.packages ?? (resolution.value?.status === 'ready' ? resolution.value.packages : undefined),
@@ -136,6 +152,11 @@ function focusFinding(finding: Finding) {
   return focusSection(getFindingSection(finding), finding)
 }
 
+function focusQuestion() {
+  const sections = { dependencies: 'dependencies', entrypoint: 'run', description: 'data', environment: 'tools' }
+  return focusSection(sections[automationQuestion.value?.aspect ?? 'dependencies'])
+}
+
 function toggleAdvanced(event: Event) {
   if (event.target === event.currentTarget) advancedOpen.value = (event.target as HTMLDetailsElement).open
 }
@@ -152,7 +173,7 @@ function toggleAdvanced(event: Event) {
       <h2 class="analysis__state-title">
         {{ $t('analysis.state.analyzingTitle', { name: wizard.project.name }) }}
       </h2>
-      <p class="analysis__state-text">{{ $t('analysis.state.analyzingText') }}</p>
+      <p class="analysis__state-text">{{ progressText ?? $t('analysis.state.analyzingText') }}</p>
     </BaseCard>
     <BaseCard
       v-else-if="
@@ -219,15 +240,18 @@ function toggleAdvanced(event: Event) {
             <p v-if="visiblePlan.descriptionOrigin === 'automatic'" class="overview__hint">
               {{ $t('analysis.review.descriptionAutomatic') }}
             </p>
+            <p v-else-if="visiblePlan.descriptionOrigin === 'inferred'" class="overview__hint">
+              {{ $t('analysis.review.descriptionInferred') }}
+            </p>
           </div>
           <div class="overview__environment" aria-live="polite">
             <div class="overview__run-head">
               <span>{{ $t('analysis.automatic.environmentTitle') }}</span>
-              <BaseIcon v-if="wizard.isPreparingEnvironment" name="refresh" :size="16" spin />
+              <BaseIcon v-if="wizard.isPreparingEnvironment || wizard.isAutomating" name="refresh" :size="16" spin />
               <BaseIcon v-else-if="resolvedRequirements" name="check" :size="16" />
             </div>
-            <template v-if="wizard.isPreparingEnvironment">
-              <p>{{ $t('analysis.automatic.resolving') }}</p>
+            <template v-if="wizard.isPreparingEnvironment || wizard.isAutomating">
+              <p>{{ progressText ?? $t('analysis.automatic.resolving') }}</p>
               <p class="overview__hint">{{ $t('analysis.automatic.resolvingHint') }}</p>
             </template>
             <template v-else>
@@ -238,7 +262,7 @@ function toggleAdvanced(event: Event) {
               <p v-if="resolvedRequirements" class="overview__hint">
                 {{ $t('analysis.automatic.resolved', { platform: wizard.lock?.target.platform ?? resolution?.target?.platform ?? '' }) }}
               </p>
-              <p v-else-if="resolution?.status === 'needs_input'" class="overview__hint">
+              <p v-else-if="!wizard.automation && resolution?.status === 'needs_input'" class="overview__hint">
                 {{ $t('analysis.automatic.needsInput') }}
               </p>
               <p v-else-if="resolution?.status === 'unavailable' || resolution?.status === 'disabled'" class="overview__hint">
@@ -249,21 +273,19 @@ function toggleAdvanced(event: Event) {
           </div>
         </BaseCard>
 
-        <BaseCard v-if="blockingFinding" padding="lg" class="questions" role="alert">
-          <h3 class="questions__title">{{ $t('analysis.automatic.blockingTitle') }}</h3>
-          <DependencyRow
-            v-if="questionDependency"
-            :key="questionDependency.id"
-            variant="mapping"
-            :dependency="questionDependency"
-            :package-override="wizard.decisions.packages[questionDependency.module]"
-            :excluded="false"
+        <BaseCard v-if="automationQuestion" padding="lg" class="questions" role="status">
+          <AutomationQuestion
+            :question="automationQuestion"
+            :candidates="wizard.analysis.launchCandidates ?? []"
             :disabled="wizard.isBusy || !wizard.canEdit"
-            hide-skip
-            @set-package="wizard.setPackage"
+            @answer="wizard.answerQuestion"
+            @open-settings="focusQuestion"
           />
-          <p v-else class="overview__text">{{ describeFinding(blockingFinding) }}</p>
-          <BaseButton v-if="wizard.canEdit && !questionDependency" variant="tonal" :disabled="wizard.isBusy" @click="focusFinding(blockingFinding)">
+        </BaseCard>
+        <BaseCard v-else-if="blockingFinding" padding="lg" class="questions" role="alert">
+          <h3 class="questions__title">{{ $t('analysis.automatic.blockingTitle') }}</h3>
+          <p class="overview__text">{{ describeFinding(blockingFinding) }}</p>
+          <BaseButton v-if="wizard.canEdit" variant="tonal" :disabled="wizard.isBusy" @click="focusFinding(blockingFinding)">
             {{ $t('analysis.automatic.fix') }}
           </BaseButton>
         </BaseCard>
@@ -381,6 +403,8 @@ function toggleAdvanced(event: Event) {
         :saved-at="wizard.savedAt"
         :is-building="wizard.isBuilding"
         :is-preparing-environment="wizard.isPreparingEnvironment"
+        :is-processing="wizard.isAutomating"
+        :progress-text="progressText"
         :is-refreshing="wizard.isRefreshing"
         :can-build="wizard.canBuild"
         :error="wizard.error && $t(wizard.error)"

@@ -203,6 +203,38 @@ def test_launch_suggestion_only_references_existing_candidate(context: SafeProje
     assert result.status == "invalid_response" and not result.suggestions
 
 
+def test_focused_package_repair_requires_requested_module_and_its_actual_import_evidence(context):
+    focused = context.focused(("packages",), ("numpy",))
+    observation = next(item for item in focused.facts["imports"] if item["module"] == "numpy")
+    source = next(item for item in focused.files if item["path"] == observation["path"])
+    suggestion = {
+        "kind": "package_hypothesis",
+        "text": "Опубликованный пакет предоставляет данный импорт.",
+        "evidence_ids": [observation["id"], source["id"]],
+        "candidate_id": None,
+        "module": "numpy",
+        "package": "numpy",
+    }
+    result = advisor(Responses(final(focused, "repair", suggestions=[suggestion]))).advise_context(
+        focused, "repair"
+    )
+    assert result.status == "ok"
+    suggestion["evidence_ids"] = [source["id"]]
+    invalid = advisor(Responses(final(focused, "repair", suggestions=[suggestion]))).advise_context(
+        focused, "repair"
+    )
+    assert invalid.status == "invalid_response"
+
+
+def test_focused_repair_cannot_change_an_unrequested_launch(context):
+    focused = context.focused(("description",))
+    suggestion = combined_review_suggestions(focused)[1]
+    result = advisor(Responses(final(focused, "repair", suggestions=[suggestion]))).advise_context(
+        focused, "repair"
+    )
+    assert result.status == "invalid_response"
+
+
 def test_unknown_evidence_and_automatic_action_fields_rejected(context: SafeProjectContext) -> None:
     suggestion = {
         "kind": "explanation",

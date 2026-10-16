@@ -169,3 +169,14 @@ def test_wait_returns_cached_resolution_failure_without_retrying(monkeypatch):
     result = {"status": "succeeded", "automatic_resolution": {"status": "unavailable"}}
     monkeypatch.setattr(client, "job", lambda _job_id: result)
     assert client.wait(PROJECT_ID) == result
+
+
+def test_wait_returns_one_human_question_after_server_attempt_budget(monkeypatch):
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    result = {
+        "status": "succeeded",
+        "automatic_review": {"status": "pending"},
+        "automation": {"phase": "needs_input", "attempt": 2, "max_attempts": 2},
+    }
+    monkeypatch.setattr(client, "job", lambda _job_id: result)
+    assert client.wait(PROJECT_ID) == result

@@ -19,6 +19,8 @@ const props = defineProps<{
   savedAt: Date | null
   isBuilding: boolean
   isPreparingEnvironment?: boolean
+  isProcessing?: boolean
+  progressText?: string | null
   isRefreshing: boolean
   canBuild: boolean
   error: string | null
@@ -27,6 +29,9 @@ const props = defineProps<{
 const emit = defineEmits<{ build: []; reset: []; reload: []; refresh: [] }>()
 
 const state = computed(() => {
+  if (props.isProcessing && props.progressText) {
+    return { title: t('analysis.automation.preparing'), text: props.progressText }
+  }
   if (props.isPreparingEnvironment) {
     return { title: t('analysis.automatic.preparingTitle'), text: t('analysis.automatic.resolvingHint') }
   }
@@ -41,6 +46,7 @@ const state = computed(() => {
 })
 
 const buttonText = computed(() => {
+  if (props.isProcessing) return t('analysis.automation.preparing')
   if (props.isPreparingEnvironment) return t('analysis.automatic.preparingTitle')
   if (props.isBuilding) return t('analysis.automatic.buildingTitle')
   return t('analysis.panel.build')
@@ -78,8 +84,8 @@ const saveText = computed(() => {
     <div v-if="plan && state" class="panel__state" :class="`panel__state--${plan.state}`">
       <span class="panel__state-icon">
         <BaseIcon
-          :name="isPreparingEnvironment || isBuilding ? 'refresh' : plan.state === 'blocked' ? 'alert' : plan.state === 'draft' ? 'circle-dashed' : 'check'"
-          :spin="isPreparingEnvironment || isBuilding"
+          :name="isProcessing || isPreparingEnvironment || isBuilding ? 'refresh' : plan.state === 'blocked' ? 'alert' : plan.state === 'draft' ? 'circle-dashed' : 'check'"
+          :spin="isProcessing || isPreparingEnvironment || isBuilding"
           :size="22"
           :stroke-width="plan.state === 'ready_to_verify' ? 2.6 : 2"
         />
@@ -102,7 +108,7 @@ const saveText = computed(() => {
       >
         {{ $t('analysis.panel.refresh') }}
       </BaseButton>
-      <BaseButton block :disabled="!canBuild" :loading="isBuilding || isPreparingEnvironment" @click="emit('build')">
+      <BaseButton block :disabled="!canBuild" :loading="isBuilding || isPreparingEnvironment || isProcessing" @click="emit('build')">
         {{ buttonText }}
       </BaseButton>
       <p class="panel__next">{{ $t('analysis.review.nextStep') }}</p>

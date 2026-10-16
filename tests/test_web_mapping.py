@@ -1,4 +1,9 @@
-from nishtyak_web.mapping import analysis_to_web, findings_to_web, resolution_to_web
+from nishtyak_web.mapping import (
+    analysis_to_web,
+    automation_to_web,
+    findings_to_web,
+    resolution_to_web,
+)
 
 
 def test_finding_module_uses_structured_evidence_and_remains_optional():
@@ -57,3 +62,30 @@ def test_analysis_waits_for_background_environment_after_static_analysis():
     result = analysis_to_web("a" * 32, job)
     assert result["status"] == "full"
     assert result["automaticResolution"]["reason"] == "INDEX_UNAVAILABLE"
+
+
+def test_targeted_question_is_mapped_without_restarting_legacy_pending_review():
+    flow = {
+        "phase": "needs_input",
+        "aspect": "dependencies",
+        "attempt": 2,
+        "max_attempts": 2,
+        "question": {
+            "id": "question-one",
+            "kind": "package_mapping",
+            "module": "research_lib",
+            "message": "Which distribution provides research_lib?",
+        },
+    }
+    result = automation_to_web(flow)
+    assert result["maxAttempts"] == 2
+    assert result["question"]["module"] == "research_lib"
+    job = {
+        "status": "succeeded",
+        "analysis": {"analysis_id": "b" * 20, "status": "complete"},
+        "automatic_review": {"status": "pending", "provider": "deepseek"},
+        "automation": flow,
+    }
+    result = analysis_to_web("a" * 32, job)
+    assert result["status"] != "analyzing"
+    assert result["automation"]["question"]["id"] == "question-one"

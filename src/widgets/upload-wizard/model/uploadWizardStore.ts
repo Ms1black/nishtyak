@@ -10,6 +10,7 @@ import {
   type PackagePlan,
   type Project,
   type ProjectAnalysis,
+  type ProjectAutomation,
   type RunSpec,
   type TargetPlatform,
 } from '@/entities/project'
@@ -33,6 +34,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const decisions = ref<AnalysisDecisions | null>(null)
   const revision = ref(0)
   const plan = ref<PackagePlan | null>(null)
+  const lastAutomation = ref<ProjectAutomation | null>(null)
   const lock = ref<DependencyLock | null>(null)
   const includeDockerfile = ref(false)
   const isLoading = ref(false)
@@ -53,15 +55,24 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   let syncing: { epoch: number; promise: Promise<boolean> } | null = null
 
   const isAnalyzing = computed(() => analysis.value?.status === 'analyzing')
+  const automation = computed(() => plan.value?.automation ?? lastAutomation.value ?? analysis.value?.automation ?? null)
+  const isAutomating = computed(() =>
+    ['static', 'assisting', 'validating'].includes(automation.value?.phase ?? ''),
+  )
   const isPreparingEnvironment = computed(() =>
-    ['pending', 'running'].includes(plan.value?.automaticResolution?.status ?? ''),
+    automation.value
+      ? isAutomating.value && automation.value.aspect === 'environment'
+      : ['pending', 'running'].includes(plan.value?.automaticResolution?.status ?? ''),
   )
   const isBusy = computed(
     () =>
       isBuilding.value || isResolving.value || isRefreshing.value ||
-      isLoading.value || isAnalyzing.value || isPreparingEnvironment.value,
+      isLoading.value || isAnalyzing.value || isPreparingEnvironment.value || isAutomating.value,
   )
-  const canBuild = computed(() => canEdit.value && !!plan.value && plan.value.state !== 'blocked' && !isBusy.value)
+  const canBuild = computed(() =>
+    canEdit.value && !!plan.value && plan.value.state !== 'blocked' &&
+    automation.value?.phase !== 'needs_input' && !isBusy.value,
+  )
   const canIncludeDockerfile = computed(() => {
     const current = plan.value
     if (current?.state !== 'ready_to_verify' || !current.pythonVersion || !current.runSpec) return false
@@ -139,13 +150,13 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
 
   function scheduleResolutionPoll() {
     clearTimeout(resolutionTimer)
-    if (isPreparingEnvironment.value) {
+    if (isPreparingEnvironment.value || isAutomating.value) {
       resolutionTimer = setTimeout(() => void pollAutomaticResolution(), POLL_INTERVAL_MS)
     }
   }
 
   async function pollAutomaticResolution() {
-    if (!project.value || !decisions.value || !isPreparingEnvironment.value) return
+    if (!project.value || !decisions.value || (!isPreparingEnvironment.value && !isAutomating.value)) return
     const requestEpoch = epoch
     const version = editVersion
     try {
@@ -166,10 +177,9 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
 
   async function continueAutomaticBuild() {
     if (!autoBuildRequested || !plan.value) return
-    if (plan.value.state === 'blocked' || plan.value.automaticResolution?.status === 'needs_input') {
-      autoBuildRequested = false
-      return
-    }
+    if (plan.value.state === 'blocked') return
+    if (automation.value?.phase === 'needs_input') return
+    if (!automation.value && plan.value.automaticResolution?.status === 'needs_input') return
     if (isBusy.value || error.value) return
     autoBuildRequested = false
     await build()
@@ -214,7 +224,9 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       }
     })()
     syncing = { epoch: requestEpoch, promise }
-    return promise
+    const saved = await promise
+    if (epoch === requestEpoch) await continueAutomaticBuild()
+    return saved
   }
 
   const scheduleSync = debounce(() => void sync(), SYNC_DELAY_MS)
@@ -230,6 +242,28 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     scheduleSync()
   }
 
+  async function answerQuestion(changes: Partial<AnalysisDecisions>) {
+    if (!canEdit.value || !decisions.value || isBusy.value || automation.value?.phase !== 'needs_input') return
+    const merged = { ...changes }
+    if (changes.packages) merged.packages = { ...decisions.value.packages, ...changes.packages }
+    if (changes.declarationActions) {
+      merged.declarationActions = { ...decisions.value.declarationActions, ...changes.declarationActions }
+    }
+    autoBuildRequested = true
+    update(merged)
+    scheduleSync.cancel()
+    const requestEpoch = epoch
+    isRefreshing.value = true
+    try {
+      await sync()
+    } finally {
+      if (epoch === requestEpoch) {
+        isRefreshing.value = false
+        await continueAutomaticBuild()
+      }
+    }
+  }
+
   async function reloadDecisions() {
     if (!canEdit.value || !project.value || isBusy.value) return
     await openProject(project.value)
@@ -243,7 +277,10 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     try {
       await sync()
     } finally {
-      if (epoch === requestEpoch) isRefreshing.value = false
+      if (epoch === requestEpoch) {
+        isRefreshing.value = false
+        await continueAutomaticBuild()
+      }
     }
   }
 
@@ -270,7 +307,8 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const setRunSpec = (runSpec: RunSpec | null) => update({ runSpec })
 
   async function build() {
-    if (!canEdit.value || !project.value || !decisions.value || isBusy.value) return
+    if (!canEdit.value || !project.value || !decisions.value || isBusy.value || automation.value?.phase === 'needs_input') return
+    autoBuildRequested = false
     const requestEpoch = epoch
     const projectId = project.value.id
     isBuilding.value = true
@@ -278,8 +316,8 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     scheduleSync.cancel()
     try {
       if (!(await sync()) || epoch !== requestEpoch) return
-      if (!plan.value || plan.value.state === 'blocked') return
-      if (isPreparingEnvironment.value) {
+      if (!plan.value || plan.value.state === 'blocked' || plan.value.automation?.phase === 'needs_input') return
+      if (isPreparingEnvironment.value || isAutomating.value) {
         autoBuildRequested = true
         return
       }
@@ -366,6 +404,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     analysis.value = null
     decisions.value = null
     plan.value = null
+    lastAutomation.value = null
     lock.value = null
     revision.value = 0
     includeDockerfile.value = false
@@ -385,6 +424,9 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
 
   watch(sessionGeneration, reset, { flush: 'sync' })
   watch(() => teamStore.currentTeamId, reset, { flush: 'sync' })
+  watch(() => plan.value?.automation, (value) => {
+    if (value) lastAutomation.value = value
+  }, { flush: 'sync' })
 
   return {
     canEdit,
@@ -401,6 +443,8 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     isRefreshing,
     isAnalyzing,
     isPreparingEnvironment,
+    automation,
+    isAutomating,
     isBusy,
     error,
     saveState,
@@ -411,6 +455,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     openProject,
     loadAnalysis,
     update,
+    answerQuestion,
     reloadDecisions,
     refreshPlan,
     setPackage,

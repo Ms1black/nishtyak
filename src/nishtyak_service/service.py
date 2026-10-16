@@ -19,6 +19,7 @@ from nishtyak_core.redaction import TextRedactor
 
 from .automatic_resolution import AutomaticDependencyResolution
 from .automatic_review import AutomaticProjectReview
+from .automation import PreparationAutomation
 from .config import Settings
 from .errors import ServiceError
 from .storage import JobRecord, SQLiteJobRepository
@@ -37,16 +38,22 @@ class LogicService:
         self.advisor = advisor
         self.automatic_review = AutomaticProjectReview(self.repository)
         self.automatic_resolution = AutomaticDependencyResolution(self.repository)
+        self.automation = PreparationAutomation(
+            self.repository, self.automatic_resolution, self.automatic_review
+        )
 
     def capabilities(self) -> dict:
         return {
             "automatic_review": self.automatic_review.capabilities(),
             "automatic_resolution": self.automatic_resolution.capabilities(),
+            "automation": {"enabled": self.settings.automatic_resolution, "max_attempts": 2},
         }
 
     def review_pending(self) -> None:
-        self.automatic_review.process_pending()
-        self.automatic_resolution.process_pending(self._prepare)
+        if self.settings.automatic_resolution:
+            self.automation.process_pending(self._prepare)
+        else:
+            self.automatic_review.process_pending()
 
     def submit(
         self,
@@ -87,6 +94,7 @@ class LogicService:
                 owner, project_id, report.analysis_id, expected_revision, asdict(plan.decisions)
             )
             self.automatic_resolution.queue_if_changed(record, plan)
+            self.automation.queue_if_changed(record, plan)
         self.repository.get_project(owner, project_id)
         return result
 
@@ -101,6 +109,7 @@ class LogicService:
             result["analysis"] = report.to_dict()
             result["automatic_review"] = self.automatic_review.status(record, report)
             result["automatic_resolution"] = self.automatic_resolution.status(record)
+            result["automation"] = self.automation.status(record)
         elif record.error_code:
             result["error"] = {
                 "code": record.error_code,
@@ -141,7 +150,8 @@ class LogicService:
         self.repository.consume_rate(owner, "bundle", 10)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            self.automatic_review.ensure(record, report)
+            if self.automation.status(record) is None:
+                self.automatic_review.ensure(record, report)
             plan = self._prepare(
                 report, self._decisions(owner, project_id, report, decisions), record
             )
@@ -149,8 +159,18 @@ class LogicService:
                 raise ServiceError(
                     409, "PREPARATION_PENDING", "Automatic dependency preparation is still running"
                 )
+            if (plan.automation or {}).get("phase") in PreparationAutomation.active_phases:
+                raise ServiceError(
+                    409, "PREPARATION_PENDING", "Automatic project preparation is still running"
+                )
             if plan.state == "blocked":
                 raise ServiceError(409, "PLAN_BLOCKED", "Resolve the blocking findings first")
+            if (plan.automation or {}).get("phase") == "needs_input":
+                raise ServiceError(
+                    409,
+                    "PREPARATION_NEEDS_INPUT",
+                    "Answer the preparation question and save decisions first",
+                )
             try:
                 snapshot = ArchiveReader().from_path(self.repository.archive_path(project_id))
                 if snapshot.fingerprint != report.fingerprint:
@@ -209,6 +229,7 @@ class LogicService:
             "launch": LaunchDetector().detect(report, plan.files).to_dict(),
             "automatic_review": self.automatic_review.status(record, report),
             "automatic_resolution": self.automatic_resolution.status(record),
+            "automation": self.automation.status(record),
         }
         self._require_current(record, report)
         return TextRedactor().redact_value(result)
@@ -335,14 +356,20 @@ class LogicService:
             candidate = (
                 self.automatic_review.candidate_id(record, report) if record is not None else None
             )
+            packages = (
+                self.automatic_review.package_mappings(record, report) if record is not None else {}
+            )
             plan = (
-                self.core.prepare(report, decisions, automatic_candidate_id=candidate)
-                if candidate is not None
+                self.core.prepare(
+                    report, decisions, automatic_candidate_id=candidate, automatic_packages=packages
+                )
+                if candidate is not None or packages
                 else self.core.prepare(report, decisions)
             )
             if record is not None:
                 plan = self.automatic_review.enrich(plan, record)
                 plan = self.automatic_resolution.enrich(plan, record)
+                plan = self.automation.enrich(plan, record)
             return plan
         except ValueError as error:
             if hasattr(error, "code") and hasattr(error, "field"):

@@ -104,10 +104,16 @@ class BrowserService:
         record = self._refresh(identity, self.store.get(identity.scope, project_id))
         job = json.loads(record["job"])
         preparation = None
-        if job["status"] == "succeeded" and not any(
-            (job.get(key) or {}).get("status") in {"pending", "running"}
-            for key in ("automatic_review", "automatic_resolution")
-        ):
+        automation = job.get("automation")
+        preparing = (
+            automation.get("phase") in {"static", "assisting", "validating"}
+            if automation is not None
+            else any(
+                (job.get(key) or {}).get("status") in {"pending", "running"}
+                for key in ("automatic_review", "automatic_resolution")
+            )
+        )
+        if job["status"] == "succeeded" and not preparing:
             preparation = self.client_factory(identity.scope).preparation(project_id)
         return analysis_to_web(project_id, job, preparation)
 
@@ -115,6 +121,7 @@ class BrowserService:
         capabilities = self.client_factory(identity.scope).capabilities()
         value = capabilities["automatic_review"]
         resolution = capabilities.get("automatic_resolution") or {"enabled": False}
+        automation = capabilities.get("automation") or {"enabled": False}
         return {
             "automaticReview": {
                 "enabled": value["enabled"],
@@ -126,6 +133,10 @@ class BrowserService:
                 "enabled": resolution["enabled"],
                 "budgetSeconds": resolution.get("budget_seconds", 20),
                 "defaultPlatform": resolution.get("default_platform", "linux-x86_64"),
+            },
+            "automation": {
+                "enabled": automation["enabled"],
+                "maxAttempts": automation.get("max_attempts", 2),
             },
         }
 

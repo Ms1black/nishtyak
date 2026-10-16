@@ -13,13 +13,14 @@ import pytest
 from nishtyak_core import ArchiveReader, ReproducibilityService
 from nishtyak_core.environment import AuthorEnvironmentSnapshot
 from nishtyak_core.jobs import AnalysisJobResult
+from nishtyak_core.launches import LaunchDetector
 from nishtyak_core.locking import (
     DependencyLock,
     ResolutionError,
     ResolutionTarget,
     resolution_input_id,
 )
-from nishtyak_core.models import AnalysisOptions, UserDecisions
+from nishtyak_core.models import AnalysisOptions, DeclarationDecision, UserDecisions
 from nishtyak_core.python_targets import select_python_target
 from nishtyak_service.config import Settings
 from nishtyak_service.dto import AnalysisOptionsDTO
@@ -122,7 +123,9 @@ def test_unresolved_import_never_produces_a_misleading_partial_lock(automatic):
     assert plan["automatic_resolution"]["status"] == "needs_input"
     assert plan["automatic_resolution"]["reason"] == "DEPENDENCY_UNRESOLVED"
     assert calls == []
-    assert logic.bundle("alice", record.project_id).startswith(b"PK")
+    with pytest.raises(ServiceError) as error:
+        logic.bundle("alice", record.project_id)
+    assert error.value.code == "PREPARATION_NEEDS_INPUT"
 
 
 def test_index_failure_is_cached_and_export_still_works(automatic, monkeypatch):
@@ -194,8 +197,9 @@ def test_explicit_partial_lock_does_not_claim_a_complete_environment(automatic):
     metadata = logic.plan("alice", record.project_id)["automatic_resolution"]
     assert metadata["status"] == "needs_input"
     assert metadata["reason"] == "DEPENDENCY_UNRESOLVED"
-    with zipfile.ZipFile(io.BytesIO(logic.bundle("alice", record.project_id))) as archive:
-        assert "requirements.lock.txt" not in archive.namelist()
+    with pytest.raises(ServiceError) as error:
+        logic.bundle("alice", record.project_id)
+    assert error.value.code == "PREPARATION_NEEDS_INPUT"
     assert len(calls) == 1
 
 
@@ -421,3 +425,229 @@ def test_http_options_are_automatic_unless_the_caller_selects_a_profile():
         .python_version_auto
         is True
     )
+
+
+def test_static_complete_project_skips_ai_after_resolving_dependencies(automatic, monkeypatch):
+    logic, calls = automatic
+    record, _ = create_project(logic)
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: False)
+    skipped = []
+    original_skip = logic.automatic_review.skip
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("A statically sufficient project must not call the model")
+
+    def skip(*args, **kwargs):
+        assert len(calls) == 1
+        skipped.append(kwargs.get("reason", "static_sufficient"))
+        original_skip(*args, **kwargs)
+
+    monkeypatch.setattr(logic.automatic_review, "ensure", unexpected)
+    monkeypatch.setattr(logic.automatic_review, "skip", skip)
+    logic.review_pending()
+    assert skipped and set(skipped) == {"static_sufficient"}
+    assert logic.plan("alice", record.project_id)["automation"]["phase"] == "ready"
+
+
+def test_verified_model_mapping_is_revalidated_and_never_saved_as_author_input(
+    automatic, monkeypatch
+):
+    logic, calls = automatic
+    record, _ = create_project(
+        logic, {"experiment.py": "import novel_numpy\nprint(novel_numpy.mean([1, 2]))\n"}
+    )
+    mappings, requests = {}, []
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: False)
+    monkeypatch.setattr(logic.automatic_review, "package_mappings", lambda *args: mappings)
+    monkeypatch.setattr(
+        logic.automatic_review,
+        "aspect_status",
+        lambda *args: (
+            {"package:novel_numpy": {"status": "resolved", "attempts": 1}} if mappings else {}
+        ),
+    )
+
+    def assist(record, report, *, plan, aspects):
+        assert calls == []
+        assert plan.automatic_resolution["reason"] == "DEPENDENCY_UNRESOLVED"
+        requests.append(aspects)
+        mappings["novel_numpy"] = "numpy"
+
+    monkeypatch.setattr(logic.automatic_review, "ensure", assist)
+    logic.review_pending()
+    plan = logic.plan("alice", record.project_id)
+    assert requests == [("packages",)]
+    assert len(calls) == 1
+    assert plan["automation"]["phase"] == "ready"
+    assert plan["automatic_packages"] == {"novel_numpy": "numpy"}
+    assert plan["decisions"]["packages"] == {}
+    assert logic.get_decisions("alice", record.project_id)["decisions"] is None
+
+
+def test_two_failed_attempts_yield_one_persistent_question_and_answer_resumes(
+    automatic, monkeypatch
+):
+    logic, calls = automatic
+    record, report = create_project(
+        logic, {"experiment.py": "import novel_numpy\nprint(novel_numpy.mean([1, 2]))\n"}
+    )
+    statuses, requests = {}, []
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: False)
+    monkeypatch.setattr(logic.automatic_review, "aspect_status", lambda *args: statuses)
+
+    def assist(record, report, *, plan, aspects):
+        requests.append(aspects)
+        statuses["package:novel_numpy"] = {
+            "status": "exhausted",
+            "attempts": 2,
+            "reason": "mapping_unverified",
+        }
+
+    monkeypatch.setattr(logic.automatic_review, "ensure", assist)
+    logic.review_pending()
+    logic.review_pending()
+    state = logic.plan("alice", record.project_id)["automation"]
+    assert state["phase"] == "needs_input" and state["attempt"] == 2
+    assert state["question"]["kind"] == "package_mapping"
+    assert state["question"]["module"] == "novel_numpy"
+    assert requests == [("packages",)] and calls == []
+    reopened = LogicService(logic.settings)
+    assert (
+        reopened.plan("alice", record.project_id)["automation"]["question"]["id"]
+        == state["question"]["id"]
+    )
+    logic.save_decisions(
+        "alice",
+        record.project_id,
+        UserDecisions(report.analysis_id, packages={"novel_numpy": "numpy"}),
+        0,
+    )
+    assert logic.plan("alice", record.project_id)["automation"]["phase"] == "static"
+    logic.review_pending()
+    assert logic.plan("alice", record.project_id)["automation"]["phase"] == "ready"
+    assert len(calls) == 1 and len(requests) == 1
+
+
+def test_ambiguous_launch_is_only_asked_after_assistance_and_revalidation(automatic, monkeypatch):
+    logic, calls = automatic
+    record, report = create_project(
+        logic,
+        {
+            "experiment.py": "if __name__ == '__main__':\n print('experiment')\n",
+            "preview.py": "if __name__ == '__main__':\n print('preview')\n",
+        },
+    )
+    selected, requests = [], []
+    candidate = next(
+        item
+        for item in LaunchDetector().detect(report).candidates
+        if item.run_spec.target == "experiment.py"
+    )
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: False)
+    monkeypatch.setattr(
+        logic.automatic_review, "candidate_id", lambda *args: selected[0] if selected else None
+    )
+    monkeypatch.setattr(
+        logic.automatic_review,
+        "aspect_status",
+        lambda *args: {"entrypoint": {"status": "resolved", "attempts": 1}} if selected else {},
+    )
+
+    def assist(record, report, *, plan, aspects):
+        assert len(calls) == 1  # The environment was resolved before requesting assistance.
+        requests.append(aspects)
+        selected.append(candidate.id)
+
+    monkeypatch.setattr(logic.automatic_review, "ensure", assist)
+    logic.review_pending()
+    plan = logic.plan("alice", record.project_id)
+    assert requests == [("entrypoint",)]
+    assert plan["run_spec"]["target"] == "experiment.py"
+    assert plan["automation"]["phase"] == "ready"
+    assert plan["decisions"]["run_spec"] is None
+
+
+def test_optional_description_failure_never_creates_a_human_question(automatic, monkeypatch):
+    logic, calls = automatic
+    record, _ = create_project(logic)
+    statuses, requests = {}, []
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: True)
+    monkeypatch.setattr(logic.automatic_review, "aspect_status", lambda *args: statuses)
+
+    def assist(record, report, *, plan, aspects):
+        requests.append(aspects)
+        statuses["description"] = {"status": "exhausted", "attempts": 2}
+
+    monkeypatch.setattr(logic.automatic_review, "ensure", assist)
+    logic.review_pending()
+    state = logic.plan("alice", record.project_id)["automation"]
+    assert state["phase"] == "ready" and "question" not in state
+    assert requests == [("description",)] and len(calls) == 1
+
+
+def test_transitive_resolution_conflict_gets_a_question_after_two_analysis_attempts(
+    automatic, monkeypatch
+):
+    logic, calls = automatic
+    record, _ = create_project(logic)
+    statuses, requests = {}, []
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: False)
+    monkeypatch.setattr(logic.automatic_review, "aspect_status", lambda *args: statuses)
+
+    def conflict(*args, **kwargs):
+        calls.append("conflict")
+        raise ResolutionError("RESOLUTION_CONFLICT", "No compatible set")
+
+    def assist(record, report, *, plan, aspects):
+        requests.append(aspects)
+        statuses["environment"] = {"status": "exhausted", "attempts": 2}
+
+    monkeypatch.setattr("nishtyak_service.automatic_resolution.VersionResolver.resolve", conflict)
+    monkeypatch.setattr(logic.automatic_review, "ensure", assist)
+    logic.review_pending()
+    state = logic.plan("alice", record.project_id)["automation"]
+    assert state["phase"] == "needs_input" and state["attempt"] == 2
+    assert state["question"]["aspect"] == "environment"
+    assert requests == [("environment",)] and calls == ["conflict"]
+
+
+def test_constraint_question_binds_existing_declaration_and_answer_revalidates(
+    automatic, monkeypatch
+):
+    logic, calls = automatic
+    record, report = create_project(
+        logic,
+        {
+            "experiment.py": "import numpy\nprint(numpy.mean([1, 2]))\n",
+            "requirements.txt": "numpy<2\nnumpy==2.2.0\n",
+        },
+    )
+    statuses = {}
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: False)
+    monkeypatch.setattr(logic.automatic_review, "aspect_status", lambda *args: statuses)
+
+    def assist(record, report, *, plan, aspects):
+        assert aspects == ("environment",)
+        statuses["environment"] = {"status": "exhausted", "attempts": 2}
+
+    monkeypatch.setattr(logic.automatic_review, "ensure", assist)
+    logic.review_pending()
+    state = logic.plan("alice", record.project_id)["automation"]
+    question = state["question"]
+    declaration = next(
+        item for item in report.declarations if item.id == question["declaration_id"]
+    )
+    assert state["attempt"] == 2 and question["kind"] == "version_constraint"
+    assert declaration.requirement in question["message"]
+    logic.save_decisions(
+        "alice",
+        record.project_id,
+        UserDecisions(
+            report.analysis_id,
+            declaration_actions={declaration.id: DeclarationDecision("replace", "numpy==2.2.0")},
+        ),
+        0,
+    )
+    logic.review_pending()
+    assert logic.plan("alice", record.project_id)["automation"]["phase"] == "ready"
+    assert len(calls) == 1

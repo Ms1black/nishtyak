@@ -106,9 +106,14 @@ class LogicClient:
         deadline = time.monotonic() + timeout
         while True:
             job = self.job(job_id)
-            preparing = any(
-                (job.get(key) or {}).get("status") in {"pending", "running"}
-                for key in ("automatic_review", "automatic_resolution")
+            automation = job.get("automation")
+            preparing = (
+                automation.get("phase") in {"static", "assisting", "validating"}
+                if automation is not None
+                else any(
+                    (job.get(key) or {}).get("status") in {"pending", "running"}
+                    for key in ("automatic_review", "automatic_resolution")
+                )
             )
             if job["status"] not in {"queued", "running"} and not preparing:
                 return job

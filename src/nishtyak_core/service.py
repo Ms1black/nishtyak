@@ -66,6 +66,7 @@ class ReproducibilityService:
         decisions: UserDecisions,
         *,
         automatic_candidate_id: str | None = None,
+        automatic_packages: dict[str, str] | None = None,
     ) -> PackagePlan:
         cleaned = replace(
             decisions,
@@ -73,7 +74,12 @@ class ReproducibilityService:
             input_description=self.scanner.redact(decisions.input_description),
             expected_output=self.scanner.redact(decisions.expected_output),
         )
-        return self.planner.prepare(report, cleaned, automatic_candidate_id=automatic_candidate_id)
+        return self.planner.prepare(
+            report,
+            cleaned,
+            automatic_candidate_id=automatic_candidate_id,
+            automatic_packages=automatic_packages,
+        )
 
     def render(self, plan: PackagePlan, include_dockerfile: bool = False) -> GeneratedFiles:
         generated = self.renderer.render(plan)

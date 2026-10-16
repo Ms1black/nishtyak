@@ -75,6 +75,29 @@ export interface ProjectAnalysis {
   optionalGroups?: string[]
   launchCandidates?: LaunchCandidate[]
   automaticReview?: AutomaticReview | null
+  automaticPackages?: Record<string, string>
+  automation?: ProjectAutomation | null
+}
+
+export type AutomationAspect = 'dependencies' | 'entrypoint' | 'description' | 'environment'
+
+export interface AutomationQuestion {
+  id: string
+  aspect: AutomationAspect
+  kind: 'package_mapping' | 'entrypoint' | 'version_constraint' | 'text'
+  module?: string
+  message?: string
+  candidateIds?: string[]
+  declarationId?: string
+}
+
+export interface ProjectAutomation {
+  phase: 'static' | 'assisting' | 'validating' | 'needs_input' | 'ready' | 'draft'
+  aspect?: AutomationAspect
+  attempt?: number
+  maxAttempts?: number
+  reason?: string | null
+  question?: AutomationQuestion | null
 }
 
 export interface AutomaticReview {
@@ -88,6 +111,8 @@ export interface AutomaticReview {
 
 export interface ServiceCapabilities {
   automaticReview: { enabled: boolean; provider: 'deepseek'; budgetSeconds: number; features?: string[] }
+  automaticResolution?: { enabled: boolean; budgetSeconds: number; defaultPlatform: TargetPlatform }
+  automation?: { enabled: boolean; maxAttempts: number }
 }
 
 export interface AnalysisOptions {
@@ -130,7 +155,7 @@ export interface AnalysisDecisions {
   expectedOutput: string
   dataConfirmed: boolean
   selectedExtras: string[]
-  declarationActions: Record<string, { action: string }>
+  declarationActions: Record<string, { action: string; requirement?: string | null }>
 }
 
 export interface DecisionsDocument {
@@ -152,9 +177,11 @@ export interface PackagePlan {
   files?: string[]
   decisions?: AnalysisDecisions
   description?: string
-  descriptionOrigin?: 'author' | 'automatic' | 'unknown'
+  descriptionOrigin?: 'author' | 'automatic' | 'inferred' | 'unknown'
   automaticReview?: AutomaticReview | null
   automaticResolution?: AutomaticResolution | null
+  automaticPackages?: Record<string, string>
+  automation?: ProjectAutomation | null
 }
 
 export interface AutomaticResolution {

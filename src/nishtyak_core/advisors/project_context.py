@@ -4,7 +4,7 @@ import hashlib
 import json
 import posixpath
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -48,6 +48,37 @@ class SafeProjectContext:
     facts: dict[str, Any]
     launches: tuple[dict[str, Any], ...]
     omitted_files: int = 0
+
+    def focused(
+        self,
+        aspects: tuple[str, ...],
+        modules: tuple[str, ...] = (),
+        feedback: dict[str, str] | None = None,
+    ) -> SafeProjectContext:
+        """Focus a repair on the unresolved facts without extending tool permissions."""
+        if set(aspects) - {"entrypoint", "packages", "description", "environment"}:
+            raise ValueError("Unknown advisory aspect")
+        if len(modules) > 20 or any(not item.isidentifier() for item in modules):
+            raise ValueError("Invalid advisory import modules")
+        facts = {
+            **self.facts,
+            "summary": {
+                **self.facts["summary"],
+                "assistant_focus": {
+                    "aspects": list(dict.fromkeys(aspects)),
+                    "modules": list(dict.fromkeys(modules)),
+                    "feedback": {
+                        str(key)[:200]: str(value)[:128] for key, value in (feedback or {}).items()
+                    },
+                },
+            },
+        }
+        for key in ("imports", "dependencies"):
+            facts[key] = sorted(
+                self.facts[key],
+                key=lambda item: item.get("module", "").split(".")[0] not in modules,
+            )
+        return self.from_dict(replace(self, facts=facts).to_dict())
 
     @classmethod
     def from_project(cls, report: AnalysisReport, snapshot: ProjectSnapshot) -> SafeProjectContext:

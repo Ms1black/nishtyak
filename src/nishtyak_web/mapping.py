@@ -118,7 +118,33 @@ def plan_to_web(value: dict) -> dict:
         "descriptionOrigin": value.get("description_origin", "unknown"),
         "automaticReview": review_to_web(value.get("automatic_review")),
         "automaticResolution": resolution_to_web(value.get("automatic_resolution")),
+        "automaticPackages": value.get("automatic_packages", {}),
+        "automation": automation_to_web(value.get("automation")),
     }
+
+
+def automation_to_web(value: dict | None) -> dict | None:
+    if value is None:
+        return None
+    result = {
+        "phase": value["phase"],
+        "aspect": value.get("aspect"),
+        "attempt": value.get("attempt", 0),
+        "maxAttempts": value.get("max_attempts", 2),
+        "reason": value.get("reason"),
+    }
+    question = value.get("question")
+    if question is not None:
+        result["question"] = {
+            "id": question["id"],
+            "aspect": question.get("aspect", value.get("aspect")),
+            "kind": question["kind"],
+            "module": question.get("module"),
+            "message": question.get("message"),
+            "candidateIds": question.get("candidate_ids", []),
+            "declarationId": question.get("declaration_id"),
+        }
+    return result
 
 
 def resolution_to_web(value: dict | None) -> dict | None:
@@ -186,20 +212,23 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
         item["path"] for item in report.get("findings", []) if item["code"] == "SECRET_DETECTED"
     }
     dependencies = []
+    plan = (preparation or {}).get("plan", {})
+    automatic_packages = plan.get("automatic_packages", {})
     for dependency in report.get("dependencies", []):
         evidence = dependency.get("evidence_ids", [])
         declaration = next((declarations[e] for e in evidence if e in declarations), None)
         source = dependency.get("status", "inferred")
         if source not in {"declared", "inferred", "unresolved", "author_environment"}:
             source = "unresolved" if dependency["category"] == "unresolved" else "inferred"
+        automatic_package = automatic_packages.get(dependency["module"])
         dependencies.append(
             {
                 "id": dependency["id"],
                 "module": dependency["module"],
-                "category": dependency["category"],
-                "package": dependency.get("package"),
+                "category": "external" if automatic_package else dependency["category"],
+                "package": automatic_package or dependency.get("package"),
                 "requirement": dependency.get("requirement"),
-                "source": source,
+                "source": "inferred" if automatic_package else source,
                 "declaredIn": declaration["path"] if declaration else None,
                 "locations": [
                     {"path": imports[e]["path"], "line": imports[e]["line"]}
@@ -210,19 +239,24 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
         )
     options = report.get("options", {})
     layout = report.get("layout") or {}
-    plan = (preparation or {}).get("plan", {})
     review = job.get("automatic_review")
     resolution = job.get("automatic_resolution")
+    automation = plan.get("automation") or job.get("automation")
+    preparing = (
+        automation.get("phase") in {"static", "assisting", "validating"}
+        if automation is not None
+        else any(
+            (item or {}).get("status") in {"pending", "running"} for item in (review, resolution)
+        )
+    )
     return {
         "analysisId": report.get("analysis_id", ""),
         "projectId": project_id,
-        "status": "analyzing"
-        if any(
-            (item or {}).get("status") in {"pending", "running"} for item in (review, resolution)
-        )
-        else analysis_status(report or None, job["status"]),
+        "status": "analyzing" if preparing else analysis_status(report or None, job["status"]),
         "automaticReview": review_to_web(plan.get("automatic_review") or review),
         "automaticResolution": resolution_to_web(plan.get("automatic_resolution") or resolution),
+        "automaticPackages": automatic_packages,
+        "automation": automation_to_web(automation),
         "error": (job.get("error") or {}).get("code"),
         "files": [
             {
