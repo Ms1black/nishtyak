@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path as FilePath
 from typing import Annotated, Literal
 
@@ -10,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from nishtyak_client import LogicClientError
 from nishtyak_core.archives import ArchiveError
@@ -19,6 +20,7 @@ from nishtyak_service.dto import AuthorEnvironmentDTO, ResolutionTargetDTO
 
 from .auth import GatewayBoundary
 from .config import WebSettings
+from .preview import COOKIE_NAME, PreviewAccess, PreviewLoginError, access_page, safe_next
 from .service import BrowserService
 
 ProjectId = Annotated[str, Path(pattern=r"^[a-f0-9]{32}$")]
@@ -64,6 +66,8 @@ def create_app(
     settings: WebSettings, service: BrowserService | None = None, static_dir: FilePath | None = None
 ) -> FastAPI:
     browser = service or BrowserService(settings)
+    preview = PreviewAccess(settings) if settings.mode == "preview" else None
+    workspace_started = datetime.now(UTC).isoformat()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -89,7 +93,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.browser = browser
-    app.add_middleware(GatewayBoundary, settings=settings)
+    app.add_middleware(GatewayBoundary, settings=settings, preview=preview)
 
     @app.exception_handler(LogicClientError)
     async def client_error(request: Request, error: LogicClientError):
@@ -121,23 +125,144 @@ def create_app(
     def health():
         return {"status": "ok"}
 
+    if preview is not None:
+
+        @app.get("/preview/access", response_class=HTMLResponse, include_in_schema=False)
+        def preview_form(next: str = "/team/projects"):
+            return HTMLResponse(
+                access_page(next),
+                headers={
+                    "Cache-Control": "no-store",
+                    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+                    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                },
+            )
+
+        @app.post("/preview/access", include_in_schema=False)
+        async def preview_login(request: Request):
+            if request.headers.get("content-type", "").split(";", 1)[0] != (
+                "application/x-www-form-urlencoded"
+            ):
+                return JSONResponse({"code": "INVALID_LOGIN_FORM"}, 422)
+            async with request.form(max_files=0, max_fields=2) as form:
+                if set(form) != {"passphrase", "next"} or any(
+                    len(form.getlist(key)) != 1 or not isinstance(form[key], str) for key in form
+                ):
+                    return JSONResponse({"code": "INVALID_LOGIN_FORM"}, 422)
+                try:
+                    cookie = await run_in_threadpool(preview.authenticate, form["passphrase"])
+                except PreviewLoginError as error:
+                    return JSONResponse(
+                        {"code": error.code, "message": "Не удалось войти в режим проверки"},
+                        error.status,
+                        {"Retry-After": "60"} if error.status == 429 else None,
+                    )
+                response = RedirectResponse(safe_next(form["next"]), 303)
+                response.set_cookie(
+                    COOKIE_NAME,
+                    cookie,
+                    max_age=settings.preview_session_seconds,
+                    secure=True,
+                    httponly=True,
+                    samesite="strict",
+                    path="/",
+                )
+                return response
+
+        @app.post("/preview/logout", include_in_schema=False)
+        def preview_logout():
+            response = RedirectResponse("/preview/access", 303)
+            response.delete_cookie(COOKIE_NAME, secure=True, httponly=True, samesite="strict")
+            return response
+
+    def workspace_metadata(identity):
+        local = identity.mode == "local"
+        review = identity.mode == "preview"
+        user = {
+            "id": identity.user,
+            "name": "Участник проверки"
+            if review
+            else "Локальная интеграция"
+            if local
+            else identity.user,
+            "email": "local@localhost" if local else "",
+            "avatarUrl": None,
+        }
+        team = {
+            "id": identity.workspace,
+            "name": "Общая проверка"
+            if review
+            else "Локальный проект"
+            if local
+            else identity.workspace,
+            "myRole": "owner",
+            "membersCount": 1,
+            "avatarUrl": None,
+        }
+        return user, team
+
     @app.get("/api/session")
     def session(request: Request):
         identity = request.state.identity
-        local = identity.mode == "local"
+        user, team = workspace_metadata(identity)
         return {
             "mode": identity.mode,
-            "user": {
-                "id": identity.user,
-                "name": "Локальная интеграция" if local else identity.user,
-                "email": "local@localhost" if local else "",
-                "avatarUrl": None,
-            },
-            "team": {
-                "id": identity.workspace,
-                "name": "Локальный проект" if local else identity.workspace,
+            "user": user,
+            "team": team,
+            "capabilities": {
+                "accountManagement": False,
+                "teamManagement": False,
+                "sharedWorkspace": identity.mode == "preview",
             },
         }
+
+    @app.get("/api/me")
+    def me(request: Request):
+        return workspace_metadata(request.state.identity)[0]
+
+    @app.get("/api/teams")
+    def teams(request: Request):
+        return [workspace_metadata(request.state.identity)[1]]
+
+    @app.get("/api/teams/{team_id}/members")
+    def members(request: Request, team_id: TeamId):
+        browser._team(request.state.identity, team_id)
+        user, _ = workspace_metadata(request.state.identity)
+        return [{**user, "role": "owner", "joinedAt": workspace_started, "isYou": True}]
+
+    @app.get("/api/teams/{team_id}/invites")
+    def invites(request: Request, team_id: TeamId):
+        browser._team(request.state.identity, team_id)
+        return []
+
+    def account_unavailable():
+        return JSONResponse(
+            {
+                "code": "ACCOUNT_BACKEND_UNAVAILABLE",
+                "message": "Регистрацию, команды и приглашения разрабатываем отдельно",
+            },
+            501,
+        )
+
+    app.add_api_route("/api/me", account_unavailable, methods=["PATCH", "PUT"])
+    app.add_api_route("/api/teams", account_unavailable, methods=["POST"])
+
+    @app.delete("/api/teams/{team_id}")
+    @app.post("/api/teams/{team_id}/invites")
+    @app.delete("/api/teams/{team_id}/invites/{item_id}")
+    @app.patch("/api/teams/{team_id}/members/{item_id}")
+    @app.delete("/api/teams/{team_id}/members/{item_id}")
+    def team_mutation(request: Request, team_id: TeamId, item_id: str = ""):
+        browser._team(request.state.identity, team_id)
+        return account_unavailable()
+
+    @app.post("/api/auth/logout")
+    def logout():
+        if preview is None:
+            return account_unavailable()
+        response = Response(status_code=204)
+        response.delete_cookie(COOKIE_NAME, secure=True, httponly=True, samesite="strict")
+        return response
 
     @app.get("/api/teams/{team_id}/projects")
     def list_projects(request: Request, team_id: TeamId):

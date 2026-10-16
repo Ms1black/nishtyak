@@ -3,6 +3,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { LoginForm } from '@/features/auth-login'
 import { RouteName } from '@/shared/config'
 import { BaseCard } from '@/shared/ui'
+import { isStandaloneWorkspace } from '@/shared/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +21,10 @@ function onSuccess() {
       <h1 id="login-title" class="login-page__title">{{ $t('auth.title') }}</h1>
       <p class="login-page__subtitle">{{ $t('auth.subtitle') }}</p>
       <LoginForm class="login-page__form" @success="onSuccess" />
+      <p v-if="isStandaloneWorkspace" class="login-page__preview">
+        {{ $t('integration.authPending') }}
+        <RouterLink :to="{ name: RouteName.Upload }">{{ $t('integration.openWorkspace') }}</RouterLink>
+      </p>
     </BaseCard>
     <p class="login-page__terms">
       {{ $t('auth.agree') }}
@@ -56,6 +61,20 @@ function onSuccess() {
 
 .login-page__form {
   margin-top: 32px;
+}
+
+.login-page__preview {
+  margin-top: 20px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.login-page__preview a {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-text);
+  text-decoration: underline;
 }
 
 .login-page__terms {

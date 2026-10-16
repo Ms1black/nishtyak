@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { teamApi, useTeamStore, type TeamInvite, type TeamRole } from '@/entities/team'
 import { t } from '@/shared/i18n'
+import { isStandaloneWorkspace } from '@/shared/api'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -44,7 +45,7 @@ export const useInviteStore = defineStore('team-invites', () => {
     error.value = null
     try {
       invites.value = await teamApi.listInvites(teamId)
-      if (!invites.value.length) await add(current.value?.role ?? 'member', { silent: true })
+      if (!invites.value.length && !isStandaloneWorkspace.value) await add(current.value?.role ?? 'member', { silent: true })
     } catch {
       error.value = 'invite.errors.load'
     } finally {
@@ -53,6 +54,7 @@ export const useInviteStore = defineStore('team-invites', () => {
   }
 
   async function add(role: TeamRole, { silent = false } = {}) {
+    if (isStandaloneWorkspace.value) return
     const teamId = teamStore.currentTeamId
     if (!teamId) return
     isCreating.value = true
@@ -69,6 +71,7 @@ export const useInviteStore = defineStore('team-invites', () => {
   }
 
   async function rotate() {
+    if (isStandaloneWorkspace.value) return
     const teamId = teamStore.currentTeamId
     const previous = current.value
     if (!teamId || !previous) return

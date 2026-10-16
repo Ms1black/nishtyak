@@ -13,6 +13,9 @@ class WebSettings:
     service_token: str = field(default="", repr=False)
     mode: str = "local"
     proxy_secret: str = field(default="", repr=False)
+    preview_password_hash: str = field(default="", repr=False)
+    preview_cookie_secret: str = field(default="", repr=False)
+    preview_session_seconds: int = 4 * 3600
     origins: tuple[str, ...] = (
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -26,11 +29,11 @@ class WebSettings:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_dir", Path(self.data_dir).absolute())
-        if self.mode not in {"local", "proxy"}:
-            raise ValueError("Gateway mode must be local or proxy")
+        if self.mode not in {"local", "proxy", "preview"}:
+            raise ValueError("Gateway mode must be local, proxy or preview")
         for name in ("service_token", "proxy_secret"):
             value = getattr(self, name)
-            if name == "proxy_secret" and self.mode == "local" and not value:
+            if name == "proxy_secret" and self.mode != "proxy" and not value:
                 continue
             if not 32 <= len(value) <= 512 or any(not 33 <= ord(c) <= 126 for c in value):
                 raise ValueError(f"{name} must contain 32 to 512 printable ASCII characters")
@@ -56,6 +59,21 @@ class WebSettings:
                 or parsed.fragment
             ):
                 raise ValueError("Expected exact HTTP(S) browser origins without paths")
+        if self.mode == "preview":
+            from .preview import validate_password_hash
+
+            validate_password_hash(self.preview_password_hash)
+            if not 32 <= len(self.preview_cookie_secret) <= 512 or any(
+                not 33 <= ord(c) <= 126 for c in self.preview_cookie_secret
+            ):
+                raise ValueError("Preview cookie secret must contain 32 to 512 ASCII characters")
+            if not self.origins or any(urlsplit(value).scheme != "https" for value in self.origins):
+                raise ValueError("Preview mode requires exact HTTPS browser origins")
+        if (
+            type(self.preview_session_seconds) is not int
+            or not 60 <= self.preview_session_seconds <= 86400
+        ):
+            raise ValueError("Preview session lifetime must be between 60 and 86400 seconds")
         for name in (
             "ttl_seconds",
             "max_storage_bytes",
@@ -73,6 +91,11 @@ class WebSettings:
             service_token=os.environ.get("NISHTYAK_SERVICE_TOKEN", ""),
             mode=os.environ.get("NISHTYAK_WEB_MODE", "local"),
             proxy_secret=os.environ.get("NISHTYAK_WEB_PROXY_SECRET", ""),
+            preview_password_hash=os.environ.get("NISHTYAK_PREVIEW_PASSWORD_HASH", ""),
+            preview_cookie_secret=os.environ.get("NISHTYAK_PREVIEW_COOKIE_SECRET", ""),
+            preview_session_seconds=int(
+                os.environ.get("NISHTYAK_PREVIEW_SESSION_SECONDS", "14400")
+            ),
             origins=tuple(
                 part.strip()
                 for part in os.environ.get("NISHTYAK_WEB_ORIGINS", ",".join(cls.origins)).split(",")

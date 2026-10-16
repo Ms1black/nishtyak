@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { RouteName } from '@/shared/config'
 import { BaseIcon, type IconName } from '@/shared/ui'
-import { isLocalWorkspace } from '@/shared/api'
 
 const route = useRoute()
 
@@ -27,7 +26,7 @@ const activeMatch = computed(() => links.find((l) => route.path.startsWith(l.mat
         :aria-current="activeMatch === link.match ? 'page' : undefined"
       >
         <BaseIcon :name="link.icon" :size="20" />
-        {{ $t(isLocalWorkspace && link.match === '/team' ? 'integration.projects' : link.label) }}
+        {{ $t(link.label) }}
       </RouterLink>
     </div>
   </nav>

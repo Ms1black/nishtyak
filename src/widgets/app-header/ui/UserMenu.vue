@@ -6,6 +6,7 @@ import { useLogout } from '@/features/auth-logout'
 import { RouteName } from '@/shared/config'
 import { useClickOutside } from '@/shared/lib'
 import { BaseIcon } from '@/shared/ui'
+import { isLocalWorkspace, isPreviewWorkspace } from '@/shared/api'
 
 const userStore = useUserStore()
 const route = useRoute()
@@ -44,9 +45,13 @@ useClickOutside(root, () => (isOpen.value = false))
           <BaseIcon name="user" :size="18" />
           {{ $t('routes.profile') }}
         </RouterLink>
+        <RouterLink v-if="isPreviewWorkspace" :to="{ name: RouteName.Login }" class="user-menu__item" role="menuitem" @click="isOpen = false">
+          <BaseIcon name="user" :size="18" />
+          {{ $t('integration.loginScreen') }}
+        </RouterLink>
         <button type="button" class="user-menu__item" role="menuitem" :disabled="isLoggingOut" @click="logout">
           <BaseIcon name="logout" :size="18" />
-          {{ $t('header.logout') }}
+          {{ $t(isLocalWorkspace ? 'integration.loginScreen' : 'header.logout') }}
         </button>
       </div>
     </Transition>

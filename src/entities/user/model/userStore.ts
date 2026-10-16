@@ -5,7 +5,7 @@ import { userApi, type LoginCredentials } from '../api'
 import { getInitials } from '../lib/initials'
 import type { User } from './types'
 
-export type SessionStatus = 'unknown' | 'authenticated' | 'anonymous' | 'local'
+export type SessionStatus = 'unknown' | 'authenticated' | 'anonymous' | 'local' | 'preview'
 
 export const useUserStore = defineStore('user', () => {
   const currentUser = ref<User>({ id: '', name: '', email: '', avatarUrl: null })
@@ -21,8 +21,9 @@ export const useUserStore = defineStore('user', () => {
     checking ??= (async () => {
       try {
         const session = await getIntegrationSession()
-        if (session?.mode === 'local') {
-          status.value = 'local'
+        if (session && (session.mode === 'local' || session.mode === 'preview')) {
+          currentUser.value = { ...session.user, avatarUrl: null }
+          status.value = session.mode
           return
         }
         currentUser.value = await userApi.me()

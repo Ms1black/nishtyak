@@ -2,7 +2,7 @@ import { computed, readonly, shallowRef } from 'vue'
 import { ApiError, apiClient } from './client'
 
 export interface IntegrationSession {
-  mode: 'local' | 'proxy'
+  mode: 'local' | 'preview' | 'proxy'
   user: { id: string; name: string; email: string }
   team: { id: string; name: string }
 }
@@ -12,10 +12,12 @@ let loading: Promise<IntegrationSession | null> | null = null
 
 export const integrationSession = readonly(session)
 export const isLocalWorkspace = computed(() => session.value?.mode === 'local')
+export const isPreviewWorkspace = computed(() => session.value?.mode === 'preview')
+export const isStandaloneWorkspace = computed(() => ['local', 'preview'].includes(session.value?.mode ?? ''))
 
 export function getIntegrationSession(): Promise<IntegrationSession | null> {
   loading ??= apiClient.get<IntegrationSession>('/session').then((result) => {
-    if (!['local', 'proxy'].includes(result.mode) || !result.team?.id || !result.user?.id) {
+    if (!['local', 'preview', 'proxy'].includes(result.mode) || !result.team?.id || !result.user?.id) {
       throw new ApiError(502, 'Invalid workspace session', 'INVALID_SESSION')
     }
     session.value = result

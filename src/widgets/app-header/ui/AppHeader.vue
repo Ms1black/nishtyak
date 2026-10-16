@@ -2,7 +2,7 @@
 import { LocaleSwitch } from '@/features/locale-switch'
 import { WorkspaceSwitcher } from '@/features/workspace-switch'
 import UserMenu from './UserMenu.vue'
-import { isLocalWorkspace } from '@/shared/api'
+import { isLocalWorkspace, isPreviewWorkspace } from '@/shared/api'
 </script>
 
 <template>
@@ -13,7 +13,8 @@ import { isLocalWorkspace } from '@/shared/api'
         <span class="header__divider" aria-hidden="true" />
         <LocaleSwitch />
         <span v-if="isLocalWorkspace" class="header__local">{{ $t('integration.localMode') }}</span>
-        <UserMenu v-else />
+        <span v-else-if="isPreviewWorkspace" class="header__local">{{ $t('integration.previewMode') }}</span>
+        <UserMenu />
       </div>
     </div>
   </header>
@@ -47,7 +48,19 @@ import { isLocalWorkspace } from '@/shared/api'
 }
 
 .header__local {
+  max-width: 180px;
   color: var(--color-text-secondary);
   font-size: 12px;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .header__local {
+    display: none;
+  }
+
+  .header__right {
+    gap: 12px;
+  }
 }
 </style>

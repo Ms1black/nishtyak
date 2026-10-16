@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useUserStore } from '@/entities/user'
-import { ApiError, USE_MOCK_API } from '@/shared/api'
+import { ApiError, isStandaloneWorkspace, USE_MOCK_API } from '@/shared/api'
 import { BaseButton, BaseIcon, BaseInput } from '@/shared/ui'
 
 const emit = defineEmits<{ success: [] }>()
@@ -19,6 +19,7 @@ const emailError = computed(() => (touched.value && !EMAIL_RE.test(email.value) 
 const passwordError = computed(() => (touched.value && password.value.length < 6 ? 'auth.errors.password' : null))
 
 async function submit() {
+  if (isStandaloneWorkspace.value) return
   touched.value = true
   serverError.value = null
   if (emailError.value || passwordError.value) return
@@ -44,7 +45,7 @@ async function submit() {
         type="email"
         autocomplete="username"
         :placeholder="$t('auth.emailPlaceholder')"
-        :disabled="isSubmitting"
+        :disabled="isSubmitting || isStandaloneWorkspace"
         :aria-invalid="!!emailError"
         :aria-describedby="emailError ? 'login-email-error' : undefined"
       />
@@ -59,7 +60,7 @@ async function submit() {
           v-model="password"
           :type="showPassword ? 'text' : 'password'"
           autocomplete="current-password"
-          :disabled="isSubmitting"
+          :disabled="isSubmitting || isStandaloneWorkspace"
           :aria-invalid="!!passwordError"
           :aria-describedby="passwordError ? 'login-password-error' : undefined"
         />
@@ -81,7 +82,7 @@ async function submit() {
       {{ $t(serverError) }}
     </p>
 
-    <BaseButton type="submit" size="lg" block :loading="isSubmitting">{{ $t('auth.submit') }}</BaseButton>
+    <BaseButton type="submit" size="lg" block :loading="isSubmitting" :disabled="isStandaloneWorkspace">{{ $t('auth.submit') }}</BaseButton>
 
     <p v-if="USE_MOCK_API" class="login__demo">{{ $t('auth.demo') }}</p>
   </form>

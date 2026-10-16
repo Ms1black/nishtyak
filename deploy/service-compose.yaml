@@ -4,6 +4,7 @@ x-settings: &settings
   NISHTYAK_DATA_DIR: /data
   NISHTYAK_RUNNER: docker
   NISHTYAK_ANALYZER_IMAGE: nishtyak-analyzer:0.3.0
+  NISHTYAK_MAX_OWNER_STORAGE_BYTES: ${NISHTYAK_MAX_OWNER_STORAGE_BYTES:-268435456}
 
 services:
   initialize:

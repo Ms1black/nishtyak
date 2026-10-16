@@ -1,0 +1,66 @@
+name: nishtyak-preview
+
+services:
+  initialize:
+    image: python:3.11-slim
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - preview:/data
+    command:
+      - python
+      - -c
+      - "import os; os.chmod('/data', 0o770); os.chown('/data', 65532, 65532)"
+    restart: "no"
+
+  preview:
+    image: nishtyak-web:0.3.0
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    network_mode: host
+    command: ["--host", "127.0.0.1", "--port", "8082"]
+    environment:
+      NISHTYAK_WEB_MODE: preview
+      NISHTYAK_WEB_DATA_DIR: /data
+      NISHTYAK_LOGIC_URL: http://127.0.0.1:8010
+      NISHTYAK_SERVICE_TOKEN: ${NISHTYAK_SERVICE_TOKEN:?Use the internal logic service token}
+      NISHTYAK_WEB_ORIGINS: ${NISHTYAK_WEB_ORIGINS:?Set the public HTTPS origin}
+      NISHTYAK_PREVIEW_PASSWORD_HASH: ${NISHTYAK_PREVIEW_PASSWORD_HASH:?Set the review password hash}
+      NISHTYAK_PREVIEW_COOKIE_SECRET: ${NISHTYAK_PREVIEW_COOKIE_SECRET:?Set a separate cookie secret}
+      NISHTYAK_PREVIEW_SESSION_SECONDS: 14400
+    volumes:
+      - preview:/data
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=65532,gid=65532,mode=700
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 64
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 35s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/api/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 4s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: 5m
+        max-file: "2"
+
+volumes:
+  preview:

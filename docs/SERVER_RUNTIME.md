@@ -23,6 +23,23 @@ ssh -p 32285 root@76.71.171.67 -L 8081:127.0.0.1:8081
 
 Для интеграции с авторизацией коллеги запускается `NISHTYAK_WEB_MODE=proxy` за его backend. `NISHTYAK_WEB_PROXY_SECRET` — отдельный серверный секрет 32–512 печатных ASCII-символов; backend после проверки сессии и прав устанавливает доверенные user/workspace-заголовки. [Контракт](API_CONTRACT.md). Локальный Compose-профиль намеренно не переключается в публичный режим. `NISHTYAK_LOGIC_URL` задает внутренний API, `NISHTYAK_WEB_DATA_DIR` — приватный индекс/ZIP-кэш, `NISHTYAK_WEB_STATIC_DIR` — готовый `dist`. Исходные загрузки и артефакты удаляются по TTL; очистка шлюза выполняется также в простое.
 
+## Публичная проверочная среда
+
+`preview` сохраняет весь интерфейс и вызывает настоящий проектный API. `/preview/access` принимает отдельный общий код проверки; успешный вход устанавливает подписанную `__Host-nishtyak_preview` cookie с `HttpOnly`, `Secure`, `SameSite=Strict`, сроком 4 часа. Код не является паролем пользовательского аккаунта. Общая рабочая область видна всем участникам проверки; пользовательские роли, регистрацию и приглашения продолжает второй разработчик. Метаданные рабочей области возвращаются сервером, неподключённые изменения аккаунтов/команд дают `501 ACCOUNT_BACKEND_UNAVAILABLE`.
+
+Приватный `/opt/nishtyak/preview.env` содержит серверный `NISHTYAK_SERVICE_TOKEN`, точный `NISHTYAK_WEB_ORIGINS=https://...`, `NISHTYAK_PREVIEW_PASSWORD_HASH` и отдельный случайный `NISHTYAK_PREVIEW_COOKIE_SECRET`. PBKDF2-хеш создаётся через `nishtyak_web.preview.hash_passphrase`; plaintext-код на сервере не хранится. Значение хеша в env-файле заключать в одинарные кавычки из-за символов `$`. Файл имеет права 0600 и не входит в Git. Проверочные cookie ограничены одной общей средой; выход удаляет cookie из браузера. Для полного отзыва доступа сменить код и cookie secret.
+
+```sh
+docker compose --env-file /opt/nishtyak/preview.env -f deploy/preview-compose.yaml build preview
+docker compose --env-file /opt/nishtyak/preview.env -f deploy/preview-compose.yaml up -d
+```
+
+Контейнер слушает только `127.0.0.1:8082`, имеет отдельный volume и те же ограничения 1 CPU/512 MiB/read-only/cap-drop. Локальный интерфейс на 8081 продолжает работать отдельно. `NISHTYAK_MAX_OWNER_STORAGE_BYTES` в конфигурации сервиса логики управляет консервативной резервацией диска на владельца; для общей проверки на VM выбран 1 GiB при глобальном лимите 2 GiB. Лимиты worker, очередь и отсутствие выполнения загрузок сохранены.
+
+На этой VM наружу проброшен только SSH, поэтому для браузерной проверки используется установленный `cloudflared` и unit `deploy/nishtyak-preview-tunnel.service`, направленный на 8082. Скопировать unit в `/etc/systemd/system`, затем выполнить `systemctl daemon-reload` и `systemctl enable --now nishtyak-preview-tunnel`. URL появляется в journal. Указать его точным HTTPS origin в `preview.env`, затем пересоздать preview-контейнер. Секреты приложения tunnel-процессу не передаются.
+
+Это [Quick Tunnel для тестирования](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/): при создании нового туннеля hostname меняется, поэтому после его перезапуска нужно обновить origin и ссылку. Для постоянного адреса нужен именованный туннель/домен или внешний порт Vast. Исходные тестовые ZIP доступны по `/examples/scientific-measurements.zip` и `/examples/local-calibration.zip` без аккаунта; проектные API и AI требуют cookie проверки.
+
 ## Компоненты
 
 ```mermaid

@@ -25,7 +25,7 @@ export const useTeamStore = defineStore('team', () => {
   function init(): Promise<void> {
     loading ??= (async () => {
       const session = await getIntegrationSession()
-      if (session?.mode === 'local') {
+      if (session && (session.mode === 'local' || session.mode === 'preview')) {
         teams.value = [{ ...session.team, myRole: 'owner', membersCount: 1, avatarUrl: null }]
         switchTeam(session.team.id)
         return

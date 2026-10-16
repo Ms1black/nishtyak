@@ -1,0 +1,5 @@
+[project]
+name = "scientific-measurements-example"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = ["numpy==2.4.6", "pandas==3.0.6"]

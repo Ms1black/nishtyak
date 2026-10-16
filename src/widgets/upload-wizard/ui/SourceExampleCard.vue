@@ -7,6 +7,11 @@ import { BaseCard } from '@/shared/ui'
   <BaseCard tag="aside" class="example">
     <h2 class="example__title">{{ $t('upload.example.title') }}</h2>
     <ArchiveTree root-name="project-ready.zip" :items="['README.md', 'requirements.txt', $t('upload.example.sources')]" />
+    <div class="example__downloads">
+      <span>{{ $t('upload.example.download') }}</span>
+      <a href="/examples/scientific-measurements.zip" download>{{ $t('upload.example.scientific') }}</a>
+      <a href="/examples/local-calibration.zip" download>{{ $t('upload.example.local') }}</a>
+    </div>
     <p class="example__note">{{ $t('upload.example.note') }}</p>
   </BaseCard>
 </template>
@@ -40,5 +45,18 @@ import { BaseCard } from '@/shared/ui'
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.4;
+}
+
+.example__downloads {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.example__downloads a {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 </style>

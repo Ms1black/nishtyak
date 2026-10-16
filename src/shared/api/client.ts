@@ -27,7 +27,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   })
 
   if (!response.ok) {
-    if (response.status === 401 && !path.startsWith('/me') && !path.startsWith('/auth/')) onUnauthorized?.()
     const text = await response.text().catch(() => response.statusText)
     let message = text || response.statusText
     let code: string | undefined
@@ -37,6 +36,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       if (typeof error.code === 'string') code = error.code
     } catch {
       // A reverse proxy can return a plain-text error.
+    }
+    if (response.status === 401 && code === 'PREVIEW_AUTH_REQUIRED') {
+      const next = `${window.location.pathname}${window.location.search}`
+      window.location.assign(`/preview/access?next=${encodeURIComponent(next)}`)
+    } else if (response.status === 401 && !path.startsWith('/me') && !path.startsWith('/auth/')) {
+      onUnauthorized?.()
     }
     throw new ApiError(response.status, message, code)
   }

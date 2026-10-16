@@ -3,6 +3,7 @@ import { UserAvatar, useUserStore } from '@/entities/user'
 import { useLogout } from '@/features/auth-logout'
 import { ProfileNameForm } from '@/features/profile-edit'
 import { BaseButton, BaseCard } from '@/shared/ui'
+import { isLocalWorkspace } from '@/shared/api'
 
 const userStore = useUserStore()
 const { logout, isLoggingOut } = useLogout()
@@ -20,7 +21,7 @@ const { logout, isLoggingOut } = useLogout()
     <ProfileNameForm class="profile__form" />
     <p class="profile__note">{{ $t('profile.note') }}</p>
     <BaseButton variant="tonal" icon="logout" block class="profile__logout" :loading="isLoggingOut" @click="logout">
-      {{ $t('header.logout') }}
+      {{ $t(isLocalWorkspace ? 'integration.loginScreen' : 'header.logout') }}
     </BaseButton>
   </BaseCard>
 </template>

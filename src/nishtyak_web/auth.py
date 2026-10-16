@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from starlette.responses import JSONResponse
 
 from .config import WebSettings
+from .preview import PreviewAccess
 
 
 @dataclass(frozen=True)
@@ -28,13 +29,16 @@ class WorkspaceIdentity:
 class GatewayBoundary:
     """Authenticate before receiving a bounded body; never trust browser owner headers."""
 
-    def __init__(self, app, settings: WebSettings):
+    def __init__(self, app, settings: WebSettings, preview: PreviewAccess | None = None):
         self.app, self.settings = app, settings
+        self.preview = preview
         self._active = 0
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http" or not (
-            scope["path"] == "/api" or scope["path"].startswith("/api/")
+            scope["path"] == "/api"
+            or scope["path"].startswith("/api/")
+            or scope["path"] in {"/preview/access", "/preview/logout"}
         ):
             await self.app(scope, receive, send)
             return
@@ -48,6 +52,7 @@ class GatewayBoundary:
                 b"x-nishtyak-proxy-secret",
                 b"x-nishtyak-user",
                 b"x-nishtyak-workspace",
+                b"cookie",
             }:
                 await self._error(scope, receive, send, 400, "INVALID_HEADERS")
                 return
@@ -64,18 +69,33 @@ class GatewayBoundary:
                 await self._error(scope, receive, send, 403, "HOST_FORBIDDEN")
                 return
         origin = headers.get(b"origin", b"").decode("latin1")
+        if self.settings.mode == "preview":
+            host = headers.get(b"host", b"").decode("latin1").lower()
+            if scope["path"] != "/api/healthz" and host not in {
+                urlsplit(value).netloc.lower() for value in self.settings.origins
+            }:
+                await self._error(scope, receive, send, 403, "HOST_FORBIDDEN")
+                return
+            if scope["method"] not in {"GET", "HEAD", "OPTIONS"} and not origin:
+                await self._error(scope, receive, send, 403, "ORIGIN_REQUIRED")
+                return
         if origin and origin not in self.settings.origins:
             await self._error(scope, receive, send, 403, "ORIGIN_FORBIDDEN")
             return
         if headers.get(b"sec-fetch-site") == b"cross-site":
             await self._error(scope, receive, send, 403, "ORIGIN_FORBIDDEN")
             return
-        if scope["path"] == "/api/healthz":
+        if scope["path"] == "/api/healthz" or scope["path"] == "/preview/access":
             identity = None
         else:
             identity = self._identity(scope, headers)
             if identity is None:
-                await self._error(scope, receive, send, 401, "AUTHENTICATION_REQUIRED")
+                code = (
+                    "PREVIEW_AUTH_REQUIRED"
+                    if self.settings.mode == "preview"
+                    else "AUTHENTICATION_REQUIRED"
+                )
+                await self._error(scope, receive, send, 401, code)
                 return
         scope.setdefault("state", {})["identity"] = identity
         if self._active >= 8:
@@ -88,6 +108,8 @@ class GatewayBoundary:
                 if b"multipart/form-data" in headers.get(b"content-type", b"")
                 else 262144
             )
+            if scope["path"].startswith("/preview/"):
+                maximum = 8192
             body = bytearray()
             try:
                 async with asyncio.timeout(15):
@@ -127,6 +149,11 @@ class GatewayBoundary:
             self._active -= 1
 
     def _identity(self, scope, headers) -> WorkspaceIdentity | None:
+        if self.settings.mode == "preview":
+            valid = self.preview and self.preview.valid_cookie(
+                headers.get(b"cookie", b"").decode("latin1")
+            )
+            return WorkspaceIdentity("reviewer", "preview", "preview") if valid else None
         if self.settings.mode == "local":
             try:
                 address = ipaddress.ip_address(scope.get("client", ("", 0))[0])

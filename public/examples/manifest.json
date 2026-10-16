@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "kind": "source-projects-for-upload",
+  "verified_at": "2026-10-16T20:48:52.542194+00:00",
+  "examples": [
+    {
+      "id": "scientific-measurements",
+      "title": "Измерения: NumPy, pandas и локальный модуль",
+      "description": "Среднее и выборочное стандартное отклонение по группам из CSV.",
+      "archive_url": "/examples/scientific-measurements.zip",
+      "archive_sha256": "802e17cc242fbf096fb9a58635b5884e73fdfbfecb6b1e3bdd233288523f47d4",
+      "archive_bytes": 6610,
+      "entrypoint": "experiment.py",
+      "external_dependencies": [
+        "numpy",
+        "pandas"
+      ],
+      "files": [
+        "LICENSE",
+        "README.md",
+        "data/measurements.csv",
+        "expected/summary.csv",
+        "experiment.py",
+        "lab/__init__.py",
+        "lab/stats.py",
+        "pyproject.toml"
+      ],
+      "expected_stdout": "sample,count,mean_c,sample_std_c\nA,3,21.000,1.000\nB,3,31.000,1.000\n",
+      "expected_output": "outputs/summary.csv",
+      "expected_output_sha256": "c54d8b4ca923c7a3c97ad6b012043472ced384eb2ef1e87679af40ed9e574629",
+      "verification": {
+        "result": "passed",
+        "fresh_virtual_environment": true,
+        "python": "3.11.1",
+        "platform": "darwin-arm64",
+        "dependencies": {
+          "numpy": "2.4.6",
+          "python-dateutil": "2.9.0.post0",
+          "pandas": "3.0.6",
+          "six": "1.17.0"
+        }
+      }
+    },
+    {
+      "id": "local-calibration",
+      "title": "Калибровка: локальный пакет без внешних зависимостей",
+      "description": "Линейная калибровка измерений из CSV через локальный calibration.model.",
+      "archive_url": "/examples/local-calibration.zip",
+      "archive_sha256": "1e02d8a660c1d2fe0b30c51f6cc1b88cf8c8b94f527a735472dead603e660a06",
+      "archive_bytes": 6288,
+      "entrypoint": "experiment.py",
+      "external_dependencies": [],
+      "files": [
+        "LICENSE",
+        "README.md",
+        "calibration/__init__.py",
+        "calibration/model.py",
+        "data/measurements.csv",
+        "expected/calibrated.csv",
+        "experiment.py"
+      ],
+      "expected_stdout": "measurement_id,calibrated_value\nm1,4.000\nm2,6.000\nm3,8.000\n",
+      "expected_output": "outputs/calibrated.csv",
+      "expected_output_sha256": "073c70a069a2ff245f13f184bf9d3831af3cd687cc4812869b1e9c3d7b160fdc",
+      "verification": {
+        "result": "passed",
+        "fresh_virtual_environment": true,
+        "python": "3.11.1",
+        "platform": "darwin-arm64",
+        "dependencies": {}
+      }
+    }
+  ]
+}

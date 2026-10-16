@@ -6,6 +6,7 @@ const props = defineProps<{
   url: string | null
   loading?: boolean
   regenerating?: boolean
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{ regenerate: [] }>()
@@ -39,7 +40,7 @@ function onCopy() {
         size="sm"
         icon="refresh"
         :loading="regenerating"
-        :disabled="loading"
+        :disabled="loading || disabled"
         block
         :title="$t('invite.rotateTitle')"
         @click="emit('regenerate')"

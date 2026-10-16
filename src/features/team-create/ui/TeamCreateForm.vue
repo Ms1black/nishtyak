@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useTeamStore } from '@/entities/team'
 import { BaseButton, BaseInput } from '@/shared/ui'
+import { isStandaloneWorkspace } from '@/shared/api'
 
 const MAX_LENGTH = 64
 
@@ -14,6 +15,7 @@ const root = ref<HTMLElement | null>(null)
 const emit = defineEmits<{ created: [name: string] }>()
 
 async function submit() {
+  if (isStandaloneWorkspace.value) return
   const value = name.value.trim()
   if (value.length < 2) {
     error.value = 'teams.create.tooShort'
@@ -52,13 +54,13 @@ defineExpose({ focus })
         v-model="name"
         :maxlength="MAX_LENGTH"
         :placeholder="$t('teams.create.placeholder')"
-        :disabled="isCreating"
+        :disabled="isCreating || isStandaloneWorkspace"
         @input="error = null"
       />
-      <BaseButton type="submit" icon="plus" :loading="isCreating" :disabled="!name.trim()">{{ $t('teams.create.submit') }}</BaseButton>
+      <BaseButton type="submit" icon="plus" :loading="isCreating" :disabled="isStandaloneWorkspace || !name.trim()">{{ $t('teams.create.submit') }}</BaseButton>
     </div>
     <p v-if="error" class="create__error" role="alert">{{ $t(error) }}</p>
-    <p v-else class="create__hint">{{ $t('teams.create.hint') }}</p>
+    <p v-else class="create__hint">{{ $t(isStandaloneWorkspace ? 'integration.teamsPending' : 'teams.create.hint') }}</p>
   </form>
 </template>
 
