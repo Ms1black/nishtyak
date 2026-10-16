@@ -32,6 +32,7 @@ nishtyak build tests/fixtures/local_project --entry main.py \
 - [Клиент полного сервисного сценария](examples/service_client.py)
 - [Приемка автоматической подготовки, lock и живого AI для v0.3.0](examples/resolution-verification.json)
 - [Приемка веб-интерфейса и браузерного шлюза на VM](examples/web-verification.json)
+- [Полный интерфейс, внешний HTTPS-доступ и исходные ZIP](examples/public-preview-verification.json)
 - [Приемка двух публичных проектов для v0.2.0](examples/workflow-verification.json)
 - [Источники технических решений](docs/research.json)
 
@@ -93,7 +94,7 @@ ruff check src tests
 ruff format --check src tests
 ```
 
-Текущий результат: 681 Python-тест, 6 тестов фронта, проверка типов, production build, Ruff и форматирование проходят. Браузерный сценарий `.py`/ZIP, удаление, граф, lock, Dockerfile и живой DeepSeek проверены через собранный интерфейс на VM. Решения, lock и байты архива сохранились после рестарта шлюза. [Веб-приемка](examples/web-verification.json).
+Текущий результат: 692 Python-теста, 15 тестов фронта, проверка типов, production build, Ruff и форматирование проходят. Браузерный сценарий `.py`/ZIP, удаление, граф, lock, Dockerfile и живой DeepSeek проверены через собранный интерфейс на VM. Решения, lock и байты архива сохранились после рестарта шлюза. [Веб-приемка](examples/web-verification.json).
 
 v0.3.0 развернут на VM: 38 проверок изоляции и 32 HTTP-проверки, совпадение OpenAPI и установленного кода. Два подготовленных проекта (NumPy/Pandas и локальный модуль) прошли автоматический выбор запуска, uv lock, экспорт и повторение в чистых Python 3.11 окружениях с результатом `4.0`. Живой DeepSeek проверен для запуска и README. Lock и решения пережили перезапуск, повторный анализ удаляет прежний lock. [Результаты приемки ядра](examples/resolution-verification.json). Загруженный пользовательский код сервис не выполняет.
 

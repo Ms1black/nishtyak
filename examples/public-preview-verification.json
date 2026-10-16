@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-10-16T21:03:19.783180+00:00",
+  "runtime_commit": "7de5e4ec82f909fc3e24b82173f7d5c07275333d",
+  "public_url": "https://bernard-postcard-process-gulf.trycloudflare.com",
+  "api_base": "/api",
+  "deployment": {
+    "profiles": [
+      "local:127.0.0.1:8081",
+      "preview:127.0.0.1:8082"
+    ],
+    "image": "sha256:255e27f6283f9f8fd405e45bdb24785d7d0e77dc9c02f0268279f6c117e9dc1f",
+    "python_files_matched": 62,
+    "static_files_matched": 33,
+    "worker_isolation_unchanged": true,
+    "provider_key_absent_from_gateways": true,
+    "owner_disk_budget_bytes": 1073741824,
+    "global_disk_budget_bytes": 2147483648
+  },
+  "automated": {
+    "python_tests": 692,
+    "gateway_tests": 27,
+    "frontend_tests": 15,
+    "build": "passed",
+    "typecheck": "passed",
+    "ruff": "passed"
+  },
+  "browser": {
+    "status": "passed",
+    "screens": [
+      "projects",
+      "profile",
+      "workspace menu",
+      "user menu",
+      "members",
+      "invites",
+      "login"
+    ],
+    "cases": [
+      "wrong review code denied, signed Secure/HttpOnly/SameSite cookie accepted",
+      "actual source ZIP download and upload",
+      "local lab and external numpy/pandas imports classified",
+      "source preview, decisions save, real ZIP download",
+      "new browser restores saved decisions and identical ZIP",
+      "project URL survives reload and reset clears it",
+      "project list navigation and details preserve current project",
+      "logout clears cookie and API returns 401"
+    ],
+    "javascript_errors": [],
+    "archive_sha256": "2a09a87b59a529807f8809b730072b5c422fbede63a7913be360d3740c4ce647"
+  },
+  "upload_examples": [
+    {
+      "id": "scientific-measurements",
+      "url": "/examples/scientific-measurements.zip",
+      "sha256": "802e17cc242fbf096fb9a58635b5884e73fdfbfecb6b1e3bdd233288523f47d4",
+      "files": [
+        "LICENSE",
+        "README.md",
+        "data/measurements.csv",
+        "expected/summary.csv",
+        "experiment.py",
+        "lab/__init__.py",
+        "lab/stats.py",
+        "pyproject.toml"
+      ],
+      "local_execution": {
+        "result": "passed",
+        "fresh_virtual_environment": true,
+        "python": "3.11.1",
+        "platform": "darwin-arm64",
+        "dependencies": {
+          "numpy": "2.4.6",
+          "python-dateutil": "2.9.0.post0",
+          "pandas": "3.0.6",
+          "six": "1.17.0"
+        }
+      },
+      "output_matches_expected": true
+    },
+    {
+      "id": "local-calibration",
+      "url": "/examples/local-calibration.zip",
+      "sha256": "1e02d8a660c1d2fe0b30c51f6cc1b88cf8c8b94f527a735472dead603e660a06",
+      "files": [
+        "LICENSE",
+        "README.md",
+        "calibration/__init__.py",
+        "calibration/model.py",
+        "data/measurements.csv",
+        "expected/calibrated.csv",
+        "experiment.py"
+      ],
+      "local_execution": {
+        "result": "passed",
+        "fresh_virtual_environment": true,
+        "python": "3.11.1",
+        "platform": "darwin-arm64",
+        "dependencies": {}
+      },
+      "output_matches_expected": true
+    }
+  ],
+  "boundaries": {
+    "workspace": "shared preview, not personal accounts",
+    "account_operations": "colleague backend in progress; unsupported writes return 501",
+    "uploaded_code_executed_on_server": false,
+    "plain_review_code_in_repository": false,
+    "quick_tunnel": "test address, hostname changes if tunnel is recreated"
+  }
+}
