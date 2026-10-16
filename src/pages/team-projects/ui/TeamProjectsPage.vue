@@ -7,6 +7,7 @@ import { filterByName, ProjectSearch } from '@/features/project-search'
 import { ProjectSort, sortByDate, type DateSortOrder } from '@/features/project-sort'
 import { RouteName } from '@/shared/config'
 import { t } from '@/shared/i18n'
+import { isLocalWorkspace } from '@/shared/api'
 import { BaseButton } from '@/shared/ui'
 import { ProjectsTable } from '@/widgets/projects-table'
 import { TeamTabs } from '@/widgets/team-tabs'
@@ -44,7 +45,8 @@ watch(
 <template>
   <div class="container team-projects">
     <h1 class="visually-hidden">{{ $t('routes.teamProjects') }}</h1>
-    <TeamTabs />
+    <h2 v-if="isLocalWorkspace">{{ $t('integration.projects') }}</h2>
+    <TeamTabs v-else />
 
     <div class="team-projects__toolbar">
       <ProjectSearch v-model="query" />

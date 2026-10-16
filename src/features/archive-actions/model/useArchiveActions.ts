@@ -1,17 +1,22 @@
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { getArchiveFileName, projectApi, useProjectStore, type Project } from '@/entities/project'
 import { downloadBlob } from '@/shared/lib'
+import { ApiError } from '@/shared/api'
+import { t } from '@/shared/i18n'
 
 export function useArchiveActions() {
   const projectStore = useProjectStore()
   const pending = reactive(new Set<string>())
+  const error = ref<string | null>(null)
 
   async function run<T>(id: string, task: () => Promise<T>): Promise<T | null> {
     if (pending.has(id)) return null
     pending.add(id)
+    error.value = null
     try {
       return await task()
-    } catch {
+    } catch (cause) {
+      error.value = cause instanceof ApiError ? cause.message : t('workflow.archiveError')
       return null
     } finally {
       pending.delete(id)
@@ -33,5 +38,5 @@ export function useArchiveActions() {
 
   const isPending = (id: string) => pending.has(id)
 
-  return { build, download, isPending }
+  return { build, download, isPending, error }
 }

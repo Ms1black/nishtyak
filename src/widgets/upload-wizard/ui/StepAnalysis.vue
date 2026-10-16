@@ -9,6 +9,7 @@ import { BaseButton, BaseCard, BaseIcon } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 import ReadinessPanel from './ReadinessPanel.vue'
 import SectionCard from './SectionCard.vue'
+import ProjectToolsPanel from './ProjectToolsPanel.vue'
 
 const wizard = useUploadWizardStore()
 const explorer = ref<InstanceType<typeof ProjectFileExplorer> | null>(null)
@@ -27,21 +28,35 @@ const dataFiles = computed(() =>
     .map((f) => f.path),
 )
 
+const visiblePlan = computed(() => {
+  if (!wizard.plan) return null
+  const excluded = new Set(wizard.decisions?.excludedFiles ?? [])
+  return {
+    ...wizard.plan,
+    findings: wizard.plan.findings.filter(
+      (finding) => finding.code !== 'SECRET_DETECTED' || !finding.path || !excluded.has(finding.path),
+    ),
+  }
+})
+
 function countIn(section: string, kind: 'blocker' | 'question') {
   return (
-    wizard.plan?.findings.filter((f) => getFindingSection(f) === section && getFindingKind(f) === kind).length ?? 0
+    visiblePlan.value?.findings.filter((f) => getFindingSection(f) === section && getFindingKind(f) === kind).length ??
+    0
   )
 }
 
-const notes = computed(() => wizard.plan?.findings.filter((f) => getFindingKind(f) === 'note') ?? [])
+const notes = computed(() => visiblePlan.value?.findings.filter((f) => getFindingKind(f) === 'note') ?? [])
 const requirementsCount = computed(() => wizard.plan?.requirements.length ?? 0)
 
 const runSpec = computed({
-  get: () => wizard.decisions?.runSpec ?? null,
+  get: () => wizard.decisions?.runSpec ?? wizard.plan?.runSpec ?? wizard.analysis?.suggestedRunSpec ?? null,
   set: (value) => wizard.setRunSpec(value),
 })
 
-function field<K extends 'pythonVersion' | 'dataConfirmed' | 'inputDescription' | 'expectedOutput' | 'description'>(key: K) {
+function field<K extends 'pythonVersion' | 'dataConfirmed' | 'inputDescription' | 'expectedOutput' | 'description'>(
+  key: K,
+) {
   return computed({
     get: () => wizard.decisions![key],
     set: (value) => wizard.update({ [key]: value }),
@@ -77,7 +92,7 @@ async function focusFinding(finding: Finding) {
 
 <template>
   <div v-if="wizard.project" class="analysis">
-    <BaseCard v-if="wizard.isLoading || wizard.isAnalyzing" padding="lg" class="analysis__state">
+    <BaseCard v-if="(wizard.isLoading || wizard.isAnalyzing) && !wizard.error" padding="lg" class="analysis__state">
       <BaseIcon name="refresh" :size="32" spin />
       <h2 class="analysis__state-title">{{ $t('analysis.state.analyzingTitle', { name: wizard.project.name }) }}</h2>
       <p class="analysis__state-text">{{ $t('analysis.state.analyzingText') }}</p>
@@ -86,11 +101,21 @@ async function focusFinding(finding: Finding) {
       </div>
     </BaseCard>
 
-    <BaseCard v-else-if="wizard.analysis?.status === 'failed' || (!wizard.analysis && wizard.error)" padding="lg" class="analysis__state">
+    <BaseCard
+      v-else-if="
+        wizard.analysis?.status === 'failed' ||
+        (wizard.error && (!wizard.analysis || wizard.isAnalyzing || !wizard.decisions))
+      "
+      padding="lg"
+      class="analysis__state"
+    >
       <BaseIcon name="alert" :size="32" class="analysis__state-error" />
       <h2 class="analysis__state-title">{{ $t('analysis.state.failedTitle') }}</h2>
       <p class="analysis__state-text">{{ wizard.analysis?.error ?? (wizard.error && $t(wizard.error)) }}</p>
-      <BaseButton variant="tonal" icon="upload" @click="wizard.reset()">{{ $t('analysis.state.uploadOther') }}</BaseButton>
+      <BaseButton variant="tonal" icon="refresh" @click="wizard.loadAnalysis()">{{ $t('common.retry') }}</BaseButton>
+      <BaseButton variant="tonal" icon="upload" @click="wizard.reset()">{{
+        $t('analysis.state.uploadOther')
+      }}</BaseButton>
     </BaseCard>
 
     <template v-else-if="wizard.analysis && wizard.decisions">
@@ -101,7 +126,7 @@ async function focusFinding(finding: Finding) {
           :project-name="wizard.project.name"
           :files="wizard.analysis.files"
           :excluded-files="wizard.decisions.excludedFiles"
-          :disabled="wizard.isBuilding"
+          :disabled="wizard.isBusy"
           @toggle="wizard.toggleFile"
         />
       </BaseCard>
@@ -119,7 +144,7 @@ async function focusFinding(finding: Finding) {
               :packages="wizard.decisions.packages"
               :versions="wizard.decisions.versions"
               :excluded-modules="wizard.decisions.excludedModules"
-              :disabled="wizard.isBuilding"
+              :disabled="wizard.isBusy"
               @set-package="wizard.setPackage"
               @set-version="wizard.setVersion"
               @toggle="wizard.toggleModule"
@@ -138,23 +163,24 @@ async function focusFinding(finding: Finding) {
               :entrypoints="wizard.analysis.entrypoints"
               :script-files="scriptFiles"
               :python-requires="wizard.analysis.pythonRequires"
-              :disabled="wizard.isBuilding"
+              :candidates="wizard.analysis.launchCandidates"
+              :disabled="wizard.isBusy"
             />
           </SectionCard>
 
-          <SectionCard
-            id="section-data"
-            :title="$t('analysis.data.title')"
-            :questions="countIn('data', 'question')"
-          >
+          <SectionCard id="section-data" :title="$t('analysis.data.title')" :questions="countIn('data', 'question')">
             <DataConfirmation
               v-model:data-confirmed="dataConfirmed"
               v-model:input-description="inputDescription"
               v-model:expected-output="expectedOutput"
               v-model:description="description"
               :data-files="dataFiles"
-              :disabled="wizard.isBuilding"
+              :disabled="wizard.isBusy"
             />
+          </SectionCard>
+
+          <SectionCard id="section-tools" :title="$t('workflow.toolsTitle')">
+            <ProjectToolsPanel />
           </SectionCard>
 
           <SectionCard
@@ -170,7 +196,7 @@ async function focusFinding(finding: Finding) {
         <ReadinessPanel
           class="analysis__aside"
           :project="wizard.project"
-          :plan="wizard.plan"
+          :plan="visiblePlan"
           :save-state="wizard.saveState"
           :saved-at="wizard.savedAt"
           :is-building="wizard.isBuilding"

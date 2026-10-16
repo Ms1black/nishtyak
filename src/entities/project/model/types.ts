@@ -7,6 +7,7 @@ export type ArchiveStatus = 'unavailable' | 'not_built' | 'building' | 'ready'
 export interface ProjectArchive {
   status: ArchiveStatus
   sizeBytes?: number
+  files?: string[]
 }
 
 export interface Project {
@@ -68,12 +69,28 @@ export interface ProjectAnalysis {
   entrypoints: string[]
   pythonRequires: string | null
   findings: Finding[]
+  suggestedRunSpec?: RunSpec | null
+  options?: AnalysisOptions
+  projectRoots?: string[]
+  optionalGroups?: string[]
+  launchCandidates?: LaunchCandidate[]
+}
+
+export interface AnalysisOptions {
+  pythonVersion: string
+  projectRoot: string | null
+  sourceRoots: string[]
+}
+
+export interface LaunchCandidate {
+  id: string
+  runSpec: RunSpec
+  reason: string
+  confidence: string
 }
 
 export type FileContent =
-  | { kind: 'text'; content: string }
-  | { kind: 'hidden' }
-  | { kind: 'binary' }
+  { kind: 'text'; content: string; truncated?: boolean } | { kind: 'hidden' } | { kind: 'binary' }
 
 export type RunKind = 'script' | 'module' | 'callable'
 
@@ -96,6 +113,8 @@ export interface AnalysisDecisions {
   inputDescription: string
   expectedOutput: string
   dataConfirmed: boolean
+  selectedExtras: string[]
+  declarationActions: Record<string, { action: string }>
 }
 
 export interface DecisionsDocument {
@@ -110,4 +129,42 @@ export interface PackagePlan {
   state: PlanState
   requirements: string[]
   findings: Finding[]
+  runSpec?: RunSpec | null
+  pythonVersion?: string | null
+  files?: string[]
+  decisions?: AnalysisDecisions
+}
+
+export type TargetPlatform = 'linux-x86_64' | 'linux-aarch64' | 'macos-arm64' | 'macos-x86_64' | 'windows-x86_64'
+
+export interface DependencyLock {
+  id: string
+  analysis_id: string
+  target: { python_version: string; platform: TargetPlatform }
+  packages: string[]
+  requirements: string
+  provenance: string
+}
+
+export type AdviceFeature = 'explain' | 'readme' | 'packages' | 'entrypoint'
+
+export interface AdviceSuggestion {
+  kind: string
+  text: string
+  evidence_ids: string[]
+  candidate_id: string | null
+  module: string | null
+  package: string | null
+  requires_confirmation: boolean
+}
+
+export interface ProjectAdvice {
+  analysis_id: string
+  status: 'ok' | 'invalid_response' | 'unavailable'
+  feature: AdviceFeature
+  suggestions: AdviceSuggestion[]
+  unknowns: string[]
+  reason?: string | null
+  rounds: number
+  tool_calls: number
 }

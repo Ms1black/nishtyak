@@ -12,6 +12,11 @@ dependencies = ["packaging>=24", "stdlib-list>=0.11,<1"]
 [project.optional-dependencies]
 conda = ["PyYAML>=6"]
 resolve = ["uv==0.12.3"]
+web = [
+    "fastapi>=0.143,<1",
+    "uvicorn>=0.54,<1",
+    "python-multipart>=0.0.32,<1",
+]
 service = [
     "uv==0.12.3",
     "fastapi>=0.143,<1",
@@ -32,9 +37,11 @@ dev = [
 [project.scripts]
 nishtyak = "nishtyak_core.cli:main"
 nishtyak-service = "nishtyak_service.cli:main"
+nishtyak-web = "nishtyak_web.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["nishtyak_core*", "nishtyak_service*", "nishtyak_client*", "nishtyak_web*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

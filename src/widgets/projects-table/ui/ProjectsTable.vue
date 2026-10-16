@@ -1,16 +1,20 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import {
   AnalysisBadge,
   ArchiveStatusLabel,
   getProjectAction,
   getProjectMeta,
   ProjectSourceIcon,
+  projectApi,
+  useProjectStore,
   type Project,
 } from '@/entities/project'
 import { useArchiveActions } from '@/features/archive-actions'
 import { t } from '@/shared/i18n'
+import { ApiError } from '@/shared/api'
 import { formatRelativeDate } from '@/shared/lib'
-import { BaseIcon } from '@/shared/ui'
+import { BaseButton, BaseDialog, BaseIcon } from '@/shared/ui'
 
 defineProps<{
   projects: Project[]
@@ -23,6 +27,33 @@ const emit = defineEmits<{
 }>()
 
 const archive = useArchiveActions()
+const projectStore = useProjectStore()
+const deleteTarget = ref<Project | null>(null)
+const deleteDialogOpen = ref(false)
+const deleting = ref<string | null>(null)
+const deleteError = ref<string | null>(null)
+
+function askDelete(project: Project) {
+  deleteTarget.value = project
+  deleteError.value = null
+  deleteDialogOpen.value = true
+}
+
+async function removeProject() {
+  const target = deleteTarget.value
+  if (!target || deleting.value) return
+  deleting.value = target.id
+  deleteError.value = null
+  try {
+    await projectApi.remove(target.id)
+    projectStore.remove(target.id)
+    if (deleteTarget.value?.id === target.id) deleteDialogOpen.value = false
+  } catch (cause) {
+    deleteError.value = cause instanceof ApiError ? cause.message : t('projects.deleteError')
+  } finally {
+    deleting.value = null
+  }
+}
 
 function runAction(project: Project) {
   const action = getProjectAction(project)
@@ -43,6 +74,7 @@ function actionLabel(project: Project): string {
 </script>
 
 <template>
+  <p v-if="archive.error.value" class="table-error" role="alert">{{ archive.error.value }}</p>
   <div class="table-scroll">
     <div class="table" role="table" :aria-label="$t('projects.tableLabel')">
       <div class="table__row table__row--head" role="row">
@@ -93,7 +125,7 @@ function actionLabel(project: Project): string {
         <div class="cell-date" role="cell">
           <time :datetime="project.updatedAt">{{ formatRelativeDate(project.updatedAt) }}</time>
         </div>
-        <div role="cell">
+        <div role="cell" class="cell-actions">
           <button
             type="button"
             class="cell-action"
@@ -105,10 +137,39 @@ function actionLabel(project: Project): string {
             <BaseIcon v-if="archive.isPending(project.id)" name="refresh" :size="18" spin />
             <BaseIcon v-else name="chevron-right" :size="18" class="cell-action__chevron" />
           </button>
+          <div class="cell-actions__secondary">
+            <button
+              type="button"
+              :disabled="archive.isPending(project.id) || deleting === project.id"
+              @click.stop="emit('open', project)"
+            >
+              {{ $t('project.action.details') }}
+            </button>
+            <button
+              type="button"
+              :disabled="archive.isPending(project.id) || !!deleting"
+              :aria-label="$t('projects.deleteProject', { name: project.name })"
+              @click.stop="askDelete(project)"
+            >
+              {{ $t('common.remove') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
   </div>
+  <BaseDialog v-model:open="deleteDialogOpen" :title="$t('projects.deleteTitle')">
+    <p>{{ $t('projects.deleteConfirm', { name: deleteTarget?.name ?? '' }) }}</p>
+    <p v-if="deleteError" class="table-error" role="alert">{{ deleteError }}</p>
+    <template #actions>
+      <BaseButton variant="tonal" :disabled="!!deleting" @click="deleteDialogOpen = false">{{
+        $t('common.cancel')
+      }}</BaseButton>
+      <BaseButton variant="danger" :loading="!!deleting" :disabled="!!deleting" @click="removeProject">{{
+        $t('common.remove')
+      }}</BaseButton>
+    </template>
+  </BaseDialog>
 </template>
 
 <style scoped>
@@ -216,6 +277,29 @@ function actionLabel(project: Project): string {
   transition:
     color var(--transition),
     transform var(--transition);
+}
+
+.cell-actions {
+  display: flex;
+  flex-direction: column;
+}
+.cell-actions__secondary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.cell-actions__secondary button {
+  padding: 4px 0;
+}
+.cell-actions__secondary button:hover {
+  color: var(--color-text);
+}
+.table-error {
+  margin-bottom: 12px;
+  color: var(--color-danger);
+  font-size: 13px;
 }
 
 .table__empty {

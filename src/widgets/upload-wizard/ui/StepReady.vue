@@ -16,13 +16,13 @@ const archive = useArchiveActions()
 const isDraft = computed(() => wizard.plan?.state === 'draft')
 
 const treeItems = computed(() => {
-  const entry = wizard.decisions?.runSpec?.target
-  return ['README.md', 'requirements.txt', entry ? t('ready.sources', { entry }) : t('upload.example.sources')]
+  if (wizard.project?.archive.files) return wizard.project.archive.files
+  return []
 })
 
 const summary = computed(() => [
   { label: t('ready.summary.packages'), value: String(wizard.plan?.requirements.length ?? 0) },
-  { label: t('ready.summary.run'), value: wizard.decisions?.runSpec?.target || '—' },
+  { label: t('ready.summary.run'), value: wizard.plan?.runSpec?.target ?? wizard.decisions?.runSpec?.target ?? '—' },
   { label: t('ready.summary.python'), value: wizard.decisions?.pythonVersion ?? t('ready.pythonUnknown') },
   { label: t('ready.summary.excluded'), value: String(wizard.decisions?.excludedFiles.length ?? 0) },
   {
@@ -67,6 +67,7 @@ function toProjects() {
     </BaseCard>
 
     <div class="step-actions">
+      <p v-if="archive.error.value" role="alert" class="step-actions__hint is-error">{{ archive.error.value }}</p>
       <BaseButton variant="tonal" icon="arrow-left" @click="wizard.backToAnalysis()">{{ $t('ready.edit') }}</BaseButton>
       <span class="step-actions__spacer" />
       <BaseButton variant="tonal" @click="toProjects">{{ $t('ready.toProjects') }}</BaseButton>

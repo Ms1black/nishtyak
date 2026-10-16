@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { ApiError } from '@/shared/api'
+import { ApiError, getIntegrationSession } from '@/shared/api'
 import { userApi, type LoginCredentials } from '../api'
 import { getInitials } from '../lib/initials'
 import type { User } from './types'
 
-export type SessionStatus = 'unknown' | 'authenticated' | 'anonymous'
+export type SessionStatus = 'unknown' | 'authenticated' | 'anonymous' | 'local'
 
 export const useUserStore = defineStore('user', () => {
   const currentUser = ref<User>({ id: '', name: '', email: '', avatarUrl: null })
@@ -20,6 +20,11 @@ export const useUserStore = defineStore('user', () => {
     if (status.value !== 'unknown') return Promise.resolve()
     checking ??= (async () => {
       try {
+        const session = await getIntegrationSession()
+        if (session?.mode === 'local') {
+          status.value = 'local'
+          return
+        }
         currentUser.value = await userApi.me()
         status.value = 'authenticated'
       } catch (e) {

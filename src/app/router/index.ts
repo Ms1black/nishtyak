@@ -2,7 +2,7 @@ import { watch } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { APP_NAME, RouteName } from '@/shared/config'
 import { useUserStore } from '@/entities/user'
-import { setUnauthorizedHandler } from '@/shared/api'
+import { isLocalWorkspace, setUnauthorizedHandler } from '@/shared/api'
 import { locale, t } from '@/shared/i18n'
 
 export const router = createRouter({
@@ -60,6 +60,10 @@ export const router = createRouter({
 router.beforeEach(async (to) => {
   const userStore = useUserStore()
   await userStore.ensureSession()
+  if (isLocalWorkspace.value) {
+    const allowed = new Set<RouteName>([RouteName.Upload, RouteName.TeamProjects, RouteName.Terms])
+    return allowed.has(to.name as RouteName) ? true : { name: RouteName.Upload }
+  }
   if (to.meta.guestOnly && userStore.isAuthenticated) return { name: RouteName.Upload }
   if (!to.meta.public && !userStore.isAuthenticated) {
     return { name: RouteName.Login, query: to.fullPath !== '/' ? { redirect: to.fullPath } : {} }

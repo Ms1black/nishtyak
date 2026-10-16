@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { teamApi } from '../api'
 import type { Team } from './types'
+import { getIntegrationSession } from '@/shared/api'
 
 const STORAGE_KEY = 'nishtyak:current-team'
 
@@ -23,6 +24,12 @@ export const useTeamStore = defineStore('team', () => {
 
   function init(): Promise<void> {
     loading ??= (async () => {
+      const session = await getIntegrationSession()
+      if (session?.mode === 'local') {
+        teams.value = [{ ...session.team, myRole: 'owner', membersCount: 1, avatarUrl: null }]
+        switchTeam(session.team.id)
+        return
+      }
       teams.value = await teamApi.list()
       if (!currentTeam.value) switchTeam(teams.value[0]?.id ?? null)
     })()

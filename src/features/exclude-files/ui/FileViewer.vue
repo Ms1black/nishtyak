@@ -16,25 +16,28 @@ const emit = defineEmits<{ toggle: [path: string] }>()
 const content = ref<FileContent | null>(null)
 const isLoading = ref(false)
 const error = ref(false)
+let requestId = 0
 
 const lines = computed(() => (content.value?.kind === 'text' ? content.value.content.split('\n') : []))
 
 const isPlaceholder = computed(() => content.value?.kind === 'hidden' || content.value?.kind === 'binary')
 
 watch(
-  () => props.file?.path,
-  async (path) => {
+  () => [props.projectId, props.file?.path] as const,
+  async ([projectId, path]) => {
+    const currentRequest = ++requestId
     content.value = null
     error.value = false
+    isLoading.value = false
     if (!path) return
     isLoading.value = true
     try {
-      const result = await projectApi.getFileContent(props.projectId, path)
-      if (props.file?.path === path) content.value = result
+      const result = await projectApi.getFileContent(projectId, path)
+      if (requestId === currentRequest) content.value = result
     } catch {
-      error.value = true
+      if (requestId === currentRequest) error.value = true
     } finally {
-      isLoading.value = false
+      if (requestId === currentRequest) isLoading.value = false
     }
   },
   { immediate: true },
@@ -61,7 +64,9 @@ watch(
 
     <div class="viewer__body" :class="{ 'viewer__body--placeholder': isPlaceholder }">
       <p v-if="!file" class="viewer__empty">{{ $t('analysis.files.pickFile') }}</p>
-      <p v-else-if="isLoading" class="viewer__empty"><BaseIcon name="refresh" :size="18" spin /> {{ $t('common.loading') }}</p>
+      <p v-else-if="isLoading" class="viewer__empty">
+        <BaseIcon name="refresh" :size="18" spin /> {{ $t('common.loading') }}
+      </p>
       <p v-else-if="error" class="viewer__empty">{{ $t('analysis.files.openError') }}</p>
       <div v-else-if="content?.kind === 'hidden'" class="viewer__unavailable">
         <BaseIcon name="lock" :size="28" />
@@ -75,13 +80,18 @@ watch(
         <p class="viewer__unavailable-title">{{ $t('analysis.files.unavailable') }}</p>
         <p class="viewer__unavailable-text">{{ $t('analysis.files.binary') }}</p>
       </div>
-      <p v-else-if="content?.kind === 'text' && !content.content" class="viewer__empty">{{ $t('analysis.files.emptyFile') }}</p>
+      <p v-else-if="content?.kind === 'text' && !content.content" class="viewer__empty">
+        {{ $t('analysis.files.emptyFile') }}
+      </p>
       <ol v-else-if="content?.kind === 'text'" class="code">
         <li v-for="(line, index) in lines" :key="index" class="code__line">
           <span class="code__number">{{ index + 1 }}</span>
           <span class="code__text">{{ line || ' ' }}</span>
         </li>
       </ol>
+      <p v-if="content?.kind === 'text' && content.truncated" class="viewer__empty">
+        {{ $t('workflow.truncatedFile') }}
+      </p>
     </div>
   </section>
 </template>

@@ -8,14 +8,19 @@ type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 export const useProjectStore = defineStore('project', () => {
   const items = ref<Project[]>([])
   const status = ref<LoadStatus>('idle')
+  let requestId = 0
 
   async function fetchAll(teamId: string) {
+    const currentRequest = ++requestId
     status.value = 'loading'
+    items.value = []
     try {
-      items.value = await projectApi.list(teamId)
+      const projects = await projectApi.list(teamId)
+      if (currentRequest !== requestId) return
+      items.value = projects
       status.value = 'ready'
     } catch {
-      status.value = 'error'
+      if (currentRequest === requestId) status.value = 'error'
     }
   }
 
@@ -34,5 +39,9 @@ export const useProjectStore = defineStore('project', () => {
     if (project) upsert({ ...project, ...changes })
   }
 
-  return { items, status, fetchAll, getById, upsert, patch }
+  function remove(id: string) {
+    items.value = items.value.filter((project) => project.id !== id)
+  }
+
+  return { items, status, fetchAll, getById, upsert, patch, remove }
 })

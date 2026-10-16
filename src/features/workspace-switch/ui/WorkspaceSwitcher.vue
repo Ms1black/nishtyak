@@ -5,6 +5,7 @@ import { TeamLogo, useTeamStore } from '@/entities/team'
 import { useClickOutside } from '@/shared/lib'
 import { RouteName } from '@/shared/config'
 import { BaseIcon } from '@/shared/ui'
+import { isLocalWorkspace } from '@/shared/api'
 
 const teamStore = useTeamStore()
 const router = useRouter()
@@ -29,16 +30,17 @@ function select(id: string) {
     <button
       type="button"
       class="workspace__trigger"
+      :disabled="isLocalWorkspace"
       aria-haspopup="menu"
       :aria-expanded="isOpen"
       @click="isOpen = !isOpen"
     >
       <TeamLogo :name="teamStore.currentTeam?.name ?? ''" :src="teamStore.currentTeam?.avatarUrl" />
       <span class="workspace__text">
-        <span class="workspace__label">{{ $t('header.workspace') }}</span>
+        <span class="workspace__label">{{ $t(isLocalWorkspace ? 'integration.workspace' : 'header.workspace') }}</span>
         <span class="workspace__name">{{ teamStore.currentTeam?.name ?? '…' }}</span>
       </span>
-      <BaseIcon name="chevron-down" :size="18" class="workspace__chevron" :class="{ 'is-open': isOpen }" />
+      <BaseIcon v-if="!isLocalWorkspace" name="chevron-down" :size="18" class="workspace__chevron" :class="{ 'is-open': isOpen }" />
     </button>
 
     <Transition name="pop">

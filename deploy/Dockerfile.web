@@ -1,0 +1,25 @@
+FROM node:24-slim AS frontend
+WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig*.json vite.config.ts env.d.ts index.html ./
+COPY public ./public
+COPY src ./src
+RUN npm run build
+
+FROM python:3.11-slim AS builder
+WORKDIR /build
+COPY pyproject.toml LICENSE ./
+COPY src ./src
+RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels '.[web]'
+
+FROM python:3.11-slim
+COPY --from=builder /wheels /wheels
+RUN python -m pip install --no-cache-dir --no-index --find-links /wheels 'nishtyak-core[web]' \
+    && rm -rf /wheels
+COPY --from=frontend /build/dist /app/static
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 NISHTYAK_WEB_STATIC_DIR=/app/static
+WORKDIR /app
+USER 65532:65532
+ENTRYPOINT ["nishtyak-web"]
+CMD ["--host", "127.0.0.1", "--port", "8081"]

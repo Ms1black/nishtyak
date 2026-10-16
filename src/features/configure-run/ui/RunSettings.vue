@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatRunCommand, type RunKind, type RunSpec } from '@/entities/project'
+import { formatRunCommand, type LaunchCandidate, type RunKind, type RunSpec } from '@/entities/project'
 import { t } from '@/shared/i18n'
-import { BaseInput, BaseSelect, SegmentedControl, type SegmentedItem, type SelectOption } from '@/shared/ui'
+import {
+  BaseInput,
+  BaseSelect,
+  BaseTextarea,
+  SegmentedControl,
+  type SegmentedItem,
+  type SelectOption,
+} from '@/shared/ui'
 
 const props = defineProps<{
   entrypoints: string[]
   scriptFiles: string[]
   pythonRequires: string | null
+  candidates?: LaunchCandidate[]
   disabled?: boolean
 }>()
 
@@ -18,7 +26,7 @@ const kinds = computed<SegmentedItem<RunKind>[]>(() =>
   (['script', 'module', 'callable'] as const).map((value) => ({ value, label: t(`analysis.run.kinds.${value}`) })),
 )
 
-const PYTHON_VERSIONS: SelectOption[] = ['3.9', '3.10', '3.11', '3.12', '3.13'].map((v) => ({
+const PYTHON_VERSIONS: SelectOption[] = ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14'].map((v) => ({
   value: v,
   label: `Python ${v}`,
 }))
@@ -26,8 +34,8 @@ const PYTHON_VERSIONS: SelectOption[] = ['3.9', '3.10', '3.11', '3.12', '3.13'].
 const kind = computed(() => runSpec.value?.kind ?? 'script')
 
 const scriptOptions = computed<SelectOption[]>(() => {
-  const entry = new Set(props.entrypoints)
-  return [...props.entrypoints, ...props.scriptFiles.filter((f) => !entry.has(f))].map((path) => ({
+  const entry = new Set(props.entrypoints.filter((path) => props.scriptFiles.includes(path)))
+  return [...entry, ...props.scriptFiles.filter((f) => !entry.has(f))].map((path) => ({
     value: path,
     label: path,
     description: entry.has(path) ? t('analysis.run.entrypoint') : undefined,
@@ -50,8 +58,8 @@ const target = computed({
 })
 
 const args = computed({
-  get: () => runSpec.value?.args.join(' ') ?? '',
-  set: (value: string) => patch({ args: value.split(/\s+/).filter(Boolean) }),
+  get: () => runSpec.value?.args.join('\n') ?? '',
+  set: (value: string) => patch({ args: value.split('\n').filter((argument) => argument !== '') }),
 })
 
 const workingDirectory = computed({
@@ -64,6 +72,21 @@ const command = computed(() => formatRunCommand(runSpec.value))
 
 <template>
   <div class="run">
+    <div v-if="candidates?.length" class="run__field">
+      <span class="run__label">{{ $t('workflow.launchCandidates') }}</span>
+      <button
+        v-for="candidate in candidates"
+        :key="candidate.id"
+        type="button"
+        class="run__candidate"
+        :disabled="disabled"
+        @click="runSpec = { ...candidate.runSpec, args: [...candidate.runSpec.args] }"
+      >
+        <code>{{ formatRunCommand(candidate.runSpec) }}</code>
+        <span>{{ candidate.reason }}</span>
+      </button>
+      <p class="run__hint">{{ $t('workflow.launchHint') }}</p>
+    </div>
     <div class="run__field">
       <span class="run__label">{{ $t('analysis.run.what') }}</span>
       <SegmentedControl
@@ -102,7 +125,14 @@ const command = computed(() => formatRunCommand(runSpec.value))
     <div class="run__row">
       <div class="run__field">
         <label class="run__label" for="run-args">{{ $t('analysis.run.args') }}</label>
-        <BaseInput id="run-args" v-model="args" mono placeholder="--month 10" :disabled="disabled" />
+        <BaseTextarea
+          id="run-args"
+          v-model="args"
+          :rows="2"
+          :placeholder="'--input\nmy data.csv'"
+          :disabled="disabled"
+        />
+        <p class="run__hint">{{ $t('workflow.argumentsHint') }}</p>
       </div>
       <div class="run__field">
         <label class="run__label" for="run-cwd">{{ $t('analysis.run.cwd') }}</label>
@@ -113,7 +143,9 @@ const command = computed(() => formatRunCommand(runSpec.value))
     <div class="run__field">
       <span id="python-label" class="run__label">
         {{ $t('analysis.run.python') }}
-        <span v-if="pythonRequires" class="run__hint">{{ $t('analysis.run.pythonDeclared', { spec: pythonRequires }) }}</span>
+        <span v-if="pythonRequires" class="run__hint">{{
+          $t('analysis.run.pythonDeclared', { spec: pythonRequires })
+        }}</span>
       </span>
       <BaseSelect
         v-model="pythonVersion"
@@ -158,6 +190,21 @@ const command = computed(() => formatRunCommand(runSpec.value))
   margin-left: 8px;
   color: var(--color-text-muted);
   font-weight: 400;
+}
+
+.run__candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.run__candidate span {
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 .run__row {

@@ -2,6 +2,7 @@
 import { LocaleSwitch } from '@/features/locale-switch'
 import { WorkspaceSwitcher } from '@/features/workspace-switch'
 import UserMenu from './UserMenu.vue'
+import { isLocalWorkspace } from '@/shared/api'
 </script>
 
 <template>
@@ -11,7 +12,8 @@ import UserMenu from './UserMenu.vue'
       <div class="header__right">
         <span class="header__divider" aria-hidden="true" />
         <LocaleSwitch />
-        <UserMenu />
+        <span v-if="isLocalWorkspace" class="header__local">{{ $t('integration.localMode') }}</span>
+        <UserMenu v-else />
       </div>
     </div>
   </header>
@@ -42,5 +44,10 @@ import UserMenu from './UserMenu.vue'
   width: 1px;
   height: 24px;
   background: var(--color-border-strong);
+}
+
+.header__local {
+  color: var(--color-text-secondary);
+  font-size: 12px;
 }
 </style>

@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { projectApi, useProjectStore, type Project } from '@/entities/project'
 import { useTeamStore } from '@/entities/team'
 import { validateProjectFile } from '../lib/validateProjectFile'
+import { ApiError } from '@/shared/api'
 
 export function useUploadProject() {
   const teamStore = useTeamStore()
@@ -28,7 +29,7 @@ export function useUploadProject() {
 
   async function upload(): Promise<Project | null> {
     const teamId = teamStore.currentTeamId
-    if (!file.value || !teamId) return null
+    if (!file.value || !teamId || isUploading.value) return null
 
     isUploading.value = true
     error.value = null
@@ -37,8 +38,13 @@ export function useUploadProject() {
       projectStore.upsert(project)
       file.value = null
       return project
-    } catch {
-      error.value = 'upload.errors.upload'
+    } catch (cause) {
+      error.value =
+        cause instanceof ApiError
+          ? cause.code === 'OWNER_STORAGE_LIMIT'
+            ? 'workflow.ownerStorageLimit'
+            : cause.message
+          : 'upload.errors.upload'
       return null
     } finally {
       isUploading.value = false

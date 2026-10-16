@@ -4,6 +4,7 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -20,14 +21,24 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData = init.body instanceof FormData
   const response = await fetch(`${BASE_URL}${path}`, {
     credentials: 'include',
+    signal: AbortSignal.timeout(90_000),
     ...init,
     headers: isFormData ? init.headers : { 'Content-Type': 'application/json', ...init.headers },
   })
 
   if (!response.ok) {
     if (response.status === 401 && !path.startsWith('/me') && !path.startsWith('/auth/')) onUnauthorized?.()
-    const message = await response.text().catch(() => response.statusText)
-    throw new ApiError(response.status, message || response.statusText)
+    const text = await response.text().catch(() => response.statusText)
+    let message = text || response.statusText
+    let code: string | undefined
+    try {
+      const error = JSON.parse(text) as { message?: unknown; code?: unknown }
+      if (typeof error.message === 'string') message = error.message
+      if (typeof error.code === 'string') code = error.code
+    } catch {
+      // A reverse proxy can return a plain-text error.
+    }
+    throw new ApiError(response.status, message, code)
   }
 
   if (response.status === 204) return undefined as T

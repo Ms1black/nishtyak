@@ -12,8 +12,7 @@ export const projectHttpApi: ProjectApi = {
 
   getAnalysis: (projectId) => apiClient.get(`/projects/${projectId}/analysis`),
 
-  getFileContent: (projectId, path) =>
-    apiClient.get(`/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
+  getFileContent: (projectId, path) => apiClient.get(`/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 
   getDecisions: (projectId) => apiClient.get(`/projects/${projectId}/decisions`),
 
@@ -22,7 +21,24 @@ export const projectHttpApi: ProjectApi = {
 
   plan: (projectId, decisions) => apiClient.post(`/projects/${projectId}/plan`, decisions),
 
-  buildArchive: (projectId) => apiClient.post(`/projects/${projectId}/archive`),
+  buildArchive: (projectId, options) => apiClient.post(`/projects/${projectId}/archive`, options),
 
   downloadArchive: (projectId) => apiClient.get(`/projects/${projectId}/archive`),
+
+  reanalyze: (projectId, options, authorEnvironment) =>
+    apiClient.post(`/projects/${projectId}/analysis`, {
+      options,
+      ...(authorEnvironment === undefined ? {} : { authorEnvironment }),
+    }),
+
+  resolve: (projectId, target, decisions) => apiClient.post(`/projects/${projectId}/resolve`, { target, decisions }),
+
+  getLock: (projectId) => apiClient.get(`/projects/${projectId}/lock`),
+
+  advice: (projectId, feature, description) =>
+    apiClient.post(`/projects/${projectId}/advice`, { feature, description, shareSource: true }),
+
+  getGraph: (projectId) => apiClient.get(`/projects/${projectId}/graph`),
+
+  remove: (projectId) => apiClient.delete(`/projects/${projectId}`),
 }
