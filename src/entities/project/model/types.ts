@@ -130,6 +130,7 @@ export interface PackagePlan {
   requirements: string[]
   findings: Finding[]
   runSpec?: RunSpec | null
+  runSpecOrigin?: 'author' | 'inferred' | 'unknown'
   pythonVersion?: string | null
   files?: string[]
   decisions?: AnalysisDecisions

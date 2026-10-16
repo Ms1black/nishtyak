@@ -2,29 +2,35 @@ import type { MessageSchema } from './ru'
 
 export const en: MessageSchema = {
   workflow: {
-    dockerUnavailable: 'Dockerfile requires a package ready for verification, a selected Python version and a launch command. The template supports pip projects without environment.yml or direct dependency URLs. A draft ZIP can still be downloaded.',
-    ownerStorageLimit: 'Upload storage limit reached. Delete an unused project or wait for its retention period to expire.',
+    dockerUnavailable:
+      'Dockerfile requires a package ready for verification, a selected Python version and a launch command. The template supports pip projects without environment.yml or direct dependency URLs. A draft ZIP can still be downloaded.',
+    ownerStorageLimit:
+      'Upload storage limit reached. Delete an unused project or wait for its retention period to expire.',
     argumentsHint: 'One argument per line, without quotes. Spaces within a line are preserved.',
     resolveError: 'Could not resolve dependency versions.',
     toolsTitle: 'Settings and assistant',
     analysisSettings: 'Analyze the project again',
-    reanalysisWarning: 'Reanalysis resets saved decisions, the lock and the built archive. Source code is not executed.',
+    reanalysisWarning:
+      'Reanalysis resets saved decisions, the lock and the built archive. Source code is not executed.',
     profilePython: 'Python version for static analysis',
     projectRoot: 'Project root inside the archive',
     autoRoot: 'Detect automatically',
     rootCandidates: 'Detected candidates: {roots}',
     sourceRoots: 'Source directories, separated by commas',
     authorEnvironment: 'Author environment report — optional JSON',
-    environmentHint: 'Upload a report explicitly collected on the author’s computer. The browser does not inspect your environment.',
+    environmentHint:
+      'Upload a report explicitly collected on the author’s computer. The browser does not inspect your environment.',
     environmentTooLarge: 'Environment report exceeds 256 KiB.',
     environmentInvalid: 'Expected an environment report as a JSON object.',
     reanalyze: 'Run analysis again',
     extras: 'Optional dependency groups',
     lockTitle: 'Resolve and lock dependency versions',
-    lockHint: 'uv selects compatible versions for the chosen Python and OS. This creates a new environment; it does not recover unknown author versions.',
+    lockHint:
+      'uv selects compatible versions for the chosen Python and OS. This creates a new environment; it does not recover unknown author versions.',
     targetPython: 'Target Python version',
     targetPlatform: 'Target OS',
-    profileMismatch: 'Reanalyze with this Python version first. The Python selected in run settings must also match.',
+    profileMismatch:
+      'Reanalyze with this Python version first. The Python selected in run settings must also match.',
     resolve: 'Resolve dependencies',
     lockReady: 'Lock saved. Packages: {count}. It will be included in the next archive.',
     lockNotExecution: 'Project scripts were not executed; computation results were not verified.',
@@ -46,18 +52,21 @@ export const en: MessageSchema = {
     downloadGraph: 'Download the import graph — JSON',
     graphError: 'Could not load the import graph.',
     launchCandidates: 'Launch candidates from static analysis',
-    launchHint: 'When launch is detected automatically, no manual main-file selection is required. The command has not been verified by execution.',
+    launchHint:
+      'When launch is detected automatically, no manual main-file selection is required. The command has not been verified by execution.',
     truncatedFile: 'Only the beginning of the file is shown.',
     archiveError: 'Could not get the archive. Please retry.',
   },
   integration: {
     localMode: 'Local mode · no authentication',
     previewMode: 'Shared review environment',
-    workspaceNotice: 'Projects use the live service. One shared workspace is available; personal accounts, teams and invitations are being connected.',
+    workspaceNotice:
+      'Projects use the live service. One shared workspace is available; personal accounts, teams and invitations are being connected.',
     profilePending: 'Profile editing will be available when personal accounts are connected.',
     teamsPending: 'Team creation is being connected. Use the current workspace to review projects.',
     invitesPending: 'Invitations will be available with personal accounts. There are no active links yet.',
-    authPending: 'Personal sign-in and registration are being connected. The project service is available in the shared workspace.',
+    authPending:
+      'Personal sign-in and registration are being connected. The project service is available in the shared workspace.',
     openWorkspace: 'Open workspace',
     loginScreen: 'Sign-in screen',
     workspace: 'Workspace on this server',
@@ -145,7 +154,7 @@ export const en: MessageSchema = {
     stepsLabel: 'Preparation steps',
     steps: {
       upload: 'Upload project',
-      analysis: 'Analysis and review',
+      analysis: 'Review and build',
       ready: 'Ready archive',
     },
   },
@@ -229,6 +238,43 @@ export const en: MessageSchema = {
     found: 'Found {shown} of {total}',
   },
   analysis: {
+    review: {
+      eyebrow: 'Static analysis complete',
+      title: 'Analysis result',
+      intro:
+        'Review the detected dependencies and build the ZIP. You do not need to fill in every setting: unknown details remain in the README and report.',
+      sources: 'Source files',
+      packages: 'Packages to install',
+      editRun: 'Edit',
+      runUnknown:
+        'A single launch command could not be determined. You can build a draft without one; detected candidates will be included in README.',
+      runAuthor: 'You specified this command. It has not been executed on the server.',
+      runInferred:
+        'Detected automatically. No manual main-file selection is needed; the command has not been executed.',
+      recorded: 'What the report will record',
+      showReport: 'View the full report',
+      notices: {
+        data: 'Input data completeness is unconfirmed. The package will describe what to check or add.',
+        environment:
+          'Tested Python or library versions are unknown. The package will preserve this uncertainty.',
+        launch: 'The author needs to verify the launch command. Specifying it now is optional.',
+        other:
+          'There are additional project findings. They will be included in the report and do not require answers before building.',
+      },
+      depsHint: 'Known packages are already included. Clarify unknown mappings only if you know the answer.',
+      optional: 'Optional — open only the settings you need',
+      runSettings: 'Launch and Python settings',
+      runHint: 'Change the command or arguments, or specify a tested Python version',
+      dataHint: 'Add README details: where to obtain data and how to check the result',
+      filesHint: 'Browse sources and exclusions. Currently excluded: {excluded}',
+      toolsHint: 'DeepSeek, dependency locking, Dockerfile and reanalysis',
+      reportTitle: 'Full analysis report',
+      reportHint: 'All warnings will be included in the package; you do not need to answer each one',
+      archiveContents: 'What we will build',
+      archiveFiles:
+        'Sources, README with installation and launch instructions, requirements.txt, and an uncertainty report.',
+      nextStep: 'After building, use “Download ZIP”. Verify the package in a separate environment.',
+    },
     files: {
       title: 'All project files',
       treeLabel: '{name} files',
@@ -248,6 +294,17 @@ export const en: MessageSchema = {
       binary: 'Binary file — it cannot be shown as text.',
     },
     deps: {
+      unknownVersion: 'version unknown',
+      unresolvedTitle: 'Package could not be identified',
+      unresolvedHint:
+        'If you know the PyPI package name, enter it. You can continue without answering; the uncertainty remains in the report.',
+      applyPackage: 'Use package',
+      leaveUnknown: 'Leave unknown',
+      unknownPackage: 'package unknown',
+      clarify: 'Clarify',
+      editOptional: 'Edit dependencies (optional)',
+      automaticSummary: 'Detected automatically: {local} local, {stdlib} standard modules',
+      excludedSummary: 'Excluded from installation: {n}',
       title: 'Dependencies',
       subtitle: '{n} package goes into requirements.txt | {n} packages go into requirements.txt',
       columnImport: 'Import in code',
@@ -268,6 +325,9 @@ export const en: MessageSchema = {
       stdlib: '— standard library',
     },
     run: {
+      useAutomatic: 'Use automatic launch',
+      automaticHint: 'The command will be inferred from the project analysis again.',
+      pythonUnknown: 'Unknown / leave unspecified',
       title: 'Run',
       what: 'What to run',
       kindLabel: 'Run type',
@@ -286,7 +346,7 @@ export const en: MessageSchema = {
       title: 'Data and description',
       confirm: 'All required input data and configs are included in the archive',
       found: 'Found in project:',
-      notFound: 'No data files found — describe below where to get them',
+      notFound: 'No data files were found. If you know where to obtain them, you can describe it below',
       input: 'What input data is needed',
       inputPlaceholder: 'For example: data/sales.csv — September sales, columns date, region, amount',
       output: 'How to check the result',
@@ -317,14 +377,23 @@ export const en: MessageSchema = {
       conflict: 'Answers changed in another tab',
       autosave: 'Answers are saved automatically',
       reload: 'Load latest',
-      build: 'Build archive',
+      build: 'Build ZIP',
       buildDraft: 'Download draft',
       otherProject: 'Another project',
     },
     plan: {
-      blocked: { title: 'Needs fixing', text: 'Building is unavailable while there are errors' },
-      draft: { title: 'Draft', text: 'You can download the archive, but some questions are still open' },
-      ready_to_verify: { title: 'Ready to verify', text: 'All questions are closed — the archive can go to a colleague' },
+      blocked: {
+        title: 'Fix an error before building',
+        text: 'Select an error below to open the relevant section.',
+      },
+      draft: {
+        title: 'Ready to build a draft',
+        text: 'You do not need to answer every warning. Unknown details will be included in the package.',
+      },
+      ready_to_verify: {
+        title: 'Ready to build a package',
+        text: 'Next, verify installation and execution in a separate environment.',
+      },
     },
     errors: {
       load: 'Could not load analysis results',
@@ -336,24 +405,45 @@ export const en: MessageSchema = {
     SECRET_FILE_EXCLUDED: '{path} with a secret is excluded — make sure the project runs without it',
     NO_PROJECT_FILES: 'No project files are left in the archive',
     DEPENDENCY_UNRESOLVED: 'Specify a package for import {module}',
-    VERSION_UNKNOWN: 'No version for {module} — the latest will be installed',
+    VERSION_UNKNOWN: 'A tested version of {module} is unknown; the draft will leave it unpinned',
     MODULE_EXCLUDED: 'Import {module} is skipped — check the code works without it',
     DYNAMIC_IMPORT: 'Dynamic import in {at} — some dependencies may be missing',
     SOURCE_PARSE_ERROR: 'Could not parse {at}',
-    RUN_NOT_SELECTED: 'Choose how to run the project',
+    RUN_NOT_SELECTED: 'No launch is specified — a draft can be built without a command',
     RUN_TARGET_MISSING: 'The entry file is not in the archive',
     PYTHON_VERSION_UNKNOWN: 'The Python version the project ran on is not specified',
     PYTHON_VERSION_CONFLICT: 'The selected Python version does not meet the project requirements',
-    DATA_NOT_CONFIRMED: 'Confirm that input data is included in the archive',
-    DATA_DEPENDENCIES_UNVERIFIED: 'Check input files, configs and external services yourself — analysis does not run them',
-    README_MISSING: 'No README at the root — we will generate one from your answers',
+    DATA_NOT_CONFIRMED:
+      'Input data completeness is unconfirmed — README will record this; the archive can still be built',
+    DATA_DEPENDENCIES_UNVERIFIED:
+      'Check input files, configs and external services yourself — analysis does not run them',
+    README_MISSING:
+      'Sources have no README — the service will create initial instructions and record limitations',
     LICENSE_MISSING: 'No license — clarify the terms of reuse',
+    INPUT_PATH_UNVERIFIED:
+      '{at} refers to data whose presence is unconfirmed. Add it later or describe how to obtain it',
+    RUN_INFERRED: 'The launch command was inferred from source and has not been executed',
+    RUN_TARGET_AMBIGUOUS: 'Several launch commands were found — candidates will be recorded in README',
+    RUN_TARGET_UNCERTAIN: 'A possible launch command was found; the author needs to verify it',
+    RUN_TARGET_UNKNOWN: 'No launch command could be determined; a draft can still be built',
+    VERSION_NOT_PINNED: 'An exact tested library version is unknown; requirements remain a draft',
+    LOCAL_MODULE_EXCLUDED:
+      'An excluded local module {module} is required by {at}. Select its file in the tree and choose “Restore to archive”',
+    RUN_WORKING_DIRECTORY_MISSING:
+      'The launch working directory is absent from the archive — adjust the command or restore automatic detection',
+    DATA_FILES_SUMMARY:
+      'Potential data files are listed in the report; completeness is not verified automatically',
+    EXTERNAL_INPUT_REFERENCE:
+      '{at} refers to data outside the project or on the network. Describe access in README',
   },
   ready: {
+    reportHint:
+      'This report is also included in the ZIP. Check the noted data, versions and launch command before reproducing the project.',
     title: 'Archive ready',
     titleDraft: 'Draft archive ready',
     text: 'Project “{name}” is built and available to the whole team.',
-    textDraft: 'Some questions are still open — you can close them later and rebuild.',
+    textDraft:
+      'Download the ZIP. Unknown versions, data and other limitations are recorded inside and can be clarified later.',
     sources: '{entry} and other sources',
     summaryTitle: "What's inside",
     summary: {

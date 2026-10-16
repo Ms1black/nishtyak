@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
-import { FindingList, getFindingKind, getFindingSection, type Finding } from '@/entities/project'
+import { computed, nextTick, ref, watch } from 'vue'
+import {
+  FindingList,
+  formatRunCommand,
+  getFindingKind,
+  getFindingSection,
+  type Finding,
+} from '@/entities/project'
 import { DataConfirmation } from '@/features/confirm-data'
 import { RunSettings } from '@/features/configure-run'
 import { ProjectFileExplorer } from '@/features/exclude-files'
 import { DependencyList } from '@/features/resolve-dependencies'
 import { BaseButton, BaseCard, BaseIcon } from '@/shared/ui'
+import { reviewNotices } from '../model/reviewSummary'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 import ReadinessPanel from './ReadinessPanel.vue'
 import SectionCard from './SectionCard.vue'
@@ -13,21 +20,28 @@ import ProjectToolsPanel from './ProjectToolsPanel.vue'
 
 const wizard = useUploadWizardStore()
 const explorer = ref<InstanceType<typeof ProjectFileExplorer> | null>(null)
+const expanded = ref<Record<string, boolean>>({})
 
-const DATA_EXTENSIONS = /\.(csv|tsv|json|xlsx?|parquet|txt|yaml|yml)$/i
-
-const includedFiles = computed(() => {
-  const excluded = new Set(wizard.decisions?.excludedFiles ?? [])
-  return wizard.analysis?.files.filter((f) => !excluded.has(f.path)) ?? []
-})
-
-const scriptFiles = computed(() => includedFiles.value.filter((f) => f.path.endsWith('.py')).map((f) => f.path))
-const dataFiles = computed(() =>
-  includedFiles.value
-    .filter((f) => DATA_EXTENSIONS.test(f.path) && !/(^|\/)requirements[^/]*\.txt$/.test(f.path))
-    .map((f) => f.path),
+watch(
+  () => wizard.analysis?.analysisId,
+  () => {
+    expanded.value = {}
+  },
 )
 
+const DATA_EXTENSIONS = /\.(csv|tsv|json|xlsx?|parquet|txt|yaml|yml)$/i
+const includedFiles = computed(() => {
+  const excluded = new Set(wizard.decisions?.excludedFiles ?? [])
+  return wizard.analysis?.files.filter((file) => !excluded.has(file.path)) ?? []
+})
+const scriptFiles = computed(() =>
+  includedFiles.value.filter((file) => file.path.endsWith('.py')).map((file) => file.path),
+)
+const dataFiles = computed(() =>
+  includedFiles.value
+    .filter((file) => DATA_EXTENSIONS.test(file.path) && !/(^|\/)requirements[^/]*\.txt$/.test(file.path))
+    .map((file) => file.path),
+)
 const visiblePlan = computed(() => {
   if (!wizard.plan) return null
   const excluded = new Set(wizard.decisions?.excludedFiles ?? [])
@@ -38,69 +52,68 @@ const visiblePlan = computed(() => {
     ),
   }
 })
-
-function countIn(section: string, kind: 'blocker' | 'question') {
-  return (
-    visiblePlan.value?.findings.filter((f) => getFindingSection(f) === section && getFindingKind(f) === kind).length ??
-    0
-  )
-}
-
-const notes = computed(() => visiblePlan.value?.findings.filter((f) => getFindingKind(f) === 'note') ?? [])
-const requirementsCount = computed(() => wizard.plan?.requirements.length ?? 0)
-
-const runSpec = computed({
-  get: () => wizard.decisions?.runSpec ?? wizard.plan?.runSpec ?? wizard.analysis?.suggestedRunSpec ?? null,
-  set: (value) => wizard.setRunSpec(value),
+const findings = computed(() => visiblePlan.value?.findings ?? [])
+const unresolvedModules = computed(() => {
+  const modules: string[] = []
+  for (const finding of findings.value) {
+    if (getFindingKind(finding) === 'question' && finding.module) modules.push(finding.module)
+  }
+  return modules
 })
+const notices = computed(() => reviewNotices(findings.value))
+const requirementsCount = computed(() => wizard.plan?.requirements.length ?? 0)
+const excludedCount = computed(() => wizard.decisions?.excludedFiles.length ?? 0)
+const effectiveRun = computed(
+  () => wizard.decisions?.runSpec ?? wizard.plan?.runSpec ?? wizard.analysis?.suggestedRunSpec ?? null,
+)
+const command = computed(() => (effectiveRun.value ? formatRunCommand(effectiveRun.value) : null))
+const runSpec = computed({ get: () => effectiveRun.value, set: (value) => wizard.setRunSpec(value) })
 
-function field<K extends 'pythonVersion' | 'dataConfirmed' | 'inputDescription' | 'expectedOutput' | 'description'>(
-  key: K,
-) {
-  return computed({
-    get: () => wizard.decisions![key],
-    set: (value) => wizard.update({ [key]: value }),
-  })
+function field<
+  K extends 'pythonVersion' | 'dataConfirmed' | 'inputDescription' | 'expectedOutput' | 'description',
+>(key: K) {
+  return computed({ get: () => wizard.decisions![key], set: (value) => wizard.update({ [key]: value }) })
 }
-
 const pythonVersion = field('pythonVersion')
 const dataConfirmed = field('dataConfirmed')
 const inputDescription = field('inputDescription')
 const expectedOutput = field('expectedOutput')
 const description = field('description')
 
-const SECTION_ID: Record<string, string> = {
-  files: 'section-files',
-  dependencies: 'section-dependencies',
-  run: 'section-run',
-  data: 'section-data',
-  notes: 'section-notes',
+function errorCount(section: string) {
+  return findings.value.filter(
+    (finding) => getFindingSection(finding) === section && getFindingKind(finding) === 'blocker',
+  ).length
 }
 
-async function focusFinding(finding: Finding) {
-  const section = getFindingSection(finding)
-  if (section === 'files' && finding.path) explorer.value?.focusFile(finding.path)
+async function focusSection(section: string, finding?: Finding) {
+  expanded.value[section] = true
   await nextTick()
-  const el = document.getElementById(SECTION_ID[section] ?? 'section-notes')
-  if (!el) return
-  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  el.focus({ preventScroll: true })
-  el.classList.add('is-highlighted')
-  setTimeout(() => el.classList.remove('is-highlighted'), 1200)
+  if (section === 'files' && finding?.path) explorer.value?.focusFile(finding.path)
+  const element = document.getElementById(`section-${section}`)
+  if (!element) return
+  element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  element.focus({ preventScroll: true })
+}
+
+function focusFinding(finding: Finding) {
+  return focusSection(getFindingSection(finding), finding)
 }
 </script>
 
 <template>
   <div v-if="wizard.project" class="analysis">
-    <BaseCard v-if="(wizard.isLoading || wizard.isAnalyzing) && !wizard.error" padding="lg" class="analysis__state">
+    <BaseCard
+      v-if="(wizard.isLoading || wizard.isAnalyzing) && !wizard.error"
+      padding="lg"
+      class="analysis__state"
+    >
       <BaseIcon name="refresh" :size="32" spin />
-      <h2 class="analysis__state-title">{{ $t('analysis.state.analyzingTitle', { name: wizard.project.name }) }}</h2>
+      <h2 class="analysis__state-title">
+        {{ $t('analysis.state.analyzingTitle', { name: wizard.project.name }) }}
+      </h2>
       <p class="analysis__state-text">{{ $t('analysis.state.analyzingText') }}</p>
-      <div class="analysis__skeleton" aria-hidden="true">
-        <span v-for="n in 4" :key="n" />
-      </div>
     </BaseCard>
-
     <BaseCard
       v-else-if="
         wizard.analysis?.status === 'failed' ||
@@ -112,139 +125,269 @@ async function focusFinding(finding: Finding) {
       <BaseIcon name="alert" :size="32" class="analysis__state-error" />
       <h2 class="analysis__state-title">{{ $t('analysis.state.failedTitle') }}</h2>
       <p class="analysis__state-text">{{ wizard.analysis?.error ?? (wizard.error && $t(wizard.error)) }}</p>
-      <BaseButton variant="tonal" icon="refresh" @click="wizard.loadAnalysis()">{{ $t('common.retry') }}</BaseButton>
+      <BaseButton variant="tonal" icon="refresh" @click="wizard.loadAnalysis()">{{
+        $t('common.retry')
+      }}</BaseButton>
       <BaseButton variant="tonal" icon="upload" @click="wizard.reset()">{{
         $t('analysis.state.uploadOther')
       }}</BaseButton>
     </BaseCard>
 
-    <template v-else-if="wizard.analysis && wizard.decisions">
-      <BaseCard id="section-files" class="analysis__files" tabindex="-1">
-        <ProjectFileExplorer
-          ref="explorer"
-          :project-id="wizard.project.id"
-          :project-name="wizard.project.name"
-          :files="wizard.analysis.files"
-          :excluded-files="wizard.decisions.excludedFiles"
-          :disabled="wizard.isBusy"
-          @toggle="wizard.toggleFile"
-        />
-      </BaseCard>
+    <div v-else-if="wizard.analysis && wizard.decisions" class="analysis__grid">
+      <div class="analysis__main">
+        <BaseCard padding="lg" class="overview">
+          <p class="overview__eyebrow">{{ $t('analysis.review.eyebrow') }}</p>
+          <h2 class="overview__title">{{ $t('analysis.review.title') }}</h2>
+          <p class="overview__text">{{ $t('analysis.review.intro') }}</p>
+          <dl class="overview__facts">
+            <div>
+              <dt>{{ $t('analysis.review.sources') }}</dt>
+              <dd>{{ $t('units.files', includedFiles.length) }}</dd>
+            </div>
+            <div>
+              <dt>{{ $t('analysis.review.packages') }}</dt>
+              <dd>{{ requirementsCount }}</dd>
+            </div>
+          </dl>
+          <div class="overview__run">
+            <div class="overview__run-head">
+              <span>{{ $t('analysis.run.command') }}</span>
+              <button type="button" class="overview__link" @click="focusSection('run')">
+                {{ $t('analysis.review.editRun') }}
+              </button>
+            </div>
+            <code v-if="command">{{ command }}</code>
+            <p v-else>{{ $t('analysis.review.runUnknown') }}</p>
+            <p v-if="command" class="overview__hint">
+              {{
+                wizard.decisions.runSpec ? $t('analysis.review.runAuthor') : $t('analysis.review.runInferred')
+              }}
+            </p>
+          </div>
+          <div v-if="notices.length" class="overview__notices">
+            <p class="overview__notice-title">{{ $t('analysis.review.recorded') }}</p>
+            <ul>
+              <li v-for="notice in notices" :key="notice">{{ $t(`analysis.review.notices.${notice}`) }}</li>
+            </ul>
+            <button type="button" class="overview__link" @click="focusSection('notes')">
+              {{ $t('analysis.review.showReport') }}
+            </button>
+          </div>
+        </BaseCard>
 
-      <div class="analysis__grid">
-        <div class="analysis__main">
-          <SectionCard
-            id="section-dependencies"
-            :title="$t('analysis.deps.title')"
-            :subtitle="$t('analysis.deps.subtitle', requirementsCount)"
-            :questions="countIn('dependencies', 'question')"
-          >
-            <DependencyList
-              :dependencies="wizard.analysis.dependencies"
-              :packages="wizard.decisions.packages"
-              :versions="wizard.decisions.versions"
-              :excluded-modules="wizard.decisions.excludedModules"
-              :disabled="wizard.isBusy"
-              @set-package="wizard.setPackage"
-              @set-version="wizard.setVersion"
-              @toggle="wizard.toggleModule"
-            />
-          </SectionCard>
+        <SectionCard
+          id="section-dependencies"
+          :title="$t('analysis.deps.title')"
+          :subtitle="$t('analysis.review.depsHint')"
+          :errors="errorCount('dependencies')"
+        >
+          <DependencyList
+            :dependencies="wizard.analysis.dependencies"
+            :requirements="wizard.plan?.requirements"
+            :unresolved-modules="unresolvedModules"
+            :packages="wizard.decisions.packages"
+            :versions="wizard.decisions.versions"
+            :excluded-modules="wizard.decisions.excludedModules"
+            :disabled="wizard.isBusy"
+            @set-package="wizard.setPackage"
+            @set-version="wizard.setVersion"
+            @toggle="wizard.toggleModule"
+          />
+        </SectionCard>
 
-          <SectionCard
-            id="section-run"
-            :title="$t('analysis.run.title')"
-            :questions="countIn('run', 'question')"
-            :errors="countIn('run', 'blocker')"
-          >
-            <RunSettings
-              v-model:run-spec="runSpec"
-              v-model:python-version="pythonVersion"
-              :entrypoints="wizard.analysis.entrypoints"
-              :script-files="scriptFiles"
-              :python-requires="wizard.analysis.pythonRequires"
-              :candidates="wizard.analysis.launchCandidates"
-              :disabled="wizard.isBusy"
-            />
-          </SectionCard>
-
-          <SectionCard id="section-data" :title="$t('analysis.data.title')" :questions="countIn('data', 'question')">
-            <DataConfirmation
-              v-model:data-confirmed="dataConfirmed"
-              v-model:input-description="inputDescription"
-              v-model:expected-output="expectedOutput"
-              v-model:description="description"
-              :data-files="dataFiles"
-              :disabled="wizard.isBusy"
-            />
-          </SectionCard>
-
-          <SectionCard id="section-tools" :title="$t('workflow.toolsTitle')">
-            <ProjectToolsPanel />
-          </SectionCard>
-
-          <SectionCard
-            v-if="notes.length"
-            id="section-notes"
-            :title="$t('analysis.notes.title')"
-            :subtitle="$t('analysis.notes.subtitle')"
-          >
-            <FindingList :findings="notes" />
-          </SectionCard>
-        </div>
-
-        <ReadinessPanel
-          class="analysis__aside"
-          :project="wizard.project"
-          :plan="visiblePlan"
-          :save-state="wizard.saveState"
-          :saved-at="wizard.savedAt"
-          :is-building="wizard.isBuilding"
-          :can-build="wizard.canBuild"
-          :error="wizard.error && $t(wizard.error)"
-          @focus="focusFinding"
-          @build="wizard.build()"
-          @reset="wizard.reset()"
-          @reload="wizard.reloadDecisions()"
-        />
+        <p class="analysis__optional">{{ $t('analysis.review.optional') }}</p>
+        <SectionCard
+          id="section-run"
+          v-model:open="expanded.run"
+          collapsible
+          :title="$t('analysis.review.runSettings')"
+          :subtitle="$t('analysis.review.runHint')"
+          :errors="errorCount('run')"
+        >
+          <RunSettings
+            v-model:run-spec="runSpec"
+            v-model:python-version="pythonVersion"
+            :has-run-override="!!wizard.decisions.runSpec"
+            :entrypoints="wizard.analysis.entrypoints"
+            :script-files="scriptFiles"
+            :python-requires="wizard.analysis.pythonRequires"
+            :candidates="wizard.analysis.launchCandidates"
+            :disabled="wizard.isBusy"
+          />
+        </SectionCard>
+        <SectionCard
+          id="section-data"
+          v-model:open="expanded.data"
+          collapsible
+          :title="$t('analysis.data.title')"
+          :subtitle="$t('analysis.review.dataHint')"
+        >
+          <DataConfirmation
+            v-model:data-confirmed="dataConfirmed"
+            v-model:input-description="inputDescription"
+            v-model:expected-output="expectedOutput"
+            v-model:description="description"
+            :data-files="dataFiles"
+            :disabled="wizard.isBusy"
+          />
+        </SectionCard>
+        <SectionCard
+          id="section-files"
+          v-model:open="expanded.files"
+          collapsible
+          :title="$t('analysis.files.title')"
+          :subtitle="$t('analysis.review.filesHint', { excluded: excludedCount })"
+          :errors="errorCount('files')"
+        >
+          <ProjectFileExplorer
+            v-if="expanded.files"
+            ref="explorer"
+            :project-id="wizard.project.id"
+            :project-name="wizard.project.name"
+            :files="wizard.analysis.files"
+            :excluded-files="wizard.decisions.excludedFiles"
+            :disabled="wizard.isBusy"
+            @toggle="wizard.toggleFile"
+          />
+        </SectionCard>
+        <SectionCard
+          id="section-tools"
+          v-model:open="expanded.tools"
+          collapsible
+          :title="$t('workflow.toolsTitle')"
+          :subtitle="$t('analysis.review.toolsHint')"
+        >
+          <ProjectToolsPanel />
+        </SectionCard>
+        <SectionCard
+          v-if="findings.length"
+          id="section-notes"
+          v-model:open="expanded.notes"
+          collapsible
+          :title="$t('analysis.review.reportTitle')"
+          :subtitle="$t('analysis.review.reportHint')"
+        >
+          <FindingList :findings="findings" />
+        </SectionCard>
       </div>
-    </template>
+
+      <ReadinessPanel
+        class="analysis__aside"
+        :project="wizard.project"
+        :plan="visiblePlan"
+        :save-state="wizard.saveState"
+        :saved-at="wizard.savedAt"
+        :is-building="wizard.isBuilding"
+        :can-build="wizard.canBuild"
+        :error="wizard.error && $t(wizard.error)"
+        @focus="focusFinding"
+        @build="wizard.build()"
+        @reset="wizard.reset()"
+        @reload="wizard.reloadDecisions()"
+      />
+    </div>
   </div>
 </template>
 
 <style scoped>
-.analysis {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.analysis__files {
-  scroll-margin-top: 24px;
-}
-
-.analysis__files:focus {
-  outline: none;
-}
-
 .analysis__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 384px;
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 24px;
   align-items: start;
 }
-
 .analysis__main {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
+  min-width: 0;
 }
-
 .analysis__aside {
   position: sticky;
   top: 24px;
 }
-
+.analysis__optional {
+  margin: 12px 4px 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+.overview__eyebrow {
+  margin-bottom: 10px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.overview__title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.overview__text {
+  margin-top: 12px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.overview__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 40px;
+  margin: 24px 0;
+}
+.overview__facts dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.overview__facts dd {
+  margin: 5px 0 0;
+  font-size: 16px;
+}
+.overview__run {
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font-size: 13px;
+}
+.overview__run-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+  color: var(--color-text-muted);
+}
+.overview__run code {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.overview__hint {
+  margin-top: 10px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+.overview__link {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.overview__notices {
+  margin-top: 20px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+.overview__notice-title {
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.overview__notices ul {
+  list-style: disc;
+  padding-left: 18px;
+  margin-bottom: 12px;
+}
+.overview__notices li + li {
+  margin-top: 6px;
+}
 .analysis__state {
   display: flex;
   flex-direction: column;
@@ -253,14 +396,12 @@ async function focusFinding(finding: Finding) {
   padding-block: 56px;
   text-align: center;
 }
-
 .analysis__state-title {
   margin-top: 8px;
   font-family: var(--font-display);
   font-size: 22px;
   font-weight: 500;
 }
-
 .analysis__state-text {
   max-width: 520px;
   margin-bottom: 8px;
@@ -268,48 +409,21 @@ async function focusFinding(finding: Finding) {
   font-size: 14px;
   line-height: 1.5;
 }
-
 .analysis__state-error {
   color: var(--color-danger);
 }
-
-.analysis__skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: min(520px, 100%);
-  margin-top: 16px;
-}
-
-.analysis__skeleton span {
-  height: 14px;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, #222 0%, #2c2c2c 50%, #222 100%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
-}
-
-.analysis__skeleton span:nth-child(2n) {
-  width: 70%;
-}
-
-@keyframes shimmer {
-  from {
-    background-position: 200% 0;
-  }
-  to {
-    background-position: -200% 0;
-  }
-}
-
 @media (max-width: 1100px) {
   .analysis__grid {
     grid-template-columns: 1fr;
   }
-
   .analysis__aside {
     position: static;
     order: -1;
+  }
+}
+@media (max-width: 640px) {
+  .overview__title {
+    font-size: 23px;
   }
 }
 </style>

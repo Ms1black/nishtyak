@@ -82,18 +82,31 @@ def options_to_core(value: dict) -> dict:
     ).model_dump()
 
 
-def findings_to_web(values: list[dict]) -> list[dict]:
-    return [
-        {key: item.get(key) for key in ("id", "code", "severity", "message", "path", "line")}
-        for item in values
-    ]
+def findings_to_web(values: list[dict], report: dict | None = None) -> list[dict]:
+    modules_by_evidence: dict[str, set[str]] = {}
+    for dependency in (report or {}).get("dependencies", []):
+        for evidence_id in (dependency["id"], *dependency.get("evidence_ids", [])):
+            modules_by_evidence.setdefault(evidence_id, set()).add(dependency["module"])
+
+    findings = []
+    for item in values:
+        finding = {
+            key: item.get(key) for key in ("id", "code", "severity", "message", "path", "line")
+        }
+        modules = set()
+        for evidence_id in item.get("evidence_ids", []):
+            modules.update(modules_by_evidence.get(evidence_id, ()))
+        if len(modules) == 1:
+            finding["module"] = next(iter(modules))
+        findings.append(finding)
+    return findings
 
 
 def plan_to_web(value: dict) -> dict:
     return {
         "state": value["state"],
         "requirements": value["requirements"],
-        "findings": findings_to_web(value["findings"]),
+        "findings": findings_to_web(value["findings"], value.get("report")),
         "runSpec": run_to_web(value.get("run_spec")),
         "runSpecOrigin": value.get("run_spec_origin", "unknown"),
         "pythonVersion": value.get("python_version"),
@@ -163,7 +176,7 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
         "dependencies": dependencies,
         "entrypoints": report.get("entrypoints", []),
         "pythonRequires": report.get("python_requires"),
-        "findings": findings_to_web(report.get("findings", [])),
+        "findings": findings_to_web(report.get("findings", []), report),
         "suggestedRunSpec": run_to_web(plan.get("run_spec")),
         "launchCandidates": [
             {

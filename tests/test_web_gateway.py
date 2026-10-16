@@ -5,6 +5,7 @@ import json
 import time
 import zipfile
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -196,6 +197,84 @@ def test_single_python_upload_and_draft_export(gateway):
     with zipfile.ZipFile(io.BytesIO(archive.content)) as package:
         assert b"numpy" in package.read("requirements.txt").splitlines()
         assert "draft" in package.read("README.md").decode().lower()
+
+
+@pytest.mark.parametrize(
+    "archive_name,expected_requirements,local_module",
+    [
+        ("scientific-measurements.zip", ["numpy", "pandas"], "calculations"),
+        ("local-calibration.zip", [], "calibration"),
+    ],
+)
+def test_raw_upload_examples_export_without_manual_answers(
+    gateway, archive_name, expected_requirements, local_module
+):
+    client, _, _ = gateway
+    content = (Path(__file__).resolve().parents[1] / "public/examples" / archive_name).read_bytes()
+    with zipfile.ZipFile(io.BytesIO(content)) as source:
+        sources = {name: source.read(name) for name in source.namelist()}
+    assert len(sources) == 2
+    assert all(name.endswith(".py") for name in sources)
+
+    project = upload(client, name=archive_name, content=content)
+    analysis = analyzed(client, project["id"])
+    assert any(
+        dependency["module"] == local_module and dependency["category"] == "local"
+        for dependency in analysis["dependencies"]
+    )
+    prefix = f"/api/projects/{project['id']}"
+    response = client.post(prefix + "/plan")
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan["state"] == "draft"
+    assert plan["runSpec"]["target"] == "experiment.py"
+    assert plan["runSpecOrigin"] == "inferred"
+    assert plan["requirements"] == expected_requirements
+    assert {"INPUT_PATH_UNVERIFIED", "DATA_NOT_CONFIRMED", "PYTHON_VERSION_UNKNOWN"} <= {
+        finding["code"] for finding in plan["findings"]
+    }
+
+    built = client.post(prefix + "/archive")
+    assert built.status_code == 200, built.text
+    downloaded = client.get(prefix + "/archive")
+    assert downloaded.status_code == 200, downloaded.text
+    with zipfile.ZipFile(io.BytesIO(downloaded.content)) as package:
+        assert {"README.md", "requirements.txt", "analysis-report.json"} <= set(package.namelist())
+        assert not any(name.endswith("measurements.csv") for name in package.namelist())
+        for name, source in sources.items():
+            assert package.read("project/" + name) == source
+        requirements = [
+            line
+            for line in package.read("requirements.txt").decode().splitlines()
+            if line and not line.startswith("#")
+        ]
+        assert requirements == expected_requirements
+        report = json.loads(package.read("analysis-report.json"))
+        assert report["state"] == "draft"
+        assert report["decisions"]["run_spec"] is None
+        assert report["decisions"]["python_version"] is None
+        assert report["decisions"]["data_confirmed"] is False
+        assert "not been verified" in package.read("README.md").decode()
+    document = client.get(prefix + "/decisions").json()
+    assert document["revision"] == 0
+    assert document["decisions"] is None
+
+
+def test_dependency_findings_keep_import_module_in_analysis_and_plan(gateway):
+    client, _, _ = gateway
+    project = upload(client, {"main.py": "import unmapped_scientific_library\nimport numpy\n"})
+    analysis = analyzed(client, project["id"])
+    unknown = next(f for f in analysis["findings"] if f["code"] == "DEPENDENCY_UNRESOLVED")
+    assert unknown["module"] == "unmapped_scientific_library"
+    version = next(f for f in analysis["findings"] if f["code"] == "VERSION_UNKNOWN")
+    assert version["module"] == "numpy"
+    response = client.post(f"/api/projects/{project['id']}/plan")
+    assert response.status_code == 200, response.text
+    unresolved = next(
+        f for f in response.json()["findings"] if f["code"] == "DEPENDENCY_UNRESOLVED"
+    )
+    assert unresolved["module"] == "unmapped_scientific_library"
+    assert response.json()["state"] == "draft"
 
 
 def test_source_not_executed_secrets_hidden_binary_and_traversal(gateway, tmp_path):

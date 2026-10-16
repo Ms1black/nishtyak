@@ -1,18 +1,36 @@
 <script setup lang="ts">
-import { BaseCard } from '@/shared/ui'
+import { BaseCard, BaseIcon } from '@/shared/ui'
 
 defineProps<{
   id: string
   title: string
   subtitle?: string
-  questions?: number
   errors?: number
+  collapsible?: boolean
 }>()
+
+const open = defineModel<boolean>('open', { default: false })
+
+function onToggle(event: Event) {
+  if (event.target === event.currentTarget) open.value = (event.target as HTMLDetailsElement).open
+}
 </script>
 
 <template>
-  <BaseCard :id="id" padding="lg" class="section" tabindex="-1">
-    <header class="section__head">
+  <BaseCard
+    :id="id"
+    :tag="collapsible ? 'details' : 'section'"
+    :open="collapsible ? open : undefined"
+    padding="lg"
+    class="section"
+    tabindex="-1"
+    @toggle="onToggle"
+  >
+    <component
+      :is="collapsible ? 'summary' : 'header'"
+      class="section__head"
+      :class="{ section__toggle: collapsible }"
+    >
       <div>
         <h2 class="section__title">{{ title }}</h2>
         <p v-if="subtitle" class="section__subtitle">{{ subtitle }}</p>
@@ -20,10 +38,8 @@ defineProps<{
       <span v-if="errors" class="section__badge section__badge--error">
         {{ $t('units.errors', errors) }}
       </span>
-      <span v-else-if="questions" class="section__badge">
-        {{ $t('units.questions', questions) }}
-      </span>
-    </header>
+      <BaseIcon v-if="collapsible" name="chevron-down" :size="20" class="section__chevron" />
+    </component>
     <slot />
   </BaseCard>
 </template>
@@ -38,16 +54,36 @@ defineProps<{
   outline: none;
 }
 
-.section.is-highlighted {
-  box-shadow: 0 0 0 1px var(--color-text-muted);
-}
-
 .section__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
+}
+
+.section__toggle {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+}
+
+.section__toggle::-webkit-details-marker {
+  display: none;
+}
+
+.section[open] > .section__toggle {
+  margin-bottom: 24px;
+}
+
+.section__chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--color-text-muted);
+}
+
+.section[open] > .section__toggle .section__chevron {
+  transform: rotate(180deg);
 }
 
 .section__title {

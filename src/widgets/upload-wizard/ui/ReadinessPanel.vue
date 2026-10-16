@@ -27,26 +27,27 @@ const props = defineProps<{
 
 const emit = defineEmits<{ focus: [finding: Finding]; build: []; reset: []; reload: [] }>()
 
-const byKind = (kind: ReturnType<typeof getFindingKind>) =>
-  computed(() => props.plan?.findings.filter((f) => getFindingKind(f) === kind) ?? [])
-
-const blockers = byKind('blocker')
-const questions = byKind('question')
-const limitations = byKind('limitation')
+const blockers = computed(
+  () => props.plan?.findings.filter((finding) => getFindingKind(finding) === 'blocker') ?? [],
+)
 
 const state = computed(() =>
   props.plan
-    ? { title: t(`analysis.plan.${props.plan.state}.title`), text: t(`analysis.plan.${props.plan.state}.text`) }
+    ? {
+        title: t(`analysis.plan.${props.plan.state}.title`),
+        text: t(`analysis.plan.${props.plan.state}.text`),
+      }
     : null,
 )
-const openCount = computed(() => blockers.value.length + questions.value.length)
 
 const saveText = computed(() => {
   switch (props.saveState) {
     case 'saving':
       return t('analysis.panel.saving')
     case 'saved':
-      return props.savedAt ? t('analysis.panel.savedAt', { time: formatTime(props.savedAt) }) : t('common.saved')
+      return props.savedAt
+        ? t('analysis.panel.savedAt', { time: formatTime(props.savedAt) })
+        : t('common.saved')
     case 'error':
       return t('analysis.panel.saveError')
     case 'conflict':
@@ -55,10 +56,6 @@ const saveText = computed(() => {
       return t('analysis.panel.autosave')
   }
 })
-
-const buildLabel = computed(() =>
-  props.plan?.state === 'draft' ? t('analysis.panel.buildDraft') : t('analysis.panel.build'),
-)
 </script>
 
 <template>
@@ -86,15 +83,12 @@ const buildLabel = computed(() =>
       </div>
     </div>
 
-    <template v-if="openCount">
-      <p class="panel__group">
-        {{ blockers.length ? $t('analysis.panel.leftFix') : $t('analysis.panel.leftAnswer') }} ·
-        {{ $t('units.items', openCount) }}
-      </p>
+    <template v-if="blockers.length">
+      <p class="panel__group">{{ $t('analysis.panel.leftFix') }}</p>
       <ul class="panel__list">
-        <li v-for="f in [...blockers, ...questions]" :key="f.id">
-          <button type="button" class="item" :class="`item--${getFindingKind(f)}`" @click="emit('focus', f)">
-            <BaseIcon :name="getFindingKind(f) === 'blocker' ? 'alert' : 'circle-dashed'" :size="18" class="item__icon" />
+        <li v-for="f in blockers" :key="f.id">
+          <button type="button" class="item item--blocker" @click="emit('focus', f)">
+            <BaseIcon name="alert" :size="18" class="item__icon" />
             <span class="item__text">{{ describeFinding(f) }}</span>
             <BaseIcon name="chevron-right" :size="16" class="item__chevron" />
           </button>
@@ -102,32 +96,25 @@ const buildLabel = computed(() =>
       </ul>
     </template>
 
-    <template v-if="limitations.length">
-      <p class="panel__group">{{ $t('analysis.panel.limitations') }}</p>
-      <ul class="panel__list">
-        <li v-for="f in limitations" :key="f.id">
-          <button type="button" class="item item--limitation" @click="emit('focus', f)">
-            <BaseIcon name="info" :size="18" class="item__icon" />
-            <span class="item__text">{{ describeFinding(f) }}</span>
-          </button>
-        </li>
-      </ul>
-    </template>
-
     <div class="panel__footer">
+      <p v-if="error" class="panel__error" role="alert">{{ error }}</p>
+      <BaseButton block :disabled="!canBuild" :loading="isBuilding" @click="emit('build')">
+        {{ $t('analysis.panel.build') }}
+      </BaseButton>
+      <p class="panel__next">{{ $t('analysis.review.nextStep') }}</p>
       <p class="panel__save" :class="`panel__save--${saveState}`" aria-live="polite">
         {{ saveText }}
         <button v-if="saveState === 'conflict'" type="button" class="panel__link" @click="emit('reload')">
           {{ $t('analysis.panel.reload') }}
         </button>
       </p>
-      <p v-if="error" class="panel__error" role="alert">{{ error }}</p>
-      <BaseButton block :disabled="!canBuild" :loading="isBuilding" @click="emit('build')">
-        {{ buildLabel }}
-      </BaseButton>
       <BaseButton block variant="tonal" :disabled="isBuilding" @click="emit('reset')">
         {{ $t('analysis.panel.otherProject') }}
       </BaseButton>
+    </div>
+    <div class="panel__contents">
+      <p class="panel__group">{{ $t('analysis.review.archiveContents') }}</p>
+      <p>{{ $t('analysis.review.archiveFiles') }}</p>
     </div>
   </aside>
 </template>
@@ -216,6 +203,22 @@ const buildLabel = computed(() =>
   margin-bottom: -10px;
   color: var(--color-text-muted);
   font-size: 12px;
+}
+
+.panel__contents {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.panel__contents .panel__group {
+  margin-bottom: 6px;
+}
+
+.panel__next {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
 }
 
 .panel__list {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArchiveTree, getArchiveFileName } from '@/entities/project'
+import { ArchiveTree, FindingList, getArchiveFileName } from '@/entities/project'
 import { useArchiveActions } from '@/features/archive-actions'
 import { RouteName } from '@/shared/config'
 import { t } from '@/shared/i18n'
@@ -22,8 +22,11 @@ const treeItems = computed(() => {
 
 const summary = computed(() => [
   { label: t('ready.summary.packages'), value: String(wizard.plan?.requirements.length ?? 0) },
-  { label: t('ready.summary.run'), value: wizard.plan?.runSpec?.target ?? wizard.decisions?.runSpec?.target ?? '—' },
-  { label: t('ready.summary.python'), value: wizard.decisions?.pythonVersion ?? t('ready.pythonUnknown') },
+  {
+    label: t('ready.summary.run'),
+    value: wizard.plan?.runSpec?.target ?? wizard.decisions?.runSpec?.target ?? '—',
+  },
+  { label: t('ready.summary.python'), value: wizard.plan?.pythonVersion ?? t('ready.pythonUnknown') },
   { label: t('ready.summary.excluded'), value: String(wizard.decisions?.excludedFiles.length ?? 0) },
   {
     label: t('ready.summary.size'),
@@ -53,6 +56,11 @@ function toProjects() {
         </div>
       </div>
       <ArchiveTree :root-name="getArchiveFileName(wizard.project)" :items="treeItems" />
+      <details v-if="wizard.plan?.findings.length" class="ready__report">
+        <summary>{{ $t('analysis.review.reportTitle') }}</summary>
+        <p class="step-muted">{{ $t('ready.reportHint') }}</p>
+        <FindingList :findings="wizard.plan.findings" />
+      </details>
     </BaseCard>
 
     <BaseCard tag="aside" class="summary">
@@ -66,8 +74,12 @@ function toProjects() {
     </BaseCard>
 
     <div class="step-actions">
-      <p v-if="archive.error.value" role="alert" class="step-actions__hint is-error">{{ archive.error.value }}</p>
-      <BaseButton variant="tonal" icon="arrow-left" @click="wizard.backToAnalysis()">{{ $t('ready.edit') }}</BaseButton>
+      <p v-if="archive.error.value" role="alert" class="step-actions__hint is-error">
+        {{ archive.error.value }}
+      </p>
+      <BaseButton variant="tonal" icon="arrow-left" @click="wizard.backToAnalysis()">{{
+        $t('ready.edit')
+      }}</BaseButton>
       <span class="step-actions__spacer" />
       <BaseButton variant="tonal" @click="toProjects">{{ $t('ready.toProjects') }}</BaseButton>
       <BaseButton icon="download" :loading="archive.isPending(wizard.project.id)" @click="download">
@@ -94,6 +106,15 @@ function toProjects() {
 .ready__status .step-muted {
   margin-top: 4px;
   font-size: 14px;
+}
+
+.ready__report summary {
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.ready__report .step-muted {
+  margin-top: 12px;
 }
 
 .ready__check {

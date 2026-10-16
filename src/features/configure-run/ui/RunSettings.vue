@@ -16,6 +16,7 @@ const props = defineProps<{
   scriptFiles: string[]
   pythonRequires: string | null
   candidates?: LaunchCandidate[]
+  hasRunOverride?: boolean
   disabled?: boolean
 }>()
 
@@ -23,7 +24,11 @@ const runSpec = defineModel<RunSpec | null>('runSpec', { required: true })
 const pythonVersion = defineModel<string | null>('pythonVersion', { required: true })
 
 const kinds = computed<SegmentedItem<RunKind>[]>(() =>
-  (['script', 'module', 'callable'] as const).map((value) => ({ value, label: t(`analysis.run.kinds.${value}`) })),
+  (['script', 'module', 'callable'] as const).map((value) => ({
+    value,
+    label: t(`analysis.run.kinds.${value}`),
+    disabled: props.disabled,
+  })),
 )
 
 const PYTHON_VERSIONS: SelectOption[] = ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14'].map((v) => ({
@@ -44,6 +49,7 @@ const scriptOptions = computed<SelectOption[]>(() => {
 })
 
 function patch(changes: Partial<RunSpec>) {
+  if (props.disabled) return
   const base: RunSpec = runSpec.value ?? { kind: 'script', target: '', args: [], workingDirectory: '.' }
   runSpec.value = { ...base, ...changes }
 }
@@ -72,6 +78,12 @@ const command = computed(() => formatRunCommand(runSpec.value))
 
 <template>
   <div class="run">
+    <div v-if="hasRunOverride" class="run__field">
+      <button type="button" class="run__reset" :disabled="disabled" @click="runSpec = null">
+        {{ $t('analysis.run.useAutomatic') }}
+      </button>
+      <p class="run__hint">{{ $t('analysis.run.automaticHint') }}</p>
+    </div>
     <div v-if="candidates?.length" class="run__field">
       <span class="run__label">{{ $t('workflow.launchCandidates') }}</span>
       <button
@@ -154,6 +166,15 @@ const command = computed(() => formatRunCommand(runSpec.value))
         aria-labelledby="python-label"
         :disabled="disabled"
       />
+      <button
+        v-if="pythonVersion"
+        type="button"
+        class="run__reset"
+        :disabled="disabled"
+        @click="pythonVersion = null"
+      >
+        {{ $t('analysis.run.pythonUnknown') }}
+      </button>
     </div>
 
     <div class="run__preview">
@@ -179,6 +200,17 @@ const command = computed(() => formatRunCommand(runSpec.value))
 
 .run__field > .segmented {
   align-self: flex-start;
+}
+
+.run__reset {
+  align-self: flex-start;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-align: left;
+}
+
+.run__reset:hover:not(:disabled) {
+  color: var(--color-text);
 }
 
 .run__label {
