@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "version": "0.3.0",
+  "api_version": "1.2.0",
+  "status": "passed",
+  "verified_at": "2026-10-16T19:08:12.019949+00:00",
+  "runtime_commit": "e6dd5153d476cc1fa0d9339f1140811da8ee4d63",
+  "source_sha256": "c610d7ceebf87cdc08038cf2e285e3749d4796da8a4a02b8c66fd52d4e8044d0",
+  "python_files": 53,
+  "tests": {
+    "passed": 665,
+    "ruff": "passed",
+    "format": "passed"
+  },
+  "wheel": {
+    "installed_independently": true,
+    "source_equals_VM_and_repository": true,
+    "uv_version": "0.12.3",
+    "stdlib_list_version": "0.12.0"
+  },
+  "VM": {
+    "readiness": "ready",
+    "isolation_checks": 38,
+    "http_checks": 32,
+    "OpenAPI_equals_published": true,
+    "restart": {
+      "status": "passed",
+      "decisions_survive_restart": true,
+      "lock_survives_restart": true,
+      "reanalysis_invalidates_lock": true
+    },
+    "images": {
+      "logic": "sha256:c3400dda91d5b2adad7e7aa05e9decd2630d98420ae20a6cade0070f081c9346",
+      "dispatcher": "sha256:c97f663cd1eff87d69011852487585a3a6b5eddf858b7c84161e5ab8b62d6962",
+      "analyzer": "sha256:9c31d7af712eeca1e76f66ba81d4930f13c7f6ec3d647442618ddeda934b0c2a"
+    },
+    "provider_file_mode": "0o600"
+  },
+  "projects": {
+    "scientific": {
+      "status": "passed",
+      "automatic_launch": {
+        "target": "experiment.py",
+        "kind": "script",
+        "args": [],
+        "working_directory": "."
+      },
+      "run_spec_origin": "inferred",
+      "locked_packages": [
+        "numpy==2.4.6",
+        "pandas==3.0.6",
+        "python-dateutil==2.9.0.post0",
+        "six==1.17.0"
+      ],
+      "lock_target": {
+        "python_version": "3.11",
+        "platform": "linux-x86_64"
+      },
+      "lock_id": "16331c6aca57b9fa6b2c0e90dcb4497a5fc2c315bd592471747bace435c0f779",
+      "bundle_sha256": "079b9619cbb6be308357e0ec11d30d6fa12b86acafdc8f1d859e2432c628e3c8",
+      "reproduction": {
+        "status": "passed",
+        "stdout": "4.0",
+        "python": "Python 3.11.17",
+        "bundle_sha256": "079b9619cbb6be308357e0ec11d30d6fa12b86acafdc8f1d859e2432c628e3c8"
+      }
+    },
+    "local": {
+      "status": "passed",
+      "automatic_launch": {
+        "target": "experiment.py",
+        "kind": "script",
+        "args": [],
+        "working_directory": "."
+      },
+      "run_spec_origin": "inferred",
+      "locked_packages": [],
+      "lock_target": {
+        "python_version": "3.11",
+        "platform": "linux-x86_64"
+      },
+      "lock_id": "5a7f330d695cfdd592380c4732970b3484c6b7acfaffff347b1b7e263bbccf1c",
+      "bundle_sha256": "5f55ed43722131e8a875fca3bc3941423fad4a2fe30e54c6756dced17ebc2089",
+      "reproduction": {
+        "status": "passed",
+        "stdout": "4.0",
+        "python": "Python 3.11.17",
+        "bundle_sha256": "5f55ed43722131e8a875fca3bc3941423fad4a2fe30e54c6756dced17ebc2089"
+      },
+      "ai": {
+        "entrypoint": {
+          "status": "ok",
+          "rounds": 2,
+          "tool_calls": 2,
+          "usage": {
+            "prompt_tokens": 3945,
+            "completion_tokens": 502,
+            "total_tokens": 4447
+          }
+        },
+        "readme": {
+          "status": "ok",
+          "rounds": 2,
+          "tool_calls": 0,
+          "usage": {
+            "prompt_tokens": 3879,
+            "completion_tokens": 859,
+            "total_tokens": 4738
+          }
+        }
+      }
+    }
+  },
+  "scope": {
+    "uploaded_projects_executed_by_logic_service": false,
+    "acceptance_runs_reviewed_fixtures_in_separate_clean_venvs": true,
+    "new_lock_is_not_proof_of_author_environment": true,
+    "AI_provider": "deepseek-flash",
+    "AI_suggestions_require_confirmation": true
+  }
+}
