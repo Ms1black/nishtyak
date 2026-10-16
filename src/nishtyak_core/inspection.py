@@ -5,6 +5,7 @@ import posixpath
 import re
 from pathlib import PurePosixPath, PureWindowsPath
 
+from .layout import LayoutDetector
 from .models import Finding, ProjectSnapshot
 
 
@@ -19,13 +20,15 @@ class ProjectInspector:
             raise ValueError("Inspection source limit must be between 1 and 1000000 bytes")
         self.max_source_bytes = max_source_bytes
 
-    def inspect(self, snapshot: ProjectSnapshot) -> tuple[Finding, ...]:
+    def inspect(self, snapshot: ProjectSnapshot, project_root: str = ".") -> tuple[Finding, ...]:
         findings: list[Finding] = []
-        paths = {file.path for file in snapshot.files}
+        paths = {
+            file.path for file in snapshot.files if LayoutDetector.contains(file.path, project_root)
+        }
         root_documents = {
             (path.stem.casefold(), path.suffix.casefold())
             for value in paths
-            if len((path := PurePosixPath(value)).parts) == 1
+            if str((path := PurePosixPath(value)).parent) == project_root
         }
         for stems, code, message in (
             ({"readme"}, "README_MISSING", "No README was found at the project root."),
@@ -56,7 +59,11 @@ class ProjectInspector:
         )
 
         for source in sorted(snapshot.files, key=lambda file: file.path):
-            if not source.path.endswith(".py") or len(source.content) > self.max_source_bytes:
+            if (
+                not LayoutDetector.contains(source.path, project_root)
+                or not source.path.endswith(".py")
+                or len(source.content) > self.max_source_bytes
+            ):
                 continue
             try:
                 tree = ast.parse(source.content, filename=source.path)
@@ -80,7 +87,9 @@ class ProjectInspector:
                     continue
                 if name == "open" and self._writes_file(node):
                     continue
-                finding = self._input_finding(value.value, source.path, node.lineno, paths)
+                finding = self._input_finding(
+                    value.value, source.path, node.lineno, paths, project_root
+                )
                 if finding is not None:
                     findings.append(finding)
 
@@ -98,7 +107,9 @@ class ProjectInspector:
             and bool(set(mode.value) & {"w", "a", "x"})
         )
 
-    def _input_finding(self, value: str, source: str, line: int, paths: set[str]) -> Finding | None:
+    def _input_finding(
+        self, value: str, source: str, line: int, paths: set[str], project_root: str = "."
+    ) -> Finding | None:
         normalized = posixpath.normpath(value.replace("\\", "/"))
         external = (
             bool(re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value))
@@ -115,7 +126,7 @@ class ProjectInspector:
                 path=source,
                 line=line,
             )
-        if normalized not in paths:
+        if LayoutDetector.join(project_root, normalized) not in paths:
             return Finding(
                 "INPUT_PATH_UNVERIFIED",
                 "A literal input path was not matched from the project root; "

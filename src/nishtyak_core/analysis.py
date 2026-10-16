@@ -3,28 +3,38 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from .imports import ImportScanner
+from .layout import LayoutDetector
 from .manifests import ManifestReader
 from .models import AnalysisOptions, AnalysisReport, Finding, ProjectSnapshot, stable_id
-from .resolution import DependencyResolver, StandardLibraryProfile, normalize_roots
+from .resolution import DependencyResolver, StandardLibraryProfile
 
 
 class ProjectAnalyzer:
-    RULE_VERSION = "1.0"
+    RULE_VERSION = "2.0"
 
     def analyze(
         self, snapshot: ProjectSnapshot, options: AnalysisOptions | None = None
     ) -> AnalysisReport:
         options = options or AnalysisOptions()
-        roots = normalize_roots(options.source_roots)
+        layout = LayoutDetector().detect(snapshot, options)
+        roots = layout.source_roots
         profile = StandardLibraryProfile(options.python_version)
         if options.max_source_bytes <= 0 or options.max_files <= 0:
             raise ValueError("Analysis limits must be positive")
 
         sources = sorted(snapshot.files, key=lambda source: source.path)
         findings: list[Finding] = []
+        if layout.ambiguous:
+            findings.append(
+                Finding(
+                    "PROJECT_ROOT_AMBIGUOUS",
+                    "Several independent project roots were found; select one before packaging.",
+                    severity="warning",
+                )
+            )
         observations = []
         entrypoints = []
-        partial = False
+        partial = layout.ambiguous
         if len(sources) > options.max_files:
             partial = True
             findings.append(
@@ -53,6 +63,8 @@ class ProjectAnalyzer:
                 )
                 partial = True
         for source in sources[: options.max_files]:
+            if not LayoutDetector.contains(source.path, layout.root):
+                continue
             if not source.path.endswith(".py"):
                 continue
             if len(source.content) > options.max_source_bytes:
@@ -67,10 +79,15 @@ class ProjectAnalyzer:
             observations.extend(parsed.imports)
             findings.extend(parsed.findings)
             partial = partial or not parsed.complete
-            if parsed.has_main_guard or source.path in {"main.py", "__main__.py"}:
+            if parsed.has_main_guard or source.path.rsplit("/", 1)[-1] in {
+                "main.py",
+                "__main__.py",
+            }:
                 entrypoints.append(source.path)
 
-        manifests = ManifestReader(snapshot, options.max_source_bytes).read()
+        manifests = ManifestReader(
+            snapshot, options.max_source_bytes, project_root=layout.root
+        ).read()
         findings.extend(manifests.findings)
         partial = partial or not manifests.complete
         result = DependencyResolver(
@@ -116,6 +133,9 @@ class ProjectAnalyzer:
             ),
             status="partial" if partial else "complete",
             declared_requirements=manifests.requirements,
+            declarations=manifests.declarations,
+            optional_groups=manifests.optional_groups,
             python_requires=manifests.python_requires,
-            entrypoints=tuple(sorted(set(entrypoints))),
+            entrypoints=tuple(sorted(set((*entrypoints, *getattr(manifests, "entrypoints", ()))))),
+            layout=layout,
         )

@@ -10,7 +10,7 @@ command -v timeout >/dev/null || { echo "Linux coreutils timeout is required" >&
 
 archive_path=$1
 report_path=$2
-image=${NISHTYAK_ANALYZER_IMAGE:-nishtyak-analyzer:0.1.0}
+image=${NISHTYAK_ANALYZER_IMAGE:-nishtyak-analyzer:0.2.0}
 if [[ ! -f "$archive_path" ]] || (( $(wc -c < "$archive_path") > 10485760 )); then
   echo "Input must be a ZIP file no larger than 10 MiB" >&2
   exit 2

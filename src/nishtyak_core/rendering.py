@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 
+from .layout import ProjectLauncher
 from .models import GeneratedFile, GeneratedFiles, PackagePlan
 from .security import SecretScanner
 
@@ -30,6 +31,8 @@ class DocumentRenderer:
                 ).encode("utf-8"),
             ),
         )
+        if ProjectLauncher.required(plan):
+            files = (*files, ProjectLauncher().generate(plan))
         return GeneratedFiles(files)
 
     @staticmethod
@@ -90,19 +93,32 @@ class DocumentRenderer:
                     "From the extracted package root with the environment activated:",
                     "",
                     "```sh",
-                    "cd project",
                 ]
             )
-            if run.working_directory != ".":
-                lines.append("cd " + shlex.quote(run.working_directory))
-            command = ["python"]
-            if run.kind == "module":
-                command.append("-m")
-            target = run.target
-            if run.kind == "script" and target.startswith("-"):
-                target = "./" + target
-            command.extend([target, *run.args])
-            lines.extend([shlex.join(command), "```", ""])
+            if ProjectLauncher.required(plan):
+                lines.append("python run_project.py")
+            else:
+                lines.append("cd project")
+                if run.working_directory != ".":
+                    lines.append("cd " + shlex.quote(run.working_directory))
+                command = ["python"]
+                if run.kind == "module":
+                    command.append("-m")
+                target = run.target
+                if run.kind == "script" and target.startswith("-"):
+                    target = "./" + target
+                command.extend([target, *run.args])
+                lines.append(shlex.join(command))
+            lines.extend(["```", ""])
+            if ProjectLauncher.required(plan):
+                lines.extend(
+                    [
+                        "`run_project.py` applies the reviewed working directory, source roots, "
+                        "entry point and arguments. It uses the extracted files directly; "
+                        "no project build hooks are needed.",
+                        "",
+                    ]
+                )
         else:
             lines.extend(
                 [
@@ -151,6 +167,17 @@ class DocumentRenderer:
                 "",
             ]
         )
+        if plan.report.layout:
+            layout = plan.report.layout
+            lines.extend(
+                [
+                    f"Selected project root inside `project/`: `{layout.root}`.",
+                    "Import roots inside `project/`: "
+                    + ", ".join(f"`{root}`" for root in layout.source_roots)
+                    + ".",
+                    "",
+                ]
+            )
         if plan.excluded_files:
             lines.extend(["Excluded files:", ""])
             lines.extend(f"- {path}" for path in plan.excluded_files)

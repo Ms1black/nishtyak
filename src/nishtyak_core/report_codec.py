@@ -8,9 +8,11 @@ from .models import (
     AnalysisOptions,
     AnalysisReport,
     DependencyCandidate,
+    DependencyDeclaration,
     FileInfo,
     Finding,
     ImportObservation,
+    ProjectLayout,
 )
 
 
@@ -26,9 +28,23 @@ class AnalysisReportCodec:
 
     def decode(self, value: Any) -> AnalysisReport:
         try:
-            data = self._object(value, AnalysisReport)
-            if data["schema_version"] != 1 or type(data["schema_version"]) is not int:
+            if not isinstance(value, dict):
+                raise InvalidWorkerReport("Invalid worker report")
+            version = value.get("schema_version")
+            if type(version) is not int or version not in {1, 2}:
                 raise InvalidWorkerReport("Unsupported worker report schema")
+            additions = {
+                "layout",
+                "declarations",
+                "optional_groups",
+                "author_environment_id",
+                "author_python_version",
+                "author_platform",
+            }
+            expected = set(AnalysisReport.__dataclass_fields__)
+            if set(value) != expected and not (version == 1 and set(value) == expected - additions):
+                raise InvalidWorkerReport("Unexpected worker report fields")
+            data = value
             options = self.decode_options(data["options"])
             files = tuple(self._file(item) for item in self._array(data["files"]))
             imports = tuple(self._import(item) for item in self._array(data["imports"]))
@@ -48,24 +64,65 @@ class AnalysisReportCodec:
                 declared_requirements=self._strings(data["declared_requirements"]),
                 python_requires=self._nullable_text(data["python_requires"]),
                 entrypoints=self._strings(data["entrypoints"]),
-                schema_version=1,
+                schema_version=version,
+                layout=self._layout(data.get("layout")),
+                declarations=tuple(
+                    self._declaration(item) for item in self._array(data.get("declarations", ()))
+                ),
+                optional_groups=self._strings(data.get("optional_groups", ())),
+                author_environment_id=self._nullable_text(data.get("author_environment_id")),
+                author_python_version=self._nullable_text(data.get("author_python_version")),
+                author_platform=self._nullable_text(data.get("author_platform")),
             )
         except (KeyError, TypeError, ValueError, RecursionError) as error:
             raise InvalidWorkerReport("Invalid worker report") from error
 
     def decode_options(self, value: Any) -> AnalysisOptions:
-        data = self._object(value, AnalysisOptions)
+        if not isinstance(value, dict) or set(value) not in (
+            set(AnalysisOptions.__dataclass_fields__),
+            set(AnalysisOptions.__dataclass_fields__) - {"project_root"},
+        ):
+            raise InvalidWorkerReport("Unexpected analysis option fields")
+        data = value
         roots = self._strings(data["source_roots"])
         if not 1 <= len(roots) <= 32 or any(len(root) > 1024 for root in roots):
             raise InvalidWorkerReport("Invalid source roots")
         version = self._text(data["python_version"])
         if len(version) > 16:
             raise InvalidWorkerReport("Invalid Python version")
+        project_root = self._nullable_text(data.get("project_root"))
+        if project_root is not None and len(project_root) > 1024:
+            raise InvalidWorkerReport("Invalid project root")
         return AnalysisOptions(
             python_version=version,
             source_roots=roots,
             max_source_bytes=self._integer(data["max_source_bytes"], 1, 1_000_000),
             max_files=self._integer(data["max_files"], 1, 1_000),
+            project_root=project_root,
+        )
+
+    def _layout(self, value: Any) -> ProjectLayout | None:
+        if value is None:
+            return None
+        item = self._object(value, ProjectLayout)
+        if type(item["ambiguous"]) is not bool:
+            raise InvalidWorkerReport("Invalid layout ambiguity flag")
+        return ProjectLayout(
+            self._text(item["root"]),
+            self._strings(item["source_roots"]),
+            self._strings(item["root_candidates"]),
+            item["ambiguous"],
+        )
+
+    def _declaration(self, value: Any) -> DependencyDeclaration:
+        item = self._object(value, DependencyDeclaration)
+        line = item["line"]
+        return DependencyDeclaration(
+            requirement=self._text(item["requirement"]),
+            path=self._text(item["path"]),
+            line=None if line is None else self._integer(line, 1),
+            group=self._nullable_text(item["group"]),
+            id=self._text(item["id"]),
         )
 
     def _file(self, value: Any) -> FileInfo:

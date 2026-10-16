@@ -12,8 +12,11 @@ import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .environment import AuthorEnvironmentSnapshot
 from .models import AnalysisOptions, AnalysisReport
 from .report_codec import AnalysisReportCodec, InvalidWorkerReport, bounded_json
+
+AUTHOR_ENVIRONMENT_MAX_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -62,20 +65,34 @@ class AnalysisJobRunner:
         self._codec = AnalysisReportCodec()
 
     def run(
-        self, archive_path: str | Path, options: AnalysisOptions | None = None
+        self,
+        archive_path: str | Path,
+        options: AnalysisOptions | None = None,
+        author_environment: AuthorEnvironmentSnapshot | None = None,
     ) -> AnalysisJobResult:
         if not self._slots.acquire(blocking=False):
             return AnalysisJobResult("failed", code="WORKER_BUSY")
         try:
+            if author_environment is not None:
+                return self._run(archive_path, options or AnalysisOptions(), author_environment)
             return self._run(archive_path, options or AnalysisOptions())
         finally:
             self._slots.release()
 
-    def _run(self, archive_path: str | Path, options: AnalysisOptions) -> AnalysisJobResult:
+    def _run(
+        self,
+        archive_path: str | Path,
+        options: AnalysisOptions,
+        author_environment: AuthorEnvironmentSnapshot | None = None,
+    ) -> AnalysisJobResult:
         try:
             options = self._codec.decode_options(asdict(options))
         except (TypeError, ValueError):
             return AnalysisJobResult("failed", code="OPTIONS_INVALID")
+        try:
+            environment = self._encode_environment(author_environment)
+        except (TypeError, ValueError):
+            return AnalysisJobResult("failed", code="AUTHOR_ENVIRONMENT_INVALID")
         try:
             archive = Path(archive_path)
             if archive.is_symlink() or not archive.is_file():
@@ -85,8 +102,13 @@ class AnalysisJobRunner:
                 root = Path(directory)
                 options_path, result_path = root / "options.json", root / "result.json"
                 options_path.write_bytes(bounded_json(asdict(options), 64 * 1024))
+                command = self._command(archive, options_path, result_path)
+                if environment is not None:
+                    environment_path = root / "author-environment.json"
+                    environment_path.write_bytes(environment)
+                    command.extend(["--author-environment", str(environment_path)])
                 with subprocess.Popen(
-                    self._command(archive, options_path, result_path),
+                    command,
                     cwd=root,
                     env=self._environment(root),
                     stdin=subprocess.DEVNULL,
@@ -127,6 +149,14 @@ class AnalysisJobRunner:
             "--max-open-files",
             str(self.policy.max_open_files),
         ]
+
+    @staticmethod
+    def _encode_environment(environment: AuthorEnvironmentSnapshot | None) -> bytes | None:
+        if environment is None:
+            return None
+        content = bounded_json(asdict(environment), AUTHOR_ENVIRONMENT_MAX_BYTES)
+        parsed = AuthorEnvironmentSnapshot.from_dict(json.loads(content))
+        return bounded_json(asdict(parsed), AUTHOR_ENVIRONMENT_MAX_BYTES)
 
     @staticmethod
     def _environment(root: Path) -> dict[str, str]:
@@ -190,6 +220,7 @@ class AnalysisJobRunner:
                     "ARCHIVE_COMPRESSION",
                     "ARCHIVE_UNAVAILABLE",
                     "OPTIONS_INVALID",
+                    "AUTHOR_ENVIRONMENT_INVALID",
                     "ANALYSIS_INVALID",
                     "ANALYSIS_FAILED",
                     "MEMORY_LIMIT",

@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 from .archives import ArchiveError, ArchiveReader
-from .jobs import JobPolicy
+from .environment import AuthorEnvironmentSnapshot
+from .jobs import AUTHOR_ENVIRONMENT_MAX_BYTES, JobPolicy
 from .models import AnalysisOptions
 from .report_codec import AnalysisReportCodec, InvalidWorkerReport, bounded_json
 from .service import ReproducibilityService
@@ -22,6 +23,9 @@ class StaticAnalysisWorker:
         options_path: Path | None = None,
         policy: JobPolicy | None = None,
         options_json: str | None = None,
+        author_environment_json: str | None = None,
+        author_environment_path: Path | None = None,
+        author_environment_stdin: bool = False,
     ) -> int:
         policy = policy or JobPolicy()
         try:
@@ -47,6 +51,46 @@ class StaticAnalysisWorker:
             return self._write(output_path, policy, "failed", "OPTIONS_INVALID")
 
         try:
+            author_environment = None
+            if (
+                sum(
+                    (
+                        author_environment_json is not None,
+                        author_environment_path is not None,
+                        author_environment_stdin,
+                    )
+                )
+                > 1
+            ):
+                raise ValueError("Only one environment source is allowed")
+            raw_environment = None
+            if author_environment_stdin:
+                if archive_path != "-":
+                    raise ValueError("Environment frame requires a streamed archive")
+                header = sys.stdin.buffer.read(4)
+                if len(header) != 4:
+                    raise ValueError("Environment frame is truncated")
+                length = int.from_bytes(header, "big")
+                if not 0 < length <= AUTHOR_ENVIRONMENT_MAX_BYTES:
+                    raise ValueError("Environment frame exceeds its limit")
+                raw_environment = sys.stdin.buffer.read(length)
+                if len(raw_environment) != length:
+                    raise ValueError("Environment frame is truncated")
+            elif author_environment_json is not None:
+                raw_environment = author_environment_json.encode("utf-8")
+            elif author_environment_path is not None:
+                with author_environment_path.open("rb") as stream:
+                    raw_environment = stream.read(AUTHOR_ENVIRONMENT_MAX_BYTES + 1)
+            if raw_environment is not None:
+                if len(raw_environment) > AUTHOR_ENVIRONMENT_MAX_BYTES:
+                    raise ValueError("Author environment exceeds its limit")
+                author_environment = AuthorEnvironmentSnapshot.from_dict(
+                    json.loads(raw_environment)
+                )
+        except (OSError, TypeError, ValueError, RecursionError):
+            return self._write(output_path, policy, "failed", "AUTHOR_ENVIRONMENT_INVALID")
+
+        try:
             reader = ArchiveReader()
             if archive_path == "-":
                 content = sys.stdin.buffer.read(reader.policy.max_archive_bytes + 1)
@@ -55,7 +99,7 @@ class StaticAnalysisWorker:
                 snapshot = reader.read(io.BytesIO(content))
             else:
                 snapshot = reader.from_path(archive_path)
-            report = ReproducibilityService().analyze(snapshot, options)
+            report = ReproducibilityService().analyze(snapshot, options, author_environment)
             return self._write(output_path, policy, "succeeded", report=report)
         except ArchiveError as error:
             return self._write(output_path, policy, "failed", error.code)
@@ -124,6 +168,10 @@ def main() -> None:
     options_group = parser.add_mutually_exclusive_group()
     options_group.add_argument("--options", type=Path)
     options_group.add_argument("--options-json")
+    environment_group = parser.add_mutually_exclusive_group()
+    environment_group.add_argument("--author-environment-json")
+    environment_group.add_argument("--author-environment", type=Path)
+    environment_group.add_argument("--author-environment-stdin", action="store_true")
     parser.add_argument("--memory-bytes", type=int, default=512 * 1024 * 1024)
     parser.add_argument("--cpu-seconds", type=int, default=15)
     parser.add_argument("--max-report-bytes", type=int, default=8 * 1024 * 1024)
@@ -140,7 +188,14 @@ def main() -> None:
         parser.error("Worker limits must be positive integers")
     raise SystemExit(
         StaticAnalysisWorker().run(
-            options.archive, options.output, options.options, policy, options.options_json
+            options.archive,
+            options.output,
+            options.options,
+            policy,
+            options.options_json,
+            options.author_environment_json,
+            options.author_environment,
+            options.author_environment_stdin,
         )
     )
 

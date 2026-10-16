@@ -46,6 +46,34 @@ class AnalysisOptions:
     source_roots: tuple[str, ...] = (".",)
     max_source_bytes: int = 1_000_000
     max_files: int = 1_000
+    project_root: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectLayout:
+    root: str = "."
+    source_roots: tuple[str, ...] = (".",)
+    root_candidates: tuple[str, ...] = (".",)
+    ambiguous: bool = False
+
+
+@dataclass(frozen=True)
+class DependencyDeclaration:
+    requirement: str
+    path: str
+    line: int | None = None
+    group: str | None = None
+    id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            object.__setattr__(self, "id", stable_id(asdict(self)))
+
+
+@dataclass(frozen=True)
+class DeclarationDecision:
+    action: str = "keep"
+    requirement: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,7 +137,13 @@ class AnalysisReport:
     declared_requirements: tuple[str, ...] = ()
     python_requires: str | None = None
     entrypoints: tuple[str, ...] = ()
-    schema_version: int = 1
+    schema_version: int = 2
+    layout: ProjectLayout | None = None
+    declarations: tuple[DependencyDeclaration, ...] = ()
+    optional_groups: tuple[str, ...] = ()
+    author_environment_id: str | None = None
+    author_python_version: str | None = None
+    author_platform: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return TextRedactor().redact_value(asdict(self))
@@ -136,6 +170,8 @@ class UserDecisions:
     input_description: str = ""
     expected_output: str = ""
     data_confirmed: bool = False
+    selected_extras: tuple[str, ...] = ()
+    declaration_actions: dict[str, DeclarationDecision] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

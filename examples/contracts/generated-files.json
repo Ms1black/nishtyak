@@ -1,8 +1,8 @@
 [
   {
     "path": "README.md",
-    "size": 1773,
-    "sha256": "1f6b390cd6d4e8e2017047ef8d3d11937d63c292e0ae2c4d97263fcbb2252048"
+    "size": 1857,
+    "sha256": "10fad5275a72cfeb26484848e441525121a2b2d690a72e24469448c4c841a381"
   },
   {
     "path": "requirements.txt",
@@ -11,12 +11,7 @@
   },
   {
     "path": "analysis-report.json",
-    "size": 6245,
-    "sha256": "c996e82545ef800f8fa56139caae99c3e8bbcbedf7715b76a4f382fb4bcf4291"
-  },
-  {
-    "path": "Dockerfile",
-    "size": 414,
-    "sha256": "04be1cec113fcec31f16681a965ab81fb0f18aed985440cce369dd9891f239de"
+    "size": 6641,
+    "sha256": "b85b4b05637e897de4ef87a7b2575b50f447d51e80973aece1454850c75d688c"
   }
 ]

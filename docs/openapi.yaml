@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Nishtyak logic service
-  version: 1.0.0
+  version: 1.1.0
 paths:
   /v1/projects:
     post:
@@ -22,6 +22,14 @@ paths:
                   contentSchema:
                     $ref: '#/components/schemas/AnalysisOptionsDTO'
                   description: AnalysisOptions JSON
+                author_environment:
+                  type: string
+                  maxLength: 262144
+                  contentMediaType: application/json
+                  contentSchema:
+                    $ref: '#/components/schemas/AuthorEnvironmentDTO'
+                  description: Author's local Python/package metadata JSON; at most
+                    256 KiB
               additionalProperties: false
               type: object
               required:
@@ -345,6 +353,326 @@ paths:
       responses:
         '204':
           description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+  /v1/projects/{project_id}/analysis:
+    post:
+      summary: Reanalyze
+      operationId: reanalyze_v1_projects__project_id__analysis_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReanalyzeDTO'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmittedProjectDTO'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+  /v1/projects/{project_id}/decisions:
+    get:
+      summary: Get Decisions
+      operationId: get_decisions_v1_projects__project_id__decisions_get
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionDocumentDTO'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+    put:
+      summary: Save Decisions
+      operationId: save_decisions_v1_projects__project_id__decisions_put
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveDecisionsDTO'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionDocumentDTO'
         '400':
           content:
             application/json:
@@ -870,9 +1198,54 @@ components:
           type: integer
           title: Max Files
           default: 1000
+        project_root:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Project Root
       additionalProperties: false
       type: object
       title: AnalysisOptions
+    AnalysisOptionsDTO:
+      additionalProperties: false
+      properties:
+        python_version:
+          default: '3.11'
+          maxLength: 16
+          minLength: 1
+          title: Python Version
+          type: string
+        source_roots:
+          items:
+            maxLength: 1024
+            minLength: 1
+            type: string
+          maxItems: 32
+          minItems: 1
+          title: Source Roots
+          type: array
+        max_source_bytes:
+          default: 1000000
+          maximum: 1000000
+          minimum: 1
+          title: Max Source Bytes
+          type: integer
+        max_files:
+          default: 1000
+          maximum: 1000
+          minimum: 1
+          title: Max Files
+          type: integer
+        project_root:
+          anyOf:
+          - maxLength: 1024
+            minLength: 1
+            type: string
+          - type: 'null'
+          default: null
+          title: Project Root
+      title: AnalysisOptionsDTO
+      type: object
     AnalysisReport:
       properties:
         analysis_id:
@@ -930,7 +1303,38 @@ components:
         schema_version:
           type: integer
           title: Schema Version
-          default: 1
+          default: 2
+        layout:
+          anyOf:
+          - $ref: '#/components/schemas/ProjectLayout'
+          - type: 'null'
+        declarations:
+          items:
+            $ref: '#/components/schemas/DependencyDeclaration'
+          type: array
+          title: Declarations
+          default: []
+        optional_groups:
+          items:
+            type: string
+          type: array
+          title: Optional Groups
+          default: []
+        author_environment_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Author Environment Id
+        author_python_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Author Python Version
+        author_platform:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Author Platform
       additionalProperties: false
       type: object
       required:
@@ -939,6 +1343,38 @@ components:
       - options
       - files
       title: AnalysisReport
+    AuthorEnvironmentDTO:
+      properties:
+        python_version:
+          type: string
+          maxLength: 32
+          minLength: 1
+          title: Python Version
+        platform:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Platform
+        distributions:
+          items:
+            $ref: '#/components/schemas/InstalledDistributionDTO'
+          type: array
+          maxItems: 20000
+          title: Distributions
+        findings:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          maxItems: 1000
+          title: Findings
+      additionalProperties: false
+      type: object
+      required:
+      - python_version
+      - platform
+      - distributions
+      title: AuthorEnvironmentDTO
     BundleDTO:
       properties:
         decisions:
@@ -952,6 +1388,33 @@ components:
       required:
       - decisions
       title: BundleDTO
+    DecisionDocumentDTO:
+      properties:
+        analysis_id:
+          type: string
+          pattern: ^[a-f0-9]{20}$
+          title: Analysis Id
+        revision:
+          type: integer
+          minimum: 0.0
+          title: Revision
+        decisions:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionsDTO'
+          - type: 'null'
+        updated_at:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Updated At
+      additionalProperties: false
+      type: object
+      required:
+      - analysis_id
+      - revision
+      - decisions
+      - updated_at
+      title: DecisionDocumentDTO
     DecisionsDTO:
       properties:
         analysis_id:
@@ -1021,11 +1484,57 @@ components:
           type: boolean
           title: Data Confirmed
           default: false
+        selected_extras:
+          items:
+            type: string
+            maxLength: 2048
+          type: array
+          maxItems: 1000
+          title: Selected Extras
+        declaration_actions:
+          patternProperties:
+            ^[a-f0-9]{20}$:
+              $ref: '#/components/schemas/DeclarationDecisionDTO'
+          type: object
+          maxProperties: 10000
+          title: Declaration Actions
       additionalProperties: false
       type: object
       required:
       - analysis_id
       title: DecisionsDTO
+    DeclarationDecision:
+      properties:
+        action:
+          type: string
+          title: Action
+          default: keep
+        requirement:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requirement
+      type: object
+      title: DeclarationDecision
+    DeclarationDecisionDTO:
+      properties:
+        action:
+          type: string
+          enum:
+          - keep
+          - replace
+          - exclude
+          title: Action
+          default: keep
+        requirement:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Requirement
+      additionalProperties: false
+      type: object
+      title: DeclarationDecisionDTO
     DependencyCandidate:
       properties:
         module:
@@ -1072,6 +1581,34 @@ components:
       - module
       - category
       title: DependencyCandidate
+    DependencyDeclaration:
+      properties:
+        requirement:
+          type: string
+          title: Requirement
+        path:
+          type: string
+          title: Path
+        line:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Line
+        group:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Group
+        id:
+          type: string
+          title: Id
+          default: ''
+      additionalProperties: false
+      type: object
+      required:
+      - requirement
+      - path
+      title: DependencyDeclaration
     ErrorDTO:
       properties:
         code:
@@ -1080,6 +1617,11 @@ components:
         message:
           type: string
           title: Message
+        field:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Field
       additionalProperties: false
       type: object
       required:
@@ -1182,6 +1724,31 @@ components:
       - path
       - line
       title: ImportObservation
+    InstalledDistributionDTO:
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+        version:
+          type: string
+          maxLength: 128
+          minLength: 1
+          title: Version
+        modules:
+          items:
+            type: string
+            maxLength: 2048
+          type: array
+          maxItems: 1000
+          title: Modules
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      - version
+      title: InstalledDistributionDTO
     JobDTO:
       properties:
         project_id:
@@ -1290,6 +1857,33 @@ components:
       - findings
       - state
       title: PackagePlan
+    ProjectLayout:
+      properties:
+        root:
+          type: string
+          title: Root
+          default: .
+        source_roots:
+          items:
+            type: string
+          type: array
+          title: Source Roots
+          default:
+          - .
+        root_candidates:
+          items:
+            type: string
+          type: array
+          title: Root Candidates
+          default:
+          - .
+        ambiguous:
+          type: boolean
+          title: Ambiguous
+          default: false
+      additionalProperties: false
+      type: object
+      title: ProjectLayout
     ProjectReportDTO:
       properties:
         project_id:
@@ -1304,6 +1898,17 @@ components:
       - project_id
       - analysis
       title: ProjectReportDTO
+    ReanalyzeDTO:
+      properties:
+        options:
+          $ref: '#/components/schemas/AnalysisOptionsDTO'
+        author_environment:
+          anyOf:
+          - $ref: '#/components/schemas/AuthorEnvironmentDTO'
+          - type: 'null'
+      additionalProperties: false
+      type: object
+      title: ReanalyzeDTO
     RunSpec:
       properties:
         target:
@@ -1339,6 +1944,7 @@ components:
           enum:
           - script
           - module
+          - callable
           title: Kind
           default: script
         args:
@@ -1359,6 +1965,21 @@ components:
       required:
       - target
       title: RunSpecDTO
+    SaveDecisionsDTO:
+      properties:
+        expected_revision:
+          type: integer
+          maximum: 9007199254740991.0
+          minimum: 0.0
+          title: Expected Revision
+        decisions:
+          $ref: '#/components/schemas/DecisionsDTO'
+      additionalProperties: false
+      type: object
+      required:
+      - expected_revision
+      - decisions
+      title: SaveDecisionsDTO
     SubmittedProjectDTO:
       properties:
         project_id:
@@ -1451,42 +2072,21 @@ components:
           type: boolean
           title: Data Confirmed
           default: false
+        selected_extras:
+          items:
+            type: string
+          type: array
+          title: Selected Extras
+          default: []
+        declaration_actions:
+          additionalProperties:
+            $ref: '#/components/schemas/DeclarationDecision'
+          type: object
+          title: Declaration Actions
       type: object
       required:
       - analysis_id
       title: UserDecisions
-    AnalysisOptionsDTO:
-      additionalProperties: false
-      properties:
-        python_version:
-          default: '3.11'
-          maxLength: 16
-          minLength: 1
-          title: Python Version
-          type: string
-        source_roots:
-          items:
-            maxLength: 1024
-            minLength: 1
-            type: string
-          maxItems: 32
-          minItems: 1
-          title: Source Roots
-          type: array
-        max_source_bytes:
-          default: 1000000
-          maximum: 1000000
-          minimum: 1
-          title: Max Source Bytes
-          type: integer
-        max_files:
-          default: 1000
-          maximum: 1000
-          minimum: 1
-          title: Max Files
-          type: integer
-      title: AnalysisOptionsDTO
-      type: object
   securitySchemes:
     ServiceToken:
       type: http

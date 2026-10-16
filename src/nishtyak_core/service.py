@@ -49,7 +49,7 @@ class ReproducibilityService:
             report = AuthorEnvironmentInspector().enrich(report, author_environment)
         findings = (
             *report.findings,
-            *ProjectInspector().inspect(snapshot),
+            *ProjectInspector().inspect(snapshot, report.layout.root if report.layout else "."),
             *self.scanner.scan(snapshot),
         )
         return replace(report, findings=findings)

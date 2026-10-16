@@ -26,7 +26,7 @@ class RequestBoundaryMiddleware:
     ) -> None:
         self.app = app
         self._token = api_token.encode("ascii")
-        self._upload_limit = max_archive_bytes + max_options_bytes + 65536
+        self._upload_limit = max_archive_bytes + max_options_bytes + 262144 + 65536
         self._json_limit = json_request_bytes
         self._capacity = max_http_requests
         self._timeout = body_timeout_seconds

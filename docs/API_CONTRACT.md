@@ -21,9 +21,12 @@ X-Owner-ID: <идентификатор пользователя из довер
 
 | Шаг | Метод и путь | Вход | Ответ |
 | --- | --- | --- | --- |
-| Загрузить | `POST /v1/projects` | multipart: один `file`, необязательный текст `options` с JSON `AnalysisOptionsDTO` | `202 SubmittedProjectDTO`: `project_id`, `job_id`, `status` |
+| Загрузить | `POST /v1/projects` | multipart: один `file`, необязательные JSON-строки `options` и `author_environment` | `202 SubmittedProjectDTO`: `project_id`, `job_id`, `status` |
 | Дождаться анализа | `GET /v1/jobs/{job_id}` | ID job | `200 JobDTO`: статус, время, отчет или ошибка задачи |
 | Получить отчет | `GET /v1/projects/{project_id}` | ID проекта | `200 ProjectReportDTO`: `project_id`, `analysis` |
+| Повторить анализ | `POST /v1/projects/{project_id}/analysis` | `{"options": {...}, "author_environment": {...}}`; среда необязательна | `202`, новый `job_id`, тот же ZIP и срок хранения |
+| Восстановить решения | `GET /v1/projects/{project_id}/decisions` | ID проекта | `{analysis_id, revision, decisions, updated_at}` |
+| Сохранить решения | `PUT /v1/projects/{project_id}/decisions` | `{"expected_revision": 0, "decisions": {...}}` | Документ с увеличенной ревизией |
 | Проверить решения | `POST /v1/projects/{project_id}/plan` | `DecisionsDTO` JSON | `200 PackagePlan`, включая `state` и `findings` |
 | Скачать результат | `POST /v1/projects/{project_id}/bundle` | `{"decisions": {...}, "include_dockerfile": false}` | `200 application/zip`, фиксированное имя `reproducible-project.zip` |
 | Получить совет | `POST /v1/projects/{project_id}/advice` | `{"feature": "explain", "description": "..."}` | `200 AdvisoryResult` |
@@ -71,7 +74,43 @@ curl --fail-with-body "$LOGIC_URL/v1/projects" \
 
 Для `/bundle` тот же объект передается в поле `decisions`. При другом `analysis_id` ответ `409 STALE_ANALYSIS`. Сервис пересчитывает план и проверяет fingerprint сохраненного ZIP, не экспортирует присланный клиентом план.
 
-В `/advice` доступны `feature`: `explain`, `readme`, `packages`. Ключ и модель задаются на сервере: `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`. При отключенном или недоступном провайдере возвращается `AdvisoryResult.status=unavailable`; экспорт остается доступен. Предложения требуют подтверждения и не меняют зависимости автоматически. Сбор среды автора и Conda сейчас доступны через Python/CLI; отдельных HTTP-ручек для них нет.
+В `/advice` доступны `feature`: `explain`, `readme`, `packages`. Ключ и модель задаются на сервере: `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`. При отключенном или недоступном провайдере возвращается `AdvisoryResult.status=unavailable`; экспорт остается доступен. Предложения требуют подтверждения и не меняют зависимости автоматически. Conda остается отдельной функцией Python/CLI. Снимок среды автора поддержан загрузкой и повторным анализом через HTTP.
+
+## Структура проекта и подготовка
+
+Отчет версии 2 содержит `layout`: выбранный `root`, фактические архивные `source_roots`, `root_candidates` и `ambiguous`. В `options.project_root` можно указать каталог внутри ZIP; `null` включает однозначный выбор. Настраиваемые `options.source_roots` относительны выбранному корню; при стандартном `["."]` каталог `src` обнаруживается автоматически. Неоднозначный проект остается `partial`: выбрать корень и вызвать повторный анализ.
+
+Пути `files`, `entrypoints` для скриптов, `excluded_files` и `run_spec.working_directory` сохраняют координаты исходного ZIP. `run_spec.target` для скрипта относителен рабочей папке, для `module` — dotted module, для `callable` — `module:attribute`. Например, ZIP с `repo-main/src/tool` использует `working_directory="repo-main"`, `kind="callable"`, `target="tool:main"`. Экспортированный `run_project.py` настраивает эти пути только при явном запуске получателем; код и build hooks не запускаются сервисом.
+
+`declarations` — отдельные исходные требования с устойчивыми `id`, файлом, строкой (если доступна), группой и PEP 508 строкой. `optional_groups` перечисляет extras, включая пустые. Решения выбирают `selected_extras` и `declaration_actions={"<id>": {"action":"keep|replace|exclude", "requirement":"..."}}`. `requirement` допустим только для `replace`. При замене сохраняются исходные markers/extras, если автор их не указал. Исключение декларации отличается от `excluded_modules`: оставшийся импорт требует явного отображения пакета либо исключения импорта. Сервис пересчитывает конфликты по эффективным требованиям, сохраняя исходные факты в `plan.report`.
+
+Снимок среды собирается **на машине автора**: `nishtyak environment > author-environment.json`. JSON содержит `python_version`, `platform`, `distributions=[{name,version,modules}]`, без переменных окружения. Передается строковым полем `author_environment` при загрузке (до 256 KiB) или объектом при повторном анализе. Report возвращает `author_environment_id`, `author_python_version`, `author_platform`. Это сведения об установленных пакетах, не доказательство запуска; существующие ограничения не перезаписываются молча.
+
+## Сохранение и повторное открытие
+
+После успешного анализа GET decisions дает `revision=0, decisions=null`. PUT принимает `expected_revision` и полный `DecisionsDTO`. Сервис проверяет решения, очищает описания от секретов и атомарно сохраняет их. Повторный GET восстанавливает документ. План остается производным: POST plan/bundle получает восстановленные решения. Несовпавшая ревизия дает `409 DECISIONS_REVISION_CONFLICT`: перечитать документ и показать изменения, не повторять запись вслепую.
+
+Повторный анализ не продлевает TTL и не требует нового ZIP. Он недоступен при активном worker/операции, создает новый `job_id`, очищает текущие решения и увеличивает ревизию; история решений в этой версии не хранится. Интерфейс должен объяснить сброс перед изменением параметров анализа. Если новая среда не передана, используется сохраненный снимок автора. После завершения получить новый отчет и сформировать решения с его `analysis_id`; старые решения дают 409. Удаление и TTL распространяются на ZIP, отчет, среду и решения.
+
+## Клиент для второго backend
+
+В wheel входит `nishtyak_client.LogicClient`, только стандартная библиотека Python. Его блокирующие вызовы переносить в thread pool асинхронного backend. Пример полного сценария: [service_client.py](../examples/service_client.py).
+
+```python
+from nishtyak_client import LogicClient
+
+client = LogicClient(internal_url, service_token, authenticated_user_id)
+project = client.submit(zip_bytes, options, author_environment)
+job = client.wait(project["job_id"])
+report = job["analysis"]
+document = client.decisions(project["project_id"])
+# UI формирует choices из report; analysis_id должен совпадать.
+saved = client.save_decisions(project["project_id"], choices, document["revision"])
+plan = client.plan(project["project_id"], saved["decisions"])
+package = client.bundle(project["project_id"], saved["decisions"])
+```
+
+Клиент передает код/поле/HTTP-статус через `LogicClientError`, не повторяет мутации автоматически и запрещает redirects, чтобы служебный ключ не ушел на другой адрес. В браузер отправляются только пользовательские данные и ZIP через второй backend. Сам frontend пока разрабатывается отдельно; его фактическое подключение не заявляется проверенным.
 
 ## Проверки состояния
 
@@ -85,7 +124,7 @@ curl --fail-with-body "$LOGIC_URL/v1/projects" \
 
 ## Ошибки и лимиты
 
-Ошибки ручек приложения имеют конверт `{code, message}`, без исходного пользовательского ввода, серверных путей и traceback. Имена моделей, поля и ограничения доступны в OpenAPI. Коды результата worker находятся в `JobDTO.error`; их не следует смешивать с ошибкой самого HTTP-запроса. HTTP-сервер или proxy могут отклонить запрос до приложения, поэтому backend также обрабатывает сетевые ошибки и ответы без JSON.
+Ошибки ручек приложения имеют конверт `{code, message, field?}`, без исходного пользовательского ввода, серверных путей и traceback. Имена моделей, поля и ограничения доступны в OpenAPI. Коды результата worker находятся в `JobDTO.error`; их не следует смешивать с ошибкой самого HTTP-запроса. HTTP-сервер или proxy могут отклонить запрос до приложения, поэтому backend также обрабатывает сетевые ошибки и ответы без JSON.
 
 | HTTP | Примеры кодов | Действие backend |
 | --- | --- | --- |
@@ -93,7 +132,7 @@ curl --fail-with-body "$LOGIC_URL/v1/projects" \
 | 401 | `UNAUTHORIZED` | Проверить серверный ключ; пользователю ключ не показывать |
 | 404 | `RESOURCE_NOT_FOUND` | Ресурс недоступен этому владельцу |
 | 408 | `BODY_TIMEOUT` | Загрузка не завершена за 30 секунд |
-| 409 | `ANALYSIS_NOT_READY`, `ANALYSIS_UNAVAILABLE`, `PROJECT_NOT_READY`, `PROJECT_BUSY`, `STALE_ANALYSIS`, `PLAN_BLOCKED` | Проверить состояние или решения |
+| 409 | `ANALYSIS_NOT_READY`, `ANALYSIS_UNAVAILABLE`, `PROJECT_NOT_READY`, `PROJECT_BUSY`, `STALE_ANALYSIS`, `ANALYSIS_STALE`, `DECISIONS_REVISION_CONFLICT`, `PLAN_BLOCKED` | Проверить состояние или решения |
 | 413 | `BODY_TOO_LARGE`, `ARCHIVE_TOO_LARGE`, `OPTIONS_TOO_LARGE`, `BUNDLE_LIMIT` | Уменьшить данные |
 | 422 | `INVALID_REQUEST`, `INVALID_UPLOAD`, `INVALID_OPTIONS`, `DECISIONS_INVALID`, `EXPORT_INVALID` | Исправить поля по схеме |
 | 429 | `HTTP_BUSY`, `RATE_LIMIT`, `OWNER_JOB_LIMIT`, `OWNER_STORAGE_LIMIT` | Повторить с задержкой, учитывать квоты владельца |

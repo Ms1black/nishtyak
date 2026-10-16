@@ -19,10 +19,12 @@ class CommandLine:
         analyze = commands.add_parser("analyze", help="Analyze a project without executing it")
         analyze.add_argument("project", type=Path)
         analyze.add_argument("--source-root", action="append")
+        analyze.add_argument("--project-root")
         analyze.add_argument("--author-environment", type=Path)
         advise = commands.add_parser("advise", help="Request optional advice from DeepSeek")
         advise.add_argument("project", type=Path)
         advise.add_argument("--source-root", action="append")
+        advise.add_argument("--project-root")
         advise.add_argument(
             "--feature", choices=("explain", "readme", "packages"), default="explain"
         )
@@ -33,16 +35,23 @@ class CommandLine:
         conda.add_argument("project", type=Path)
         build = commands.add_parser("build", help="Prepare a reproducibility bundle")
         build.add_argument("project", type=Path)
-        build.add_argument("--entry", required=True)
+        build.add_argument("--entry")
         build.add_argument("--output", type=Path, required=True)
         build.add_argument("--python", dest="python_version")
         build.add_argument("--description", default="")
         build.add_argument("--data", default="")
         build.add_argument("--expected", default="")
         build.add_argument("--source-root", action="append")
+        build.add_argument("--project-root")
+        build.add_argument("--extra", action="append", default=[])
+        build.add_argument(
+            "--decisions", type=Path, help="Reviewed decisions JSON from the service"
+        )
         build.add_argument("--author-environment", type=Path)
         build.add_argument("--cwd", default=".")
-        build.add_argument("--module", action="store_true")
+        launch_kind = build.add_mutually_exclusive_group()
+        launch_kind.add_argument("--module", action="store_true")
+        launch_kind.add_argument("--callable", action="store_true")
         build.add_argument("--docker", action="store_true")
         build.add_argument("--exclude", action="append", default=[])
         build.add_argument("--package", action="append", default=[], metavar="MODULE=REQUIREMENT")
@@ -70,7 +79,8 @@ class CommandLine:
                 return 0 if environment.complete else 1
             service = ReproducibilityService()
             options = AnalysisOptions(
-                source_roots=tuple(getattr(arguments, "source_root", None) or (".",))
+                source_roots=tuple(getattr(arguments, "source_root", None) or (".",)),
+                project_root=getattr(arguments, "project_root", None),
             )
             author_environment = None
             environment_file = getattr(arguments, "author_environment", None)
@@ -95,6 +105,8 @@ class CommandLine:
                 print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
                 return 0 if result.status == "ok" else 1
             packages = {}
+            if not arguments.entry and arguments.decisions is None:
+                raise ValueError("Supply --entry or a reviewed --decisions document")
             for value in arguments.package:
                 module, separator, requirement = value.partition("=")
                 if not separator or not module or not requirement:
@@ -106,7 +118,11 @@ class CommandLine:
                 excluded_files=tuple(arguments.exclude),
                 run_spec=RunSpec(
                     arguments.entry,
-                    kind="module" if arguments.module else "script",
+                    kind="callable"
+                    if arguments.callable
+                    else "module"
+                    if arguments.module
+                    else "script",
                     working_directory=arguments.cwd,
                 ),
                 python_version=arguments.python_version,
@@ -114,7 +130,14 @@ class CommandLine:
                 input_description=arguments.data,
                 expected_output=arguments.expected,
                 data_confirmed=bool(arguments.data),
+                selected_extras=tuple(arguments.extra),
             )
+            if arguments.decisions is not None:
+                from .decisions import DecisionsCodec
+
+                if arguments.decisions.stat().st_size > 262144:
+                    raise ValueError("Decisions document exceeds 256 KiB")
+                decisions = DecisionsCodec().decode(json.loads(arguments.decisions.read_text()))
             plan = service.prepare(report, decisions)
             artifact = BundleWriter().write(
                 snapshot,

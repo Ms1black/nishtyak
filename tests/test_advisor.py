@@ -234,7 +234,7 @@ def test_unknown_feature_or_schema_never_calls_provider(report: AnalysisReport) 
     transport = FakeTransport(response())
     advisor = service(transport)
     assert advisor.advise(report, "execute").status == "invalid_request"
-    assert advisor.advise(replace(report, schema_version=2)).status == "invalid_request"
+    assert advisor.advise(replace(report, schema_version=3)).status == "invalid_request"
     assert not transport.requests
 
 

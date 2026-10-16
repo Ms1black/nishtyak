@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 
 from nishtyak_core import ArchiveReader, ReproducibilityService
 from nishtyak_core.advisors import AdvisoryService
 from nishtyak_core.advisors.models import AdvisoryResult
 from nishtyak_core.archives import ArchiveError
+from nishtyak_core.environment import AuthorEnvironmentSnapshot
 from nishtyak_core.exporting import BundleWriter
 from nishtyak_core.models import AnalysisOptions, AnalysisReport, PackagePlan, UserDecisions
 
@@ -29,10 +31,46 @@ class LogicService:
         self.core = ReproducibilityService()
         self.advisor = advisor
 
-    def submit(self, owner: str, archive: bytes, options: AnalysisOptions) -> dict:
+    def submit(
+        self,
+        owner: str,
+        archive: bytes,
+        options: AnalysisOptions,
+        author_environment: AuthorEnvironmentSnapshot | None = None,
+    ) -> dict:
         self.repository.consume_rate(owner, "upload", 5)
-        record = self.repository.submit(owner, archive, options)
+        record = self.repository.submit(owner, archive, options, author_environment)
         return self._identity(record)
+
+    def reanalyze(
+        self,
+        owner: str,
+        project_id: str,
+        options: AnalysisOptions,
+        author_environment: AuthorEnvironmentSnapshot | None = None,
+    ) -> dict:
+        self.repository.consume_rate(owner, "upload", 5)
+        return self._identity(
+            self.repository.reanalyze(owner, project_id, options, author_environment)
+        )
+
+    def get_decisions(self, owner: str, project_id: str) -> dict:
+        self.repository.consume_rate(owner, "read", 120)
+        return self.repository.read_decisions(owner, project_id)
+
+    def save_decisions(
+        self, owner: str, project_id: str, decisions: UserDecisions, expected_revision: int
+    ) -> dict:
+        self.repository.consume_rate(owner, "plan", 30)
+        with self.repository.operation(owner, project_id) as record:
+            report = self.repository.read_report(record)
+            plan = self._prepare(report, decisions)
+            # Persist the same sanitized decisions used by the generated plan.
+            result = self.repository.save_decisions(
+                owner, project_id, report.analysis_id, expected_revision, asdict(plan.decisions)
+            )
+        self.repository.get_project(owner, project_id)
+        return result
 
     def get_job(self, owner: str, job_id: str) -> dict:
         self.repository.consume_rate(owner, "read", 120)
@@ -150,7 +188,11 @@ class LogicService:
             raise ServiceError(409, "STALE_ANALYSIS", "Decisions belong to another analysis")
         try:
             return self.core.prepare(report, decisions)
-        except (ValueError, TypeError):
+        except ValueError as error:
+            if hasattr(error, "code") and hasattr(error, "field"):
+                raise ServiceError(422, error.code, str(error), error.field) from None
+            raise ServiceError(422, "DECISIONS_INVALID", "Invalid project decisions") from None
+        except TypeError:
             raise ServiceError(422, "DECISIONS_INVALID", "Invalid project decisions") from None
 
     @staticmethod

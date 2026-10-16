@@ -1,5 +1,5 @@
 {
-  "analysis_id": "5bf6b373dcb03bb8ab58",
+  "analysis_id": "8c6e774d4b9840d00dda",
   "fingerprint": "4053f8dea9b9a5761d40",
   "options": {
     "python_version": "3.11",
@@ -7,7 +7,8 @@
       "."
     ],
     "max_source_bytes": 1000000,
-    "max_files": 1000
+    "max_files": 1000,
+    "project_root": null
   },
   "files": [
     {
@@ -131,5 +132,20 @@
   "entrypoints": [
     "main.py"
   ],
-  "schema_version": 1
+  "schema_version": 2,
+  "layout": {
+    "root": ".",
+    "source_roots": [
+      "."
+    ],
+    "root_candidates": [
+      "."
+    ],
+    "ambiguous": false
+  },
+  "declarations": [],
+  "optional_groups": [],
+  "author_environment_id": null,
+  "author_python_version": null,
+  "author_platform": null
 }

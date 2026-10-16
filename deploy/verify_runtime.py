@@ -145,7 +145,7 @@ class RuntimeVerifier:
     def __init__(self) -> None:
         self.run_id = uuid.uuid4().hex
         self.executor = DockerExecutor(
-            image=os.environ.get("NISHTYAK_ANALYZER_IMAGE", "nishtyak-analyzer:0.1.0")
+            image=os.environ.get("NISHTYAK_ANALYZER_IMAGE", "nishtyak-analyzer:0.2.0")
         )
         self.owned_names: set[str] = set()
         self.owned_jobs: list[tuple[DockerExecutor, str]] = []

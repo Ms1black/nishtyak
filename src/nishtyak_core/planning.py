@@ -10,6 +10,8 @@ from packaging.version import InvalidVersion, Version
 
 from .models import (
     AnalysisReport,
+    DeclarationDecision,
+    DependencyDeclaration,
     FileInfo,
     Finding,
     PackagePlan,
@@ -20,6 +22,13 @@ from .models import (
 )
 from .resolution import LocalModuleIndex
 from .security import SecretScanner
+
+
+class DecisionError(ValueError):
+    def __init__(self, code: str, field: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.field = field
 
 
 class PackagePlanner:
@@ -55,6 +64,7 @@ class PackagePlanner:
             "TOOL_METADATA_UNSUPPORTED",
             "AUTHOR_ENVIRONMENT_CONFLICT",
             "AUTHOR_MAPPING_CONFLICT",
+            "AUTHOR_MAPPING_AMBIGUOUS",
             "AUTHOR_VERSION_AMBIGUOUS",
             "AUTHOR_PYTHON_CONFLICT",
         }
@@ -62,17 +72,34 @@ class PackagePlanner:
 
     def prepare(self, report: AnalysisReport, decisions: UserDecisions) -> PackagePlan:
         if decisions.analysis_id != report.analysis_id:
-            raise ValueError("Decisions belong to another analysis; analyze the project again")
+            raise DecisionError(
+                "ANALYSIS_STALE",
+                "analysis_id",
+                "Decisions belong to another analysis; analyze the project again",
+            )
 
         self._validate_decisions(report, decisions)
-        included, excluded = self._select_files(report.files, decisions.excluded_files)
-        findings = list(report.findings)
+        try:
+            included, excluded = self._select_files(report.files, decisions.excluded_files)
+        except ValueError as error:
+            raise DecisionError(
+                "EXCLUDED_FILE_PATH_INVALID",
+                "excluded_files",
+                "Excluded files must be relative paths inside the project",
+            ) from error
+        findings = [
+            finding
+            for finding in report.findings
+            if not self._finding_resolved(finding, report, decisions)
+        ]
         draft = report.status != "complete"
         local_findings = self._validate_local_imports(report, included)
         findings.extend(local_findings)
         blocked = bool(local_findings)
 
         for finding in report.findings:
+            if self._finding_resolved(finding, report, decisions):
+                continue
             if finding.code == "SECRET_DETECTED":
                 if finding.path is None or finding.path not in excluded:
                     blocked = True
@@ -108,7 +135,7 @@ class PackagePlanner:
             draft = True
             findings.append(Finding("RUN_NOT_SELECTED", "Select the project launch target."))
         else:
-            run_findings = self._validate_run(run_spec, included)
+            run_findings = self._validate_run(run_spec, included, report)
             findings.extend(run_findings)
             blocked = blocked or bool(run_findings)
 
@@ -157,38 +184,104 @@ class PackagePlanner:
         )
 
     def _validate_decisions(self, report: AnalysisReport, decisions: UserDecisions) -> None:
+        declarations = {item.id: item for item in report.declarations}
+        for key, action in decisions.declaration_actions.items():
+            field = f"declaration_actions.{key}"
+            if key not in declarations:
+                raise DecisionError("DECLARATION_UNKNOWN", field, "Unknown dependency declaration")
+            if not isinstance(action, DeclarationDecision) or action.action not in {
+                "keep",
+                "replace",
+                "exclude",
+            }:
+                raise DecisionError(
+                    "DECLARATION_ACTION_INVALID", field, "Invalid declaration action"
+                )
+            if action.action == "replace":
+                self._replacement(declarations[key], action, field)
+            elif action.requirement is not None:
+                raise DecisionError(
+                    "DECLARATION_ACTION_INVALID", field, "Only replacements accept a requirement"
+                )
+        groups = set(report.optional_groups)
+        for group in decisions.selected_extras:
+            if not isinstance(group, str) or canonicalize_name(group) not in groups:
+                raise DecisionError("EXTRA_UNKNOWN", "selected_extras", "Unknown optional group")
         candidates = {candidate.module: candidate for candidate in report.dependencies}
         for module, raw_requirement in decisions.packages.items():
             if module not in candidates:
-                raise ValueError(f"Unknown import module in package decisions: {module}")
+                raise DecisionError("PACKAGE_MODULE_UNKNOWN", "packages", "Unknown import module")
             if candidates[module].category in {"local", "stdlib"}:
-                raise ValueError(f"Cannot assign an external package to {module}")
-            requirement = self._parse_requirement(raw_requirement)
+                raise DecisionError(
+                    "PACKAGE_MODULE_NOT_EXTERNAL",
+                    f"packages.{module}",
+                    "Local and standard library imports cannot be assigned external packages",
+                )
+            try:
+                requirement = self._parse_requirement(raw_requirement)
+            except ValueError as error:
+                raise DecisionError(
+                    "PACKAGE_REQUIREMENT_INVALID",
+                    f"packages.{module}",
+                    "Package override must be a valid single-line PEP 508 requirement",
+                ) from error
             if requirement.url:
-                raise ValueError("Package overrides must use package names, not direct URLs")
+                raise DecisionError(
+                    "PACKAGE_DIRECT_REFERENCE_UNSUPPORTED",
+                    f"packages.{module}",
+                    "Package overrides must use package names, not direct URLs",
+                )
 
         version_keys = set(candidates)
         for candidate in report.dependencies:
             if candidate.package:
                 version_keys.add(canonicalize_name(candidate.package))
-        for raw_requirement in (*report.declared_requirements, *decisions.packages.values()):
+        for raw_requirement in (
+            *report.declared_requirements,
+            *(item.requirement for item in report.declarations),
+            *decisions.packages.values(),
+            *(
+                action.requirement
+                for action in decisions.declaration_actions.values()
+                if action.requirement is not None
+            ),
+        ):
             try:
                 version_keys.add(canonicalize_name(Requirement(raw_requirement).name))
             except InvalidRequirement:
                 continue
         for key, value in decisions.versions.items():
             if key not in version_keys and canonicalize_name(key) not in version_keys:
-                raise ValueError(f"Unknown package in version decisions: {key}")
-            self._version_specifier(value)
+                raise DecisionError("VERSION_PACKAGE_UNKNOWN", "versions", "Unknown package")
+            try:
+                self._version_specifier(value)
+            except ValueError as error:
+                raise DecisionError(
+                    "VERSION_SPECIFIER_INVALID",
+                    f"versions.{key}",
+                    "Version override must be a valid nonempty version specifier",
+                ) from error
         if set(decisions.excluded_modules) - candidates.keys():
-            raise ValueError("Excluded modules must belong to the analysis")
+            raise DecisionError(
+                "EXCLUDED_MODULE_UNKNOWN",
+                "excluded_modules",
+                "Excluded modules must belong to the analysis",
+            )
         if decisions.python_version is not None:
             try:
                 version = Version(decisions.python_version)
-            except InvalidVersion as error:
-                raise ValueError("Invalid Python version") from error
-            if version.major != 3 or version.is_prerelease or version.local:
-                raise ValueError("Choose a stable Python 3 version")
+            except (InvalidVersion, TypeError) as error:
+                raise DecisionError(
+                    "PYTHON_VERSION_INVALID", "python_version", "Invalid Python version"
+                ) from error
+            if (
+                not re.fullmatch(r"3\.\d+(?:\.\d+)?", decisions.python_version)
+                or version.is_prerelease
+                or version.local
+            ):
+                raise DecisionError(
+                    "PYTHON_VERSION_INVALID", "python_version", "Choose a stable Python 3 version"
+                )
 
     def _requirements(
         self, report: AnalysisReport, decisions: UserDecisions
@@ -197,8 +290,30 @@ class PackagePlanner:
         findings: list[Finding] = []
         unresolved = False
         declared_names: set[str] = set()
+        removed_names: set[str] = set()
+        declaration_values: list[str] = []
+        selected = {canonicalize_name(group) for group in decisions.selected_extras}
+        if report.declarations:
+            for declaration in report.declarations:
+                original = self._parse_requirement(declaration.requirement)
+                action = decisions.declaration_actions.get(declaration.id, DeclarationDecision())
+                if (
+                    declaration.group is not None and declaration.group not in selected
+                ) or action.action == "exclude":
+                    removed_names.add(canonicalize_name(original.name))
+                    continue
+                effective = (
+                    self._replacement(declaration, action, f"declaration_actions.{declaration.id}")
+                    if action.action == "replace"
+                    else original
+                )
+                if canonicalize_name(effective.name) != canonicalize_name(original.name):
+                    removed_names.add(canonicalize_name(original.name))
+                declaration_values.append(str(effective))
+        else:
+            declaration_values.extend(report.declared_requirements)
 
-        for raw_requirement in report.declared_requirements:
+        for raw_requirement in declaration_values:
             try:
                 requirement = self._parse_requirement(raw_requirement)
             except ValueError:
@@ -229,6 +344,23 @@ class PackagePlanner:
                 continue
             override = decisions.packages.get(candidate.module)
             raw_requirement = override or candidate.requirement or candidate.package
+            mapped_name = canonicalize_name(candidate.package or candidate.module)
+            if not override and mapped_name in removed_names and mapped_name not in declared_names:
+                if candidate.evidence_ids:
+                    unresolved = True
+                    findings.append(
+                        Finding(
+                            "DECLARATION_IMPORT_UNRESOLVED",
+                            f"Import {candidate.module} still needs a package after its "
+                            "declaration "
+                            "was removed or its optional group was not selected. Map it explicitly "
+                            "or exclude the import.",
+                            evidence_ids=candidate.evidence_ids,
+                        )
+                    )
+                continue
+            if not raw_requirement and mapped_name in declared_names:
+                continue
             if not raw_requirement:
                 unresolved = True
                 findings.append(
@@ -253,10 +385,20 @@ class PackagePlanner:
                 continue
             name = canonicalize_name(requirement.name)
             if not override and name in declared_names:
-                if candidate.module in decisions.versions:
-                    for declared in requirements.values():
-                        if canonicalize_name(declared.name) == name:
+                changed = False
+                for declared in requirements.values():
+                    if canonicalize_name(declared.name) == name:
+                        if candidate.module in decisions.versions:
                             self._apply_version(declared, decisions.versions, candidate.module)
+                            changed = True
+                        elif (
+                            candidate.status == "author_environment"
+                            and not declared.specifier
+                            and requirement.specifier
+                        ):
+                            declared.specifier = requirement.specifier
+                            changed = True
+                if changed:
                     requirements = {str(item): item for item in requirements.values()}
                 continue
             if override and candidate.requirement:
@@ -287,15 +429,14 @@ class PackagePlanner:
                     )
                 )
 
-        groups: dict[tuple[str, str, tuple[str, ...]], list[Requirement]] = {}
+        groups: dict[tuple[str, str], list[Requirement]] = {}
         for requirement in requirements.values():
             key = (
                 canonicalize_name(requirement.name),
                 str(requirement.marker or ""),
-                tuple(sorted(requirement.extras)),
             )
             groups.setdefault(key, []).append(requirement)
-        for (name, _, _), group in groups.items():
+        for (name, _), group in groups.items():
             pinned = {
                 Version(spec.version)
                 for requirement in group
@@ -317,6 +458,71 @@ class PackagePlanner:
 
         return sorted(requirements, key=str.casefold), findings, unresolved
 
+    def _replacement(
+        self, declaration: DependencyDeclaration, action: DeclarationDecision, field: str
+    ) -> Requirement:
+        try:
+            replacement = self._parse_requirement(action.requirement)
+            if replacement.url:
+                raise ValueError("Direct references are unsupported")
+        except ValueError as error:
+            raise DecisionError(
+                "DECLARATION_REQUIREMENT_INVALID",
+                field + ".requirement",
+                "Replacement must be a named PEP 508 requirement",
+            ) from error
+        original = self._parse_requirement(declaration.requirement)
+        if replacement.marker is None:
+            replacement.marker = original.marker
+        if not replacement.extras:
+            replacement.extras = original.extras
+        return replacement
+
+    @staticmethod
+    def _finding_resolved(
+        finding: Finding, report: AnalysisReport, decisions: UserDecisions
+    ) -> bool:
+        if finding.code == "DEPENDENCY_CONFLICT":
+            return True
+        if finding.code == "OPTIONAL_DEPENDENCIES_UNSELECTED":
+            return True
+        if finding.code == "AUTHOR_PYTHON_CONFLICT":
+            return decisions.python_version is not None
+        if finding.code not in {
+            "AUTHOR_ENVIRONMENT_CONFLICT",
+            "AUTHOR_VERSION_AMBIGUOUS",
+            "AUTHOR_MAPPING_CONFLICT",
+            "AUTHOR_MAPPING_AMBIGUOUS",
+        }:
+            return False
+        candidates = [
+            candidate
+            for candidate in report.dependencies
+            if {candidate.id, *candidate.evidence_ids} & set(finding.evidence_ids)
+        ]
+        if not candidates:
+            return False
+        versions = {canonicalize_name(key) for key in decisions.versions}
+        changed = {
+            canonicalize_name(Requirement(declaration.requirement).name)
+            for declaration in report.declarations
+            if declaration.id in decisions.declaration_actions
+            and decisions.declaration_actions[declaration.id].action != "keep"
+        }
+        for candidate in candidates:
+            if candidate.module in decisions.excluded_modules:
+                continue
+            if candidate.module in decisions.packages:
+                continue
+            if finding.code in {"AUTHOR_MAPPING_CONFLICT", "AUTHOR_MAPPING_AMBIGUOUS"}:
+                return False
+            if canonicalize_name(candidate.module) in versions:
+                continue
+            package = canonicalize_name(candidate.package or candidate.module)
+            if package not in versions and package not in changed:
+                return False
+        return True
+
     def _apply_version(
         self, requirement: Requirement, versions: dict[str, str], module: str | None = None
     ) -> None:
@@ -326,7 +532,11 @@ class PackagePlanner:
             value = normalized.get(canonicalize_name(requirement.name))
         if value is not None:
             if requirement.url:
-                raise ValueError("Cannot set a version on a direct-reference requirement")
+                raise DecisionError(
+                    "VERSION_DIRECT_REFERENCE_UNSUPPORTED",
+                    "versions",
+                    "Cannot set a version on a direct-reference requirement",
+                )
             requirement.specifier = self._version_specifier(value)
 
     @staticmethod
@@ -340,7 +550,11 @@ class PackagePlanner:
 
     @staticmethod
     def _version_specifier(value: str) -> SpecifierSet:
-        if not isinstance(value, str) or not value.strip():
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or any(ord(character) < 32 for character in value)
+        ):
             raise ValueError("A version override cannot be empty")
         if value[0].isdigit():
             value = f"=={value}"
@@ -402,11 +616,11 @@ class PackagePlanner:
     ) -> list[Finding]:
         original = LocalModuleIndex(
             ProjectSnapshot(tuple(SourceFile(file.path, b"") for file in report.files), ""),
-            report.options.source_roots,
+            report.layout.source_roots if report.layout else report.options.source_roots,
         )
         retained = LocalModuleIndex(
             ProjectSnapshot(tuple(SourceFile(file.path, b"") for file in included), ""),
-            report.options.source_roots,
+            report.layout.source_roots if report.layout else report.options.source_roots,
         )
         included_paths = {file.path for file in included}
         original_providers = set(original.file_modules.values())
@@ -469,37 +683,103 @@ class PackagePlanner:
             raise ValueError("A file path cannot be the project root")
         return str(path)
 
-    def _validate_run(self, run_spec: RunSpec, files: tuple[FileInfo, ...]) -> list[Finding]:
+    def _validate_run(
+        self, run_spec: RunSpec, files: tuple[FileInfo, ...], report: AnalysisReport
+    ) -> list[Finding]:
         scanner = SecretScanner()
         values = (run_spec.target, run_spec.working_directory, *run_spec.args)
         if any(isinstance(value, str) and scanner.redact(value) != value for value in values):
-            raise ValueError("Launch settings must not contain credentials")
+            raise DecisionError(
+                "RUN_CREDENTIALS_UNSUPPORTED",
+                "run_spec",
+                "Launch settings must not contain credentials",
+            )
         credential_flags = {"--token", "--password", "--api-key", "--api_key", "--secret"}
         for index, argument in enumerate(run_spec.args):
             if not isinstance(argument, str):
-                raise ValueError("Launch arguments must be single-line strings")
+                raise DecisionError(
+                    "RUN_ARGUMENT_INVALID",
+                    "run_spec.args",
+                    "Launch arguments must be single-line strings",
+                )
             flag, separator, _ = argument.partition("=")
             if flag.lower() in credential_flags and (separator or index + 1 < len(run_spec.args)):
-                raise ValueError("Launch arguments must not contain credentials")
-        if run_spec.kind not in {"script", "module"}:
-            raise ValueError("Launch kind must be script or module")
-        cwd = self._safe_path(run_spec.working_directory, allow_dot=True)
+                raise DecisionError(
+                    "RUN_CREDENTIALS_UNSUPPORTED",
+                    "run_spec.args",
+                    "Launch arguments must not contain credentials",
+                )
+        if run_spec.kind not in {"script", "module", "callable"}:
+            raise DecisionError(
+                "RUN_KIND_INVALID",
+                "run_spec.kind",
+                "Launch kind must be script, module or callable",
+            )
+        try:
+            cwd = self._safe_path(run_spec.working_directory, allow_dot=True)
+        except ValueError as error:
+            raise DecisionError(
+                "RUN_DIRECTORY_INVALID",
+                "run_spec.working_directory",
+                "Working directory must be a relative path inside the project",
+            ) from error
         if any(
             not isinstance(arg, str) or any(ord(char) < 32 for char in arg) for arg in run_spec.args
         ):
-            raise ValueError("Launch arguments must be single-line strings")
+            raise DecisionError(
+                "RUN_ARGUMENT_INVALID",
+                "run_spec.args",
+                "Launch arguments must be single-line strings",
+            )
         included = {file.path for file in files}
         base = PurePosixPath(cwd)
+        if cwd != "." and not any(path.startswith(cwd + "/") for path in included):
+            return [
+                Finding(
+                    "RUN_WORKING_DIRECTORY_MISSING",
+                    "The selected working directory is absent from included project files.",
+                    severity="error",
+                )
+            ]
         if run_spec.kind == "script":
-            target = self._safe_path(run_spec.target)
+            try:
+                target = self._safe_path(run_spec.target)
+            except ValueError as error:
+                raise DecisionError(
+                    "RUN_TARGET_INVALID",
+                    "run_spec.target",
+                    "Script target must be a relative path inside the project",
+                ) from error
             if not target.endswith(".py"):
-                raise ValueError("The script target must be a Python file")
+                raise DecisionError(
+                    "RUN_TARGET_INVALID",
+                    "run_spec.target",
+                    "The script target must be a Python file",
+                )
             found = str(base / target) in included
         else:
-            if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", run_spec.target):
-                raise ValueError("Invalid Python module target")
-            module = base.joinpath(*run_spec.target.split("."))
-            found = str(module) + ".py" in included or str(module / "__main__.py") in included
+            target = run_spec.target
+            if run_spec.kind == "callable":
+                target, separator, attribute = target.partition(":")
+                if not separator or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", attribute):
+                    raise DecisionError(
+                        "RUN_TARGET_INVALID",
+                        "run_spec.target",
+                        "Callable target must be module:attribute",
+                    )
+            if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", target):
+                raise DecisionError(
+                    "RUN_TARGET_INVALID", "run_spec.target", "Invalid Python module target"
+                )
+            roots = report.layout.source_roots if report.layout else report.options.source_roots
+            found = False
+            for root in set((cwd, *roots)):
+                module = PurePosixPath(root).joinpath(*target.split("."))
+                candidates = {str(module) + ".py"}
+                candidates.add(
+                    str(module / ("__init__.py" if run_spec.kind == "callable" else "__main__.py"))
+                )
+                found = found or bool(candidates & included)
         if not found:
             return [
                 Finding(

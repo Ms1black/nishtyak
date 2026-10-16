@@ -14,6 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Protocol
 
+from nishtyak_core.environment import AuthorEnvironmentSnapshot
 from nishtyak_core.jobs import AnalysisJobResult, AnalysisJobRunner, JobPolicy
 from nishtyak_core.models import AnalysisOptions
 from nishtyak_core.report_codec import bounded_json
@@ -22,6 +23,7 @@ from nishtyak_core.report_codec import bounded_json
 class AnalysisJob(Protocol):
     job_id: str
     options: AnalysisOptions
+    author_environment: AuthorEnvironmentSnapshot | None
 
 
 class JobExecutor(Protocol):
@@ -60,8 +62,14 @@ class SubprocessExecutor(AnalysisJobRunner):
                 root = Path(directory)
                 options_path, result_path = root / "options.json", root / "result.json"
                 options_path.write_bytes(bounded_json(asdict(options), 64 * 1024))
+                command = self._command(archive, options_path, result_path)
+                environment = self._encode_environment(getattr(record, "author_environment", None))
+                if environment is not None:
+                    environment_path = root / "author-environment.json"
+                    environment_path.write_bytes(environment)
+                    command.extend(["--author-environment", str(environment_path)])
                 process = subprocess.Popen(
-                    self._command(archive, options_path, result_path),
+                    command,
                     cwd=root,
                     env=self._environment(root),
                     stdin=subprocess.DEVNULL,
@@ -127,7 +135,7 @@ class SubprocessExecutor(AnalysisJobRunner):
 class DockerExecutor:
     """Host-side launcher. The API container must never receive the Docker socket."""
 
-    def __init__(self, policy: JobPolicy | None = None, image: str = "nishtyak-analyzer:0.1.0"):
+    def __init__(self, policy: JobPolicy | None = None, image: str = "nishtyak-analyzer:0.2.0"):
         if not image or image.startswith("-") or any(char.isspace() for char in image):
             raise ValueError("A configured analyzer image is required")
         self.policy = policy or JobPolicy()
@@ -202,8 +210,15 @@ class DockerExecutor:
             if archive.stat().st_size > 10 * 1024 * 1024:
                 return AnalysisJobResult("failed", code="ARCHIVE_LIMIT")
             options = self._reader._codec.decode_options(asdict(record.options))
+            environment = self._reader._encode_environment(
+                getattr(record, "author_environment", None)
+            )
             deadline = time.monotonic() + self.policy.wall_time_seconds
-            outcome = self._create(record.job_id, options, cancel_event, deadline)
+            outcome = (
+                self._create(record.job_id, options, cancel_event, deadline, True)
+                if environment is not None
+                else self._create(record.job_id, options, cancel_event, deadline)
+            )
             if outcome is not None:
                 self.cleanup(record.job_id)
                 return outcome
@@ -212,7 +227,17 @@ class DockerExecutor:
                 return AnalysisJobResult("failed", code="JOB_CANCELLED")
             with tempfile.TemporaryDirectory(prefix="nishtyak-docker-job-") as directory:
                 result_path = Path(directory) / "result.json"
-                with archive.open("rb") as source, result_path.open("xb") as output:
+                input_path = archive
+                if environment is not None:
+                    input_path = Path(directory) / "request.bin"
+                    with input_path.open("xb") as stream, archive.open("rb") as original:
+                        stream.write(len(environment).to_bytes(4, "big"))
+                        stream.write(environment)
+                        content = original.read(10 * 1024 * 1024 + 1)
+                        if len(content) > 10 * 1024 * 1024:
+                            raise ValueError("Archive exceeds its limit")
+                        stream.write(content)
+                with input_path.open("rb") as source, result_path.open("xb") as output:
                     process = subprocess.Popen(
                         self._start_command(record.job_id),
                         stdin=source,
@@ -261,11 +286,15 @@ class DockerExecutor:
         except (OSError, ValueError):
             failed.set()
 
-    def _create(self, job_id, options, cancel_event, deadline) -> AnalysisJobResult | None:
+    def _create(
+        self, job_id, options, cancel_event, deadline, author_environment_stdin=False
+    ) -> AnalysisJobResult | None:
         # A late daemon response can leave an inert created container, but can never
         # start one: starting requires a separate acknowledged create operation.
         process = subprocess.Popen(
-            self._command(job_id, options),
+            self._command(job_id, options, True)
+            if author_environment_stdin
+            else self._command(job_id, options),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -393,9 +422,11 @@ class DockerExecutor:
             raise subprocess.TimeoutExpired(command, 0)
         return subprocess.run(command, capture_output=True, timeout=min(remaining, 5), check=False)
 
-    def _command(self, job_id: str, options: AnalysisOptions) -> list[str]:
+    def _command(
+        self, job_id: str, options: AnalysisOptions, author_environment_stdin: bool = False
+    ) -> list[str]:
         options_json = bounded_json(asdict(options), 64 * 1024).decode("utf-8")
-        return [
+        command = [
             "docker",
             "create",
             "--interactive",
@@ -446,3 +477,6 @@ class DockerExecutor:
             "--max-open-files",
             str(self.policy.max_open_files),
         ]
+        if author_environment_stdin:
+            command.append("--author-environment-stdin")
+        return command

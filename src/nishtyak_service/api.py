@@ -18,11 +18,15 @@ from .config import Settings
 from .dto import (
     AdviceDTO,
     AnalysisOptionsDTO,
+    AuthorEnvironmentDTO,
     BundleDTO,
+    DecisionDocumentDTO,
     DecisionsDTO,
     ErrorDTO,
     JobDTO,
     ProjectReportDTO,
+    ReanalyzeDTO,
+    SaveDecisionsDTO,
     SubmittedProjectDTO,
 )
 from .errors import ServiceError
@@ -46,7 +50,7 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
         raise ValueError("A service API token of 32 to 512 ASCII characters is required")
     app = FastAPI(
         title="Nishtyak logic service",
-        version="1.0.0",
+        version="1.1.0",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -67,12 +71,21 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
         headers = {"Cache-Control": "no-store"}
         if error.status in (429, 503):
             headers["Retry-After"] = "2"
-        return JSONResponse({"code": error.code, "message": error.message}, error.status, headers)
+        payload = {"code": error.code, "message": error.message}
+        if error.field is not None:
+            payload["field"] = error.field
+        return JSONResponse(payload, error.status, headers)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
+        location = error.errors()[0].get("loc", ()) if error.errors() else ()
+        field = ".".join(str(part) for part in location if part != "body")
         return JSONResponse(
-            {"code": "INVALID_REQUEST", "message": "Request does not match the API schema"},
+            {
+                "code": "INVALID_REQUEST",
+                "message": "Request does not match the API schema",
+                "field": field or None,
+            },
             422,
             {"Cache-Control": "no-store"},
         )
@@ -127,6 +140,18 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
                                         "$ref": "#/components/schemas/AnalysisOptionsDTO"
                                     },
                                 },
+                                "author_environment": {
+                                    "type": "string",
+                                    "description": (
+                                        "Author's local Python/package metadata JSON; "
+                                        "at most 256 KiB"
+                                    ),
+                                    "maxLength": 262144,
+                                    "contentMediaType": "application/json",
+                                    "contentSchema": {
+                                        "$ref": "#/components/schemas/AuthorEnvironmentDTO"
+                                    },
+                                },
                             },
                         }
                     }
@@ -136,10 +161,8 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
     )
     async def submit(request: Request) -> dict[str, Any]:
         try:
-            async with request.form(
-                max_files=1, max_fields=1, max_part_size=settings.max_options_bytes
-            ) as form:
-                if set(form) - {"file", "options"} or any(
+            async with request.form(max_files=1, max_fields=2, max_part_size=262144) as form:
+                if set(form) - {"file", "options", "author_environment"} or any(
                     len(form.getlist(name)) != 1 for name in form
                 ):
                     raise ServiceError(
@@ -154,6 +177,34 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
                 if len(raw_options.encode("utf-8")) > settings.max_options_bytes:
                     raise ServiceError(413, "OPTIONS_TOO_LARGE", "Analysis options too large")
                 options = AnalysisOptionsDTO.model_validate_json(raw_options).to_core()
+                raw_environment = form.get("author_environment")
+                author_environment = None
+                if raw_environment is not None:
+                    if not isinstance(raw_environment, str):
+                        raise ServiceError(
+                            422,
+                            "AUTHOR_ENVIRONMENT_INVALID",
+                            "Author metadata must be JSON text",
+                            "author_environment",
+                        )
+                    if len(raw_environment.encode("utf-8")) > 262144:
+                        raise ServiceError(
+                            413,
+                            "AUTHOR_ENVIRONMENT_LIMIT",
+                            "Author metadata exceeds 256 KiB",
+                            "author_environment",
+                        )
+                    try:
+                        author_environment = AuthorEnvironmentDTO.model_validate_json(
+                            raw_environment
+                        ).to_core()
+                    except ValueError:
+                        raise ServiceError(
+                            422,
+                            "AUTHOR_ENVIRONMENT_INVALID",
+                            "Invalid author environment metadata",
+                            "author_environment",
+                        ) from None
                 archive = await upload.read(settings.max_archive_bytes + 1)
                 if len(archive) > settings.max_archive_bytes:
                     raise ServiceError(413, "ARCHIVE_TOO_LARGE", "Archive too large")
@@ -161,7 +212,11 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
             raise ServiceError(422, "INVALID_OPTIONS", "Invalid analysis options") from error
         except HTTPException as error:
             raise ServiceError(400, "INVALID_MULTIPART", "Invalid multipart upload") from error
-        return await run_in_threadpool(logic.submit, request.state.owner_id, archive, options)
+        if author_environment is None:
+            return await run_in_threadpool(logic.submit, request.state.owner_id, archive, options)
+        return await run_in_threadpool(
+            logic.submit, request.state.owner_id, archive, options, author_environment
+        )
 
     @app.get("/v1/jobs/{job_id}", response_model=JobDTO, responses=ERROR_RESPONSES)
     async def get_job(request: Request, job_id: ProjectId) -> dict[str, Any]:
@@ -177,6 +232,52 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
     async def delete_project(request: Request, project_id: ProjectId) -> Response:
         await run_in_threadpool(logic.delete, request.state.owner_id, project_id)
         return Response(status_code=204)
+
+    @app.post(
+        "/v1/projects/{project_id}/analysis",
+        status_code=202,
+        response_model=SubmittedProjectDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def reanalyze(
+        request: Request, project_id: ProjectId, body: ReanalyzeDTO
+    ) -> dict[str, Any]:
+        try:
+            environment = body.author_environment.to_core() if body.author_environment else None
+        except ValueError:
+            raise ServiceError(
+                422,
+                "AUTHOR_ENVIRONMENT_INVALID",
+                "Invalid author environment metadata",
+                "author_environment",
+            ) from None
+        return await run_in_threadpool(
+            logic.reanalyze, request.state.owner_id, project_id, body.options.to_core(), environment
+        )
+
+    @app.get(
+        "/v1/projects/{project_id}/decisions",
+        response_model=DecisionDocumentDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def get_decisions(request: Request, project_id: ProjectId) -> dict[str, Any]:
+        return await run_in_threadpool(logic.get_decisions, request.state.owner_id, project_id)
+
+    @app.put(
+        "/v1/projects/{project_id}/decisions",
+        response_model=DecisionDocumentDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def save_decisions(
+        request: Request, project_id: ProjectId, body: SaveDecisionsDTO
+    ) -> dict[str, Any]:
+        return await run_in_threadpool(
+            logic.save_decisions,
+            request.state.owner_id,
+            project_id,
+            body.decisions.to_core(),
+            body.expected_revision,
+        )
 
     @app.post(
         "/v1/projects/{project_id}/plan", response_model=PackagePlan, responses=ERROR_RESPONSES

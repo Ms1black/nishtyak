@@ -39,11 +39,13 @@ class AuthorEnvironmentSnapshot:
     def from_dict(cls, value: dict[str, Any]) -> AuthorEnvironmentSnapshot:
         if not isinstance(value, dict):
             raise ValueError("Author environment must be an object")
+        if set(value) - {"python_version", "platform", "distributions", "findings"}:
+            raise ValueError("Unknown author environment fields")
         python_version = value.get("python_version")
         platform_name = value.get("platform")
         distributions = value.get("distributions")
         try:
-            if not isinstance(python_version, str):
+            if not isinstance(python_version, str) or len(python_version) > 32:
                 raise ValueError("Invalid Python version")
             parsed_version = Version(python_version)
             if parsed_version.major != 3:
@@ -62,18 +64,29 @@ class AuthorEnvironmentSnapshot:
         for distribution in distributions:
             if not isinstance(distribution, dict):
                 raise ValueError("Installed distribution must be an object")
+            if set(distribution) - {"name", "version", "modules"}:
+                raise ValueError("Unknown installed distribution fields")
             name, version = distribution.get("name"), distribution.get("version")
             modules = distribution.get("modules", [])
-            if not isinstance(name, str) or not AuthorEnvironmentInspector.NAME.fullmatch(name):
+            if (
+                not isinstance(name, str)
+                or len(name) > 200
+                or not AuthorEnvironmentInspector.NAME.fullmatch(name)
+            ):
                 raise ValueError("Installed distribution name is invalid")
             try:
-                if not isinstance(version, str):
+                if not isinstance(version, str) or len(version) > 128:
                     raise ValueError("Installed version is invalid")
                 Version(version)
             except InvalidVersion as error:
                 raise ValueError("Installed version is invalid") from error
-            if not isinstance(modules, (list, tuple)) or not all(
-                isinstance(module, str) and module.isidentifier() for module in modules
+            if (
+                not isinstance(modules, (list, tuple))
+                or len(modules) > 1000
+                or not all(
+                    isinstance(module, str) and len(module) <= 200 and module.isidentifier()
+                    for module in modules
+                )
             ):
                 raise ValueError("Installed module names are invalid")
             parsed.append(InstalledDistribution(name, version, tuple(sorted(set(modules)))))
@@ -263,8 +276,11 @@ class AuthorEnvironmentInspector:
             analysis_id=stable_id(report.analysis_id, "author-environment-v1", snapshot.id),
             dependencies=tuple(dependencies),
             findings=tuple({finding.id: finding for finding in findings}.values()),
+            author_environment_id=snapshot.id,
+            author_python_version=snapshot.python_version,
+            author_platform=snapshot.platform,
         )
 
     @staticmethod
     def _finding(code: str, message: str, candidate: DependencyCandidate) -> Finding:
-        return Finding(code, message, evidence_ids=candidate.evidence_ids)
+        return Finding(code, message, evidence_ids=(candidate.id, *candidate.evidence_ids))

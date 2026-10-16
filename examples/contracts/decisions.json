@@ -1,5 +1,5 @@
 {
-  "analysis_id": "5bf6b373dcb03bb8ab58",
+  "analysis_id": "8c6e774d4b9840d00dda",
   "packages": {},
   "versions": {},
   "excluded_modules": [],
@@ -14,5 +14,7 @@
   "description": "",
   "input_description": "data.csv contains the values 2, 4 and 6.",
   "expected_output": "mean=4.00",
-  "data_confirmed": true
+  "data_confirmed": true,
+  "selected_extras": [],
+  "declaration_actions": {}
 }
