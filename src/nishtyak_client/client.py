@@ -128,13 +128,64 @@ class LogicClient:
         body = {"decisions": decisions, "expected_revision": expected_revision}
         return self._request("PUT", self._project_path(project_id) + "/decisions", self._json(body))
 
-    def plan(self, project_id: str, decisions: dict) -> dict:
+    def plan(self, project_id: str, decisions: dict | None = None) -> dict:
         return self._request(
-            "POST", self._project_path(project_id) + "/plan", self._json(decisions)
+            "POST",
+            self._project_path(project_id) + "/plan",
+            self._json(decisions) if decisions else None,
         )
 
-    def bundle(self, project_id: str, decisions: dict, include_dockerfile: bool = False) -> bytes:
+    def preparation(self, project_id: str) -> dict:
+        return self._request("GET", self._project_path(project_id) + "/preparation")
+
+    def graph(self, project_id: str) -> dict:
+        return self._request("GET", self._project_path(project_id) + "/graph")
+
+    def project_advice(
+        self,
+        project_id: str,
+        feature: str = "explain",
+        description: str = "",
+        *,
+        share_source: bool = False,
+    ) -> dict:
+        if share_source is not True:
+            raise ValueError("Explicit source sharing is required for project advice")
+        body = {"feature": feature, "description": description, "share_source": True}
+        return self._request(
+            "POST",
+            self._project_path(project_id) + "/project-advice",
+            self._json(body),
+            timeout=max(self.timeout, 30),
+        )
+
+    def resolve(
+        self, project_id: str, python_version: str, platform: str, decisions: dict | None = None
+    ) -> dict:
+        body = {
+            "target": {"python_version": python_version, "platform": platform},
+            "decisions": decisions,
+        }
+        return self._request(
+            "POST",
+            self._project_path(project_id) + "/resolve",
+            self._json(body),
+            timeout=max(self.timeout, 60),
+        )
+
+    def lock(self, project_id: str) -> dict:
+        return self._request("GET", self._project_path(project_id) + "/lock")
+
+    def bundle(
+        self,
+        project_id: str,
+        decisions: dict | None = None,
+        include_dockerfile: bool = False,
+        lock_id: str | None = None,
+    ) -> bytes:
         body = {"decisions": decisions, "include_dockerfile": include_dockerfile}
+        if lock_id is not None:
+            body["lock_id"] = lock_id
         return self._request(
             "POST", self._project_path(project_id) + "/bundle", self._json(body), binary=True
         )
@@ -149,6 +200,7 @@ class LogicClient:
         body: bytes | None = None,
         content_type: str = "application/json",
         binary: bool = False,
+        timeout: float | None = None,
     ) -> Any:
         headers = {
             "Authorization": "Bearer " + self._token,
@@ -159,7 +211,7 @@ class LogicClient:
             headers["Content-Type"] = content_type
         request = Request(self.base_url + path, body, headers, method=method)
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
+            with self._opener.open(request, timeout=timeout or self.timeout) as response:
                 maximum = 80 * 1024 * 1024 if binary else 32 * 1024 * 1024
                 payload = response.read(maximum + 1)
                 if len(payload) > maximum:

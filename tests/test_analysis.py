@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import sys
 
 import pytest
 
@@ -188,7 +187,7 @@ def test_source_roots_cannot_escape_snapshot(root):
 
 def test_unsupported_python_profile_is_partial_and_never_claims_host_modules_are_known():
     snapshot = project(**{"main.py": "import os\nimport pandas\n"})
-    version = "3.12" if sys.version_info[:2] != (3, 12) else "3.11"
+    version = "3.99"
     report = ProjectAnalyzer().analyze(snapshot, AnalysisOptions(python_version=version))
     assert report.status == "partial"
     assert {d.module: d.category for d in report.dependencies} == {

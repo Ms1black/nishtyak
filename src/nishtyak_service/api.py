@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Annotated, Any
 
 from fastapi import FastAPI, Path, Request
@@ -11,7 +12,9 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse, Response
 
+from nishtyak_core.advisors import ProjectAdvisoryResult
 from nishtyak_core.advisors.models import AdvisoryResult
+from nishtyak_core.locking import DependencyLock, ResolutionTarget
 from nishtyak_core.models import PackagePlan
 
 from .config import Settings
@@ -23,9 +26,13 @@ from .dto import (
     DecisionDocumentDTO,
     DecisionsDTO,
     ErrorDTO,
+    ImportGraphDTO,
     JobDTO,
+    PreparationDTO,
+    ProjectAdviceDTO,
     ProjectReportDTO,
     ReanalyzeDTO,
+    ResolveDTO,
     SaveDecisionsDTO,
     SubmittedProjectDTO,
 )
@@ -50,7 +57,7 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
         raise ValueError("A service API token of 32 to 512 ASCII characters is required")
     app = FastAPI(
         title="Nishtyak logic service",
-        version="1.1.0",
+        version="1.2.0",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -176,7 +183,8 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
                     )
                 if len(raw_options.encode("utf-8")) > settings.max_options_bytes:
                     raise ServiceError(413, "OPTIONS_TOO_LARGE", "Analysis options too large")
-                options = AnalysisOptionsDTO.model_validate_json(raw_options).to_core()
+                requested_options = AnalysisOptionsDTO.model_validate_json(raw_options)
+                options = requested_options.to_core()
                 raw_environment = form.get("author_environment")
                 author_environment = None
                 if raw_environment is not None:
@@ -205,6 +213,13 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
                             "Invalid author environment metadata",
                             "author_environment",
                         ) from None
+                    if "python_version" not in requested_options.model_fields_set:
+                        options = replace(
+                            options,
+                            python_version=".".join(
+                                author_environment.python_version.split(".")[:2]
+                            ),
+                        )
                 archive = await upload.read(settings.max_archive_bytes + 1)
                 if len(archive) > settings.max_archive_bytes:
                     raise ServiceError(413, "ARCHIVE_TOO_LARGE", "Archive too large")
@@ -283,11 +298,60 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
         "/v1/projects/{project_id}/plan", response_model=PackagePlan, responses=ERROR_RESPONSES
     )
     async def plan(
-        request: Request, project_id: ProjectId, decisions: DecisionsDTO
+        request: Request, project_id: ProjectId, decisions: DecisionsDTO | None = None
     ) -> dict[str, Any]:
         return await run_in_threadpool(
-            logic.plan, request.state.owner_id, project_id, decisions.to_core()
+            logic.plan,
+            request.state.owner_id,
+            project_id,
+            decisions.to_core() if decisions else None,
         )
+
+    @app.get(
+        "/v1/projects/{project_id}/preparation",
+        response_model=PreparationDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def preparation(request: Request, project_id: ProjectId) -> dict[str, Any]:
+        return await run_in_threadpool(logic.preparation, request.state.owner_id, project_id)
+
+    @app.get(
+        "/v1/projects/{project_id}/graph", response_model=ImportGraphDTO, responses=ERROR_RESPONSES
+    )
+    async def graph(request: Request, project_id: ProjectId) -> dict[str, Any]:
+        return await run_in_threadpool(logic.graph, request.state.owner_id, project_id)
+
+    @app.post(
+        "/v1/projects/{project_id}/project-advice",
+        response_model=ProjectAdvisoryResult,
+        responses=ERROR_RESPONSES,
+    )
+    async def project_advice(
+        request: Request, project_id: ProjectId, body: ProjectAdviceDTO
+    ) -> dict[str, Any]:
+        return await run_in_threadpool(
+            logic.project_advice, request.state.owner_id, project_id, body.feature, body.description
+        )
+
+    @app.post(
+        "/v1/projects/{project_id}/resolve",
+        response_model=DependencyLock,
+        responses=ERROR_RESPONSES,
+    )
+    async def resolve(request: Request, project_id: ProjectId, body: ResolveDTO) -> dict[str, Any]:
+        return await run_in_threadpool(
+            logic.resolve,
+            request.state.owner_id,
+            project_id,
+            ResolutionTarget(**body.target.model_dump()),
+            body.decisions.to_core() if body.decisions else None,
+        )
+
+    @app.get(
+        "/v1/projects/{project_id}/lock", response_model=DependencyLock, responses=ERROR_RESPONSES
+    )
+    async def get_lock(request: Request, project_id: ProjectId) -> dict[str, Any]:
+        return await run_in_threadpool(logic.get_lock, request.state.owner_id, project_id)
 
     @app.post(
         "/v1/projects/{project_id}/bundle",
@@ -300,12 +364,14 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
         },
     )
     async def bundle(request: Request, project_id: ProjectId, body: BundleDTO) -> Response:
+        lock_options = {"lock_id": body.lock_id} if body.lock_id is not None else {}
         content = await run_in_threadpool(
             logic.bundle,
             request.state.owner_id,
             project_id,
-            body.decisions.to_core(),
+            body.decisions.to_core() if body.decisions else None,
             body.include_dockerfile,
+            **lock_options,
         )
         return Response(
             content,

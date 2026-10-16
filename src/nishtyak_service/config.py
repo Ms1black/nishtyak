@@ -13,7 +13,7 @@ class Settings:
     data_dir: Path = Path("var/nishtyak")
     api_token: str = field(default="", repr=False)
     runner: str = "docker"
-    analyzer_image: str = "nishtyak-analyzer:0.2.0"
+    analyzer_image: str = "nishtyak-analyzer:0.3.0"
     max_running: int = 2
     max_queued: int = 32
     max_owner_active: int = 2
@@ -63,7 +63,7 @@ class Settings:
             "data_dir": Path(os.environ.get("NISHTYAK_DATA_DIR", "var/nishtyak")),
             "api_token": os.environ.get("NISHTYAK_SERVICE_TOKEN", ""),
             "runner": os.environ.get("NISHTYAK_RUNNER", "docker"),
-            "analyzer_image": os.environ.get("NISHTYAK_ANALYZER_IMAGE", "nishtyak-analyzer:0.2.0"),
+            "analyzer_image": os.environ.get("NISHTYAK_ANALYZER_IMAGE", "nishtyak-analyzer:0.3.0"),
         }
         for name in cls.__dataclass_fields__:
             if name in values:

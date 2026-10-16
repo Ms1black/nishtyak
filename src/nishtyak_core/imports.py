@@ -14,6 +14,7 @@ class ParsedSource:
     findings: tuple[Finding, ...]
     has_main_guard: bool = False
     complete: bool = True
+    has_top_level_code: bool = False
 
 
 class ImportScanner(ast.NodeVisitor):
@@ -26,9 +27,11 @@ class ImportScanner(ast.NodeVisitor):
         self.context = "runtime"
         self.importlib_aliases = {"importlib"}
         self.dynamic_functions = {"__import__"}
+        self.import_module_functions: set[str] = set()
         self.typing_aliases = {"typing"}
         self.type_guards = {"TYPE_CHECKING"}
         self.has_main_guard = False
+        self._scope_depth = 0
 
     @classmethod
     def scan(cls, source: SourceFile) -> ParsedSource:
@@ -37,6 +40,25 @@ class ImportScanner(ast.NodeVisitor):
             encoding, _ = tokenize.detect_encoding(io.BytesIO(source.content).readline)
             tree = ast.parse(source.content.decode(encoding), filename=source.path)
             scanner.visit(tree)
+            has_top_level_code = any(
+                not isinstance(
+                    statement,
+                    (
+                        ast.Import,
+                        ast.ImportFrom,
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                        ast.Pass,
+                    ),
+                )
+                and not (
+                    isinstance(statement, ast.Expr)
+                    and isinstance(statement.value, ast.Constant)
+                    and isinstance(statement.value.value, str)
+                )
+                for statement in tree.body
+            )
         except (SyntaxError, UnicodeError, LookupError, ValueError, RecursionError):
             return ParsedSource(
                 (),
@@ -44,7 +66,10 @@ class ImportScanner(ast.NodeVisitor):
                 complete=False,
             )
         return ParsedSource(
-            tuple(scanner.observations), tuple(scanner.findings), scanner.has_main_guard
+            tuple(scanner.observations),
+            tuple(scanner.findings),
+            scanner.has_main_guard,
+            has_top_level_code=has_top_level_code,
         )
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -70,16 +95,36 @@ class ImportScanner(ast.NodeVisitor):
             )
         )
         if node.level == 0 and node.module == "importlib":
-            self.dynamic_functions.update(
+            aliases = {
                 alias.asname or alias.name for alias in node.names if alias.name == "import_module"
-            )
+            }
+            self.dynamic_functions.update(aliases)
+            self.import_module_functions.update(aliases)
         if node.level == 0 and node.module == "typing":
             self.type_guards.update(
                 alias.asname or alias.name for alias in node.names if alias.name == "TYPE_CHECKING"
             )
 
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._scope_depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._scope_depth -= 1
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._scope_depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._scope_depth -= 1
+
     def visit_If(self, node: ast.If) -> None:
-        self.has_main_guard = self.has_main_guard or self._is_main_guard(node.test)
+        self.has_main_guard = self.has_main_guard or (
+            self._scope_depth == 0 and self._is_main_guard(node.test)
+        )
         self.visit(node.test)
         if self._is_type_guard(node.test):
             self._visit_body(node.body, "type_checking")
@@ -118,14 +163,54 @@ class ImportScanner(ast.NodeVisitor):
             if isinstance(module, ast.Constant) and isinstance(module.value, str):
                 name = module.value
                 level = len(name) - len(name.lstrip("."))
-                if name.lstrip(".") and all(
-                    part.isidentifier() for part in name.lstrip(".").split(".")
-                ):
+                is_import_module = (
+                    isinstance(function, ast.Name) and function.id in self.import_module_functions
+                ) or isinstance(function, ast.Attribute)
+                if level and is_import_module:
+                    package = (
+                        node.args[1]
+                        if len(node.args) > 1
+                        else next(
+                            (
+                                keyword.value
+                                for keyword in node.keywords
+                                if keyword.arg == "package"
+                            ),
+                            None,
+                        )
+                    )
+                    if isinstance(package, ast.Constant) and isinstance(package.value, str):
+                        parts = package.value.split(".")
+                        if level <= len(parts) and all(part.isidentifier() for part in parts):
+                            prefix = parts[: len(parts) - level + 1]
+                            suffix = name.lstrip(".").split(".") if name.lstrip(".") else []
+                            name = ".".join((*prefix, *suffix))
+                            level = 0
+                    # Relative import_module requires its explicit package argument;
+                    # the importing source's package is never an implicit substitute.
+                    if level:
+                        name = ""
+                elif level:
+                    # __import__ uses the separate level parameter, not leading dots.
+                    name = ""
+                if isinstance(function, ast.Name) and function.id == "__import__":
+                    explicit_level = (
+                        node.args[4]
+                        if len(node.args) > 4
+                        else next(
+                            (keyword.value for keyword in node.keywords if keyword.arg == "level"),
+                            None,
+                        )
+                    )
+                    if explicit_level is not None and not (
+                        isinstance(explicit_level, ast.Constant) and explicit_level.value == 0
+                    ):
+                        name = ""
+                if name and all(part.isidentifier() for part in name.split(".")):
                     observation = ImportObservation(
-                        name.lstrip("."),
+                        name,
                         self.path,
                         node.lineno,
-                        level=level,
                         context=self.context,
                         kind="dynamic",
                     )
@@ -139,6 +224,15 @@ class ImportScanner(ast.NodeVisitor):
                     evidence_ids=(observation.id,) if observation else (),
                 )
             )
+            if observation is None:
+                self.findings.append(
+                    Finding(
+                        "DYNAMIC_IMPORT_UNRESOLVED",
+                        "The dynamic import target or package context is not statically known.",
+                        self.path,
+                        node.lineno,
+                    )
+                )
         self.generic_visit(node)
 
     def _visit_body(self, body: list[ast.stmt], context: str) -> None:

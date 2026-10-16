@@ -90,7 +90,7 @@ def test_export_rejects_a_changed_snapshot(tmp_path):
 def test_cli_analyze_outputs_json(capsys):
     code = CommandLine().run(["analyze", str(FIXTURES / "local_project")])
     assert code == 0
-    assert json.loads(capsys.readouterr().out)["schema_version"] == 2
+    assert json.loads(capsys.readouterr().out)["schema_version"] == 3
 
 
 def test_cli_can_add_an_unverified_docker_template(tmp_path, capsys):

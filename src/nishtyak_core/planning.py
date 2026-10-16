@@ -8,6 +8,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from .launches import LaunchDetector
 from .models import (
     AnalysisReport,
     DeclarationDecision,
@@ -67,6 +68,10 @@ class PackagePlanner:
             "AUTHOR_MAPPING_AMBIGUOUS",
             "AUTHOR_VERSION_AMBIGUOUS",
             "AUTHOR_PYTHON_CONFLICT",
+            "LOCAL_MODULE_MISSING",
+            "LOCAL_IMPORT_NAME_UNRESOLVED",
+            "LOCAL_IMPORT_CONTEXT_AMBIGUOUS",
+            "LOCAL_IMPORT_CONTEXT_REQUIRED",
         }
     )
 
@@ -87,10 +92,16 @@ class PackagePlanner:
                 "excluded_files",
                 "Excluded files must be relative paths inside the project",
             ) from error
+        launch = LaunchDetector().detect(report, included)
+        run_spec = decisions.run_spec
+        run_spec_origin = "author" if run_spec is not None else "unknown"
+        if run_spec is None and launch.recommended is not None:
+            run_spec = launch.recommended.run_spec
+            run_spec_origin = "inferred"
         findings = [
             finding
             for finding in report.findings
-            if not self._finding_resolved(finding, report, decisions)
+            if not self._finding_resolved(finding, report, decisions, run_spec)
         ]
         draft = report.status != "complete"
         local_findings = self._validate_local_imports(report, included)
@@ -98,7 +109,7 @@ class PackagePlanner:
         blocked = bool(local_findings)
 
         for finding in report.findings:
-            if self._finding_resolved(finding, report, decisions):
+            if self._finding_resolved(finding, report, decisions, run_spec):
                 continue
             if finding.code == "SECRET_DETECTED":
                 if finding.path is None or finding.path not in excluded:
@@ -130,23 +141,48 @@ class PackagePlanner:
                 )
             )
 
-        run_spec = decisions.run_spec
+        if run_spec_origin == "inferred":
+            findings.append(
+                Finding(
+                    "RUN_INFERRED",
+                    launch.recommended.reason
+                    + " This command was inferred, not confirmed by the author or executed.",
+                    severity="info",
+                    evidence_ids=(launch.recommended.id,),
+                )
+            )
         if run_spec is None:
             draft = True
-            findings.append(Finding("RUN_NOT_SELECTED", "Select the project launch target."))
+            if len(launch.candidates) > 1:
+                code = "RUN_TARGET_AMBIGUOUS"
+                message = "Several possible launch commands remain; the draft contains candidates."
+            elif launch.candidates:
+                code = "RUN_TARGET_UNCERTAIN"
+                message = (
+                    "A possible launch command is listed; static facts do not establish "
+                    "an executable entry point."
+                )
+            else:
+                code = "RUN_TARGET_UNKNOWN"
+                message = (
+                    "No launch command was established statically; a dependency draft "
+                    "can still be exported."
+                )
+            findings.append(Finding(code, message))
         else:
             run_findings = self._validate_run(run_spec, included, report)
             findings.extend(run_findings)
             blocked = blocked or bool(run_findings)
 
-        python_version = decisions.python_version
+        python_version = decisions.python_version or report.author_python_version
         if python_version is None:
-            findings.append(
-                Finding(
-                    "PYTHON_VERSION_UNKNOWN",
-                    "The project author has not supplied a tested Python version.",
+            if not any(finding.code == "PYTHON_VERSION_UNKNOWN" for finding in findings):
+                findings.append(
+                    Finding(
+                        "PYTHON_VERSION_UNKNOWN",
+                        "The project author has not supplied a tested Python version.",
+                    )
                 )
-            )
         elif report.python_requires and not SpecifierSet(report.python_requires).contains(
             Version(python_version), prereleases=True
         ):
@@ -158,6 +194,20 @@ class PackagePlanner:
                     f"{report.python_requires}.",
                 )
             )
+        if python_version is not None:
+            target = Version(python_version)
+            profile = Version(report.options.python_version)
+            if (target.major, target.minor) != (profile.major, profile.minor):
+                draft = True
+                findings.append(
+                    Finding(
+                        "PYTHON_PROFILE_MISMATCH",
+                        "Dependencies were classified for Python "
+                        f"{report.options.python_version}, but the selected Python is "
+                        f"{python_version}. Repeat analysis with "
+                        f"options.python_version={target.major}.{target.minor} before locking.",
+                    )
+                )
 
         if not included:
             blocked = True
@@ -181,6 +231,7 @@ class PackagePlanner:
             input_description=decisions.input_description,
             expected_output=decisions.expected_output,
             decisions=decisions,
+            run_spec_origin=run_spec_origin,
         )
 
     def _validate_decisions(self, report: AnalysisReport, decisions: UserDecisions) -> None:
@@ -480,10 +531,33 @@ class PackagePlanner:
 
     @staticmethod
     def _finding_resolved(
-        finding: Finding, report: AnalysisReport, decisions: UserDecisions
+        finding: Finding,
+        report: AnalysisReport,
+        decisions: UserDecisions,
+        run_spec: RunSpec | None = None,
     ) -> bool:
-        if finding.code == "DEPENDENCY_CONFLICT":
+        if finding.code == "DATA_DEPENDENCIES_UNVERIFIED":
+            return decisions.data_confirmed
+        if finding.code == "PYTHON_VERSION_UNKNOWN":
+            return decisions.python_version is not None or report.author_python_version is not None
+        if finding.code != "SECRET_DETECTED" and finding.path is not None:
+            if any(
+                finding.path == prefix.rstrip("/")
+                or finding.path.startswith(prefix.rstrip("/") + "/")
+                for prefix in decisions.excluded_files
+            ):
+                return True
+        if finding.code in {
+            "DEPENDENCY_CONFLICT",
+            "DEPENDENCY_UNRESOLVED",
+            "DEPENDENCY_DECLARATIONS_MULTIPLE",
+            "VERSION_UNKNOWN",
+        }:
+            # Effective requirements and version uncertainties are recomputed
+            # below from the current mappings and declaration decisions.
             return True
+        if finding.code == "LOCAL_IMPORT_CONTEXT_REQUIRED":
+            return PackagePlanner._script_context_selected(finding, report, run_spec)
         if finding.code == "OPTIONAL_DEPENDENCIES_UNSELECTED":
             return True
         if finding.code == "AUTHOR_PYTHON_CONFLICT":
@@ -522,6 +596,33 @@ class PackagePlanner:
             if package not in versions and package not in changed:
                 return False
         return True
+
+    @staticmethod
+    def _script_context_selected(
+        finding: Finding, report: AnalysisReport, run: RunSpec | None
+    ) -> bool:
+        if run is None or run.kind != "script":
+            return False
+        script_path = str(PurePosixPath(run.working_directory) / run.target)
+        if finding.path != script_path:
+            return False
+        observations = [
+            item for item in report.imports if item.id in finding.evidence_ids and not item.level
+        ]
+        if not observations:
+            return False
+        roots = report.layout.source_roots if report.layout else report.options.source_roots
+        index = LocalModuleIndex(
+            ProjectSnapshot(tuple(SourceFile(file.path, b"") for file in report.files), ""), roots
+        )
+        parent = str(PurePosixPath(script_path).parent)
+        # Only the selected entry script is guaranteed to add its own directory.
+        # Retain warnings for imports in other files or conflicting providers.
+        return all(
+            index.resolve_module(item.module).status == "external"
+            and index.resolve_module(item.module, (parent, *roots)).found
+            for item in observations
+        )
 
     def _apply_version(
         self, requirement: Requirement, versions: dict[str, str], module: str | None = None

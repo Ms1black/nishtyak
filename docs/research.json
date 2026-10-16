@@ -28,5 +28,7 @@
   "uv_export": "https://docs.astral.sh/uv/concepts/projects/export/",
   "uv_build_safety": "https://docs.astral.sh/uv/reference/cli/",
   "reprozip": "https://docs.reprozip.org/en/latest/",
-  "inline_script_metadata": "https://packaging.python.org/en/latest/specifications/inline-script-metadata/"
+  "inline_script_metadata": "https://packaging.python.org/en/latest/specifications/inline-script-metadata/",
+  "deepseek_tool_calls": "https://api-docs.deepseek.com/guides/tool_calls/",
+  "deepseek_chat_api": "https://api-docs.deepseek.com/api/create-chat-completion/"
 }

@@ -10,9 +10,12 @@ from nishtyak_core import ArchiveReader, ReproducibilityService
 from nishtyak_core.advisors import AdvisoryService
 from nishtyak_core.advisors.models import AdvisoryResult
 from nishtyak_core.archives import ArchiveError
+from nishtyak_core.decisions import DecisionsCodec
 from nishtyak_core.environment import AuthorEnvironmentSnapshot
 from nishtyak_core.exporting import BundleWriter
+from nishtyak_core.locking import LockExporter, ResolutionError, ResolutionTarget, VersionResolver
 from nishtyak_core.models import AnalysisOptions, AnalysisReport, PackagePlan, UserDecisions
+from nishtyak_core.redaction import TextRedactor
 
 from .config import Settings
 from .errors import ServiceError
@@ -100,11 +103,11 @@ class LogicService:
         self.repository.consume_rate(owner, "delete", 30)
         self.repository.delete(owner, project_id)
 
-    def plan(self, owner: str, project_id: str, decisions: UserDecisions) -> dict:
+    def plan(self, owner: str, project_id: str, decisions: UserDecisions | None = None) -> dict:
         self.repository.consume_rate(owner, "plan", 30)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            plan = self._prepare(report, decisions)
+            plan = self._prepare(report, self._decisions(owner, project_id, report, decisions))
             result = plan.to_dict()
         self.repository.get_project(owner, project_id)
         return result
@@ -113,13 +116,14 @@ class LogicService:
         self,
         owner: str,
         project_id: str,
-        decisions: UserDecisions,
+        decisions: UserDecisions | None = None,
         include_dockerfile: bool = False,
+        lock_id: str | None = None,
     ) -> bytes:
         self.repository.consume_rate(owner, "bundle", 10)
         with self.repository.operation(owner, project_id) as record:
             report = self.repository.read_report(record)
-            plan = self._prepare(report, decisions)
+            plan = self._prepare(report, self._decisions(owner, project_id, report, decisions))
             if plan.state == "blocked":
                 raise ServiceError(409, "PLAN_BLOCKED", "Resolve the blocking findings first")
             try:
@@ -127,6 +131,14 @@ class LogicService:
                 if snapshot.fingerprint != report.fingerprint:
                     raise ServiceError(409, "SNAPSHOT_CHANGED", "The stored project has changed")
                 generated = self.core.render(plan, include_dockerfile=include_dockerfile)
+                if lock_id is not None:
+                    lock = self.repository.read_lock(owner, project_id)
+                    if lock.id != lock_id:
+                        raise ServiceError(409, "LOCK_STALE", "Dependency lock was replaced")
+                    try:
+                        generated = LockExporter().attach(generated, plan, lock)
+                    except ResolutionError as error:
+                        raise ServiceError(409, error.code, str(error)) from None
                 source_bytes = sum(file.size for file in plan.files)
                 generated_bytes = sum(len(file.content) for file in generated.files)
                 if source_bytes + generated_bytes > self.settings.max_bundle_bytes - 1024**2:
@@ -153,6 +165,102 @@ class LogicService:
                 ) from None
         self.repository.get_project(owner, project_id)
         return content
+
+    def preparation(self, owner: str, project_id: str) -> dict:
+        from nishtyak_core.launches import LaunchDetector
+
+        self.repository.consume_rate(owner, "plan", 30)
+        with self.repository.operation(owner, project_id) as record:
+            report = self.repository.read_report(record)
+            plan = self._prepare(report, self._decisions(owner, project_id, report, None))
+            result = {
+                "project_id": project_id,
+                "plan": plan.to_dict(),
+                "launch": LaunchDetector().detect(report, plan.files).to_dict(),
+            }
+        self.repository.get_project(owner, project_id)
+        return TextRedactor().redact_value(result)
+
+    def graph(self, owner: str, project_id: str) -> dict:
+        from nishtyak_core.import_graph import ImportGraph
+
+        self.repository.consume_rate(owner, "read", 120)
+        with self.repository.operation(owner, project_id) as record:
+            report = self.repository.read_report(record)
+            snapshot = ArchiveReader().from_path(self.repository.archive_path(project_id))
+            if snapshot.fingerprint != report.fingerprint:
+                raise ServiceError(409, "SNAPSHOT_CHANGED", "The stored project has changed")
+            roots = report.layout.source_roots if report.layout else report.options.source_roots
+            result = TextRedactor().redact_value(
+                ImportGraph(snapshot, roots, report.imports).to_dict()
+            )
+        self.repository.get_project(owner, project_id)
+        return result
+
+    def project_advice(self, owner: str, project_id: str, feature: str, description: str) -> dict:
+        from nishtyak_core.advisors import ProjectAdvisoryResult, SafeProjectContext
+
+        from .project_advice_jobs import ProjectAdviceJobRunner
+
+        self.repository.consume_rate(owner, "advice", 5)
+        with self.repository.operation(owner, project_id) as record:
+            report = self.repository.read_report(record)
+            if not (os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("DEEPSEEK_MODEL")):
+                result = ProjectAdvisoryResult(
+                    report.analysis_id, feature, "unavailable", reason="advisor_unavailable"
+                ).to_dict()
+            else:
+                self.repository.consume_rate(owner, "advice-daily", 10, window=86400)
+                self.repository.consume_rate("_service", "advice-global-daily", 100, window=86400)
+                snapshot = ArchiveReader().from_path(self.repository.archive_path(project_id))
+                if snapshot.fingerprint != report.fingerprint:
+                    raise ServiceError(409, "SNAPSHOT_CHANGED", "The stored project has changed")
+                try:
+                    context = SafeProjectContext.from_project(report, snapshot)
+                except ValueError:
+                    raise ServiceError(
+                        422,
+                        "ADVICE_CONTEXT_LIMIT",
+                        "Project context cannot be safely represented within its limit",
+                    ) from None
+                result = ProjectAdviceJobRunner().run(context, feature, description)
+        self.repository.get_project(owner, project_id)
+        return result
+
+    def resolve(
+        self,
+        owner: str,
+        project_id: str,
+        target: ResolutionTarget,
+        decisions: UserDecisions | None = None,
+    ) -> dict:
+        self.repository.consume_rate(owner, "resolve", 2)
+        self.repository.consume_rate("_service", "resolve-global", 20)
+        with self.repository.operation(owner, project_id) as record:
+            report = self.repository.read_report(record)
+            plan = self._prepare(report, self._decisions(owner, project_id, report, decisions))
+            try:
+                lock = VersionResolver().resolve(plan, target)
+            except ResolutionError as error:
+                status = 503 if error.code in {"RESOLVER_UNAVAILABLE", "INDEX_UNAVAILABLE"} else 422
+                raise ServiceError(status, error.code, str(error)) from None
+            self.repository.save_lock(owner, project_id, lock)
+        self.repository.get_project(owner, project_id)
+        return lock.to_dict()
+
+    def get_lock(self, owner: str, project_id: str) -> dict:
+        self.repository.consume_rate(owner, "read", 120)
+        result = self.repository.read_lock(owner, project_id).to_dict()
+        self.repository.get_project(owner, project_id)
+        return result
+
+    def _decisions(
+        self, owner: str, project_id: str, report: AnalysisReport, decisions: UserDecisions | None
+    ) -> UserDecisions:
+        if decisions is not None:
+            return decisions
+        value = self.repository.read_decisions(owner, project_id)["decisions"]
+        return DecisionsCodec().decode(value) if value else UserDecisions(report.analysis_id)
 
     def advice(self, owner: str, project_id: str, feature: str, description: str = "") -> dict:
         self.repository.consume_rate(owner, "advice", 5)

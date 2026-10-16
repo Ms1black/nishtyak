@@ -3,7 +3,7 @@ name: nishtyak-logic
 x-settings: &settings
   NISHTYAK_DATA_DIR: /data
   NISHTYAK_RUNNER: docker
-  NISHTYAK_ANALYZER_IMAGE: nishtyak-analyzer:0.2.0
+  NISHTYAK_ANALYZER_IMAGE: nishtyak-analyzer:0.3.0
 
 services:
   initialize:
@@ -23,7 +23,7 @@ services:
     restart: "no"
 
   logic:
-    image: nishtyak-logic:0.2.0
+    image: nishtyak-logic:0.3.0
     build:
       context: ..
       dockerfile: deploy/Dockerfile.service
@@ -65,7 +65,7 @@ services:
         max-file: "2"
 
   dispatcher:
-    image: nishtyak-dispatcher:0.2.0
+    image: nishtyak-dispatcher:0.3.0
     build:
       context: ..
       dockerfile: deploy/Dockerfile.service
@@ -102,7 +102,7 @@ services:
         max-file: "2"
 
   analyzer-image:
-    image: nishtyak-analyzer:0.2.0
+    image: nishtyak-analyzer:0.3.0
     build:
       context: ..
       dockerfile: deploy/Dockerfile

@@ -1,6 +1,6 @@
 {
   "report": {
-    "analysis_id": "8c6e774d4b9840d00dda",
+    "analysis_id": "2400bdeeb174a296aa5b",
     "fingerprint": "4053f8dea9b9a5761d40",
     "options": {
       "python_version": "3.11",
@@ -133,7 +133,7 @@
     "entrypoints": [
       "main.py"
     ],
-    "schema_version": 2,
+    "schema_version": 3,
     "layout": {
       "root": ".",
       "source_roots": [
@@ -148,7 +148,15 @@
     "optional_groups": [],
     "author_environment_id": null,
     "author_python_version": null,
-    "author_platform": null
+    "author_platform": null,
+    "main_guards": [],
+    "parsed_sources": [
+      "helpers.py",
+      "main.py"
+    ],
+    "executable_sources": [
+      "main.py"
+    ]
   },
   "requirements": [],
   "run_spec": {
@@ -178,24 +186,6 @@
   "excluded_files": [],
   "findings": [
     {
-      "code": "DATA_DEPENDENCIES_UNVERIFIED",
-      "message": "Input files, configuration and external services need author confirmation.",
-      "path": null,
-      "line": null,
-      "severity": "warning",
-      "evidence_ids": [],
-      "id": "003f530dcd17adefc25f"
-    },
-    {
-      "code": "PYTHON_VERSION_UNKNOWN",
-      "message": "Project Python version is undeclared; the profile is not evidence.",
-      "path": null,
-      "line": null,
-      "severity": "warning",
-      "evidence_ids": [],
-      "id": "6bc74778ad8f444c52d2"
-    },
-    {
       "code": "README_MISSING",
       "message": "No README was found at the project root.",
       "path": null,
@@ -221,6 +211,17 @@
       "severity": "info",
       "evidence_ids": [],
       "id": "7bebd41fe84835ec3649"
+    },
+    {
+      "code": "RUN_INFERRED",
+      "message": "Top-level executable statements occur in a source not imported by other application sources; required arguments are unknown. This command was inferred, not confirmed by the author or executed.",
+      "path": null,
+      "line": null,
+      "severity": "info",
+      "evidence_ids": [
+        "1c6e68a98c3dac627904"
+      ],
+      "id": "362195d4533c952489c8"
     }
   ],
   "state": "ready_to_verify",
@@ -228,17 +229,12 @@
   "input_description": "data.csv contains the values 2, 4 and 6.",
   "expected_output": "mean=4.00",
   "decisions": {
-    "analysis_id": "8c6e774d4b9840d00dda",
+    "analysis_id": "2400bdeeb174a296aa5b",
     "packages": {},
     "versions": {},
     "excluded_modules": [],
     "excluded_files": [],
-    "run_spec": {
-      "target": "main.py",
-      "kind": "script",
-      "args": [],
-      "working_directory": "."
-    },
+    "run_spec": null,
     "python_version": "3.11",
     "description": "",
     "input_description": "data.csv contains the values 2, 4 and 6.",
@@ -246,5 +242,6 @@
     "data_confirmed": true,
     "selected_extras": [],
     "declaration_actions": {}
-  }
+  },
+  "run_spec_origin": "inferred"
 }

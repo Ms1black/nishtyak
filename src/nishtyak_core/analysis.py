@@ -10,7 +10,7 @@ from .resolution import DependencyResolver, StandardLibraryProfile
 
 
 class ProjectAnalyzer:
-    RULE_VERSION = "2.0"
+    RULE_VERSION = "3.0"
 
     def analyze(
         self, snapshot: ProjectSnapshot, options: AnalysisOptions | None = None
@@ -34,6 +34,9 @@ class ProjectAnalyzer:
             )
         observations = []
         entrypoints = []
+        main_guards = []
+        parsed_sources = []
+        executable_sources = []
         partial = layout.ambiguous
         if len(sources) > options.max_files:
             partial = True
@@ -79,6 +82,12 @@ class ProjectAnalyzer:
             observations.extend(parsed.imports)
             findings.extend(parsed.findings)
             partial = partial or not parsed.complete
+            if parsed.complete:
+                parsed_sources.append(source.path)
+                if parsed.has_top_level_code:
+                    executable_sources.append(source.path)
+            if parsed.has_main_guard:
+                main_guards.append(source.path)
             if parsed.has_main_guard or source.path.rsplit("/", 1)[-1] in {
                 "main.py",
                 "__main__.py",
@@ -138,4 +147,7 @@ class ProjectAnalyzer:
             python_requires=manifests.python_requires,
             entrypoints=tuple(sorted(set((*entrypoints, *getattr(manifests, "entrypoints", ()))))),
             layout=layout,
+            main_guards=tuple(main_guards),
+            parsed_sources=tuple(parsed_sources),
+            executable_sources=tuple(executable_sources),
         )

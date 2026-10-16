@@ -5,10 +5,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from nishtyak_core.environment import AuthorEnvironmentSnapshot
+from nishtyak_core.import_graph import ImportEdge
+from nishtyak_core.launches import LaunchAssessment
 from nishtyak_core.models import (
     AnalysisOptions,
     AnalysisReport,
     DeclarationDecision,
+    PackagePlan,
     RunSpec,
     UserDecisions,
 )
@@ -143,13 +146,32 @@ class DecisionDocumentDTO(StrictDTO):
 
 
 class BundleDTO(StrictDTO):
-    decisions: DecisionsDTO
+    decisions: DecisionsDTO | None = None
     include_dockerfile: bool = False
+    lock_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
+
+
+class ResolutionTargetDTO(StrictDTO):
+    python_version: Annotated[str, StringConstraints(pattern=r"^3\.(8|9|1[0-4])(\.[0-9]{1,3})?$")]
+    platform: Literal[
+        "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64", "windows-x86_64"
+    ]
+
+
+class ResolveDTO(StrictDTO):
+    target: ResolutionTargetDTO
+    decisions: DecisionsDTO | None = None
 
 
 class AdviceDTO(StrictDTO):
     feature: Literal["explain", "readme", "packages"] = "explain"
     description: DescriptionText = ""
+
+
+class ProjectAdviceDTO(StrictDTO):
+    feature: Literal["explain", "readme", "packages", "entrypoint"] = "explain"
+    description: DescriptionText = ""
+    share_source: Literal[True]
 
 
 class SubmittedProjectDTO(StrictDTO):
@@ -169,6 +191,21 @@ class ProjectReportDTO(BaseModel):
 
     project_id: ObjectId
     analysis: AnalysisReport
+
+
+class PreparationDTO(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: ObjectId
+    plan: PackagePlan
+    launch: LaunchAssessment
+
+
+class ImportGraphDTO(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[str]
+    edges: list[ImportEdge]
 
 
 class JobDTO(BaseModel):

@@ -19,18 +19,18 @@ def main() -> None:
     parser.add_argument("archive", type=Path)
     parser.add_argument("--url", default="http://127.0.0.1:8010")
     parser.add_argument("--owner", required=True)
-    parser.add_argument("--entry", required=True)
+    parser.add_argument("--entry")
     parser.add_argument("--kind", choices=("script", "module", "callable"), default="script")
     parser.add_argument("--cwd", default=".")
-    parser.add_argument("--python", required=True, dest="python_version")
+    parser.add_argument("--python", dest="python_version")
     parser.add_argument("--extra", action="append", default=[])
     parser.add_argument("--exclude-module", action="append", default=[])
     parser.add_argument("--exclude-file", action="append", default=[])
     parser.add_argument("--author-environment", type=Path)
     parser.add_argument("--options", type=Path)
-    parser.add_argument("--description", required=True)
-    parser.add_argument("--input-description", required=True)
-    parser.add_argument("--expected-output", required=True)
+    parser.add_argument("--description", default="")
+    parser.add_argument("--input-description", default="")
+    parser.add_argument("--expected-output", default="")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     client = LogicClient(args.url, os.environ["NISHTYAK_SERVICE_TOKEN"], args.owner)
@@ -45,7 +45,11 @@ def main() -> None:
     report = job["analysis"]
     decisions = {
         "analysis_id": report["analysis_id"],
-        "run_spec": {"kind": args.kind, "target": args.entry, "working_directory": args.cwd},
+        "run_spec": (
+            {"kind": args.kind, "target": args.entry, "working_directory": args.cwd}
+            if args.entry
+            else None
+        ),
         "python_version": args.python_version,
         "selected_extras": args.extra,
         "excluded_modules": args.exclude_module,
@@ -61,9 +65,9 @@ def main() -> None:
     restored = client.decisions(project["project_id"])
     assert restored == saved
     plan = client.plan(project["project_id"], restored["decisions"])
-    if plan["state"] != "ready_to_verify":
+    if plan["state"] == "blocked":
         print(json.dumps({"project": project, "plan": plan}, ensure_ascii=False, indent=2))
-        raise SystemExit("Resolve the findings before exporting a final package")
+        raise SystemExit("Resolve blocking findings before export")
     args.output.write_bytes(client.bundle(project["project_id"], restored["decisions"]))
     print(
         json.dumps({**project, "revision": saved["revision"], "bundle": str(args.output)}, indent=2)

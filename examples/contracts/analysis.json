@@ -1,5 +1,5 @@
 {
-  "analysis_id": "8c6e774d4b9840d00dda",
+  "analysis_id": "2400bdeeb174a296aa5b",
   "fingerprint": "4053f8dea9b9a5761d40",
   "options": {
     "python_version": "3.11",
@@ -132,7 +132,7 @@
   "entrypoints": [
     "main.py"
   ],
-  "schema_version": 2,
+  "schema_version": 3,
   "layout": {
     "root": ".",
     "source_roots": [
@@ -147,5 +147,13 @@
   "optional_groups": [],
   "author_environment_id": null,
   "author_python_version": null,
-  "author_platform": null
+  "author_platform": null,
+  "main_guards": [],
+  "parsed_sources": [
+    "helpers.py",
+    "main.py"
+  ],
+  "executable_sources": [
+    "main.py"
+  ]
 }

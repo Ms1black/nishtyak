@@ -31,7 +31,7 @@ class AnalysisReportCodec:
             if not isinstance(value, dict):
                 raise InvalidWorkerReport("Invalid worker report")
             version = value.get("schema_version")
-            if type(version) is not int or version not in {1, 2}:
+            if type(version) is not int or version not in {1, 2, 3}:
                 raise InvalidWorkerReport("Unsupported worker report schema")
             additions = {
                 "layout",
@@ -42,7 +42,13 @@ class AnalysisReportCodec:
                 "author_platform",
             }
             expected = set(AnalysisReport.__dataclass_fields__)
-            if set(value) != expected and not (version == 1 and set(value) == expected - additions):
+            launch_fields = {"main_guards", "parsed_sources", "executable_sources"}
+            accepted = [expected]
+            if version <= 2:
+                accepted.append(expected - launch_fields)
+            if version == 1:
+                accepted.append(expected - additions - launch_fields)
+            if set(value) not in accepted:
                 raise InvalidWorkerReport("Unexpected worker report fields")
             data = value
             options = self.decode_options(data["options"])
@@ -73,6 +79,9 @@ class AnalysisReportCodec:
                 author_environment_id=self._nullable_text(data.get("author_environment_id")),
                 author_python_version=self._nullable_text(data.get("author_python_version")),
                 author_platform=self._nullable_text(data.get("author_platform")),
+                main_guards=self._strings(data.get("main_guards", ())),
+                parsed_sources=self._strings(data.get("parsed_sources", ())),
+                executable_sources=self._strings(data.get("executable_sources", ())),
             )
         except (KeyError, TypeError, ValueError, RecursionError) as error:
             raise InvalidWorkerReport("Invalid worker report") from error

@@ -1,6 +1,6 @@
 services:
   analyzer:
-    image: nishtyak-analyzer:0.2.0
+    image: nishtyak-analyzer:0.3.0
     build:
       context: ..
       dockerfile: deploy/Dockerfile

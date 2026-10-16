@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
+
+from packaging.version import Version
 
 from .exporting import BundleWriter
 from .models import AnalysisOptions, RunSpec, UserDecisions
@@ -21,6 +23,7 @@ class CommandLine:
         analyze.add_argument("--source-root", action="append")
         analyze.add_argument("--project-root")
         analyze.add_argument("--author-environment", type=Path)
+        analyze.add_argument("--python", dest="python_version")
         advise = commands.add_parser("advise", help="Request optional advice from DeepSeek")
         advise.add_argument("project", type=Path)
         advise.add_argument("--source-root", action="append")
@@ -53,6 +56,19 @@ class CommandLine:
         launch_kind.add_argument("--module", action="store_true")
         launch_kind.add_argument("--callable", action="store_true")
         build.add_argument("--docker", action="store_true")
+        build.add_argument(
+            "--lock", action="store_true", help="Resolve wheel-only versions for an explicit target"
+        )
+        build.add_argument(
+            "--target-platform",
+            choices=(
+                "linux-x86_64",
+                "linux-aarch64",
+                "macos-arm64",
+                "macos-x86_64",
+                "windows-x86_64",
+            ),
+        )
         build.add_argument("--exclude", action="append", default=[])
         build.add_argument("--package", action="append", default=[], metavar="MODULE=REQUIREMENT")
         arguments = parser.parse_args(argv)
@@ -92,6 +108,14 @@ class CommandLine:
                 author_environment = AuthorEnvironmentSnapshot.from_dict(
                     json.loads(environment_file.read_text())
                 )
+            selected_python = getattr(arguments, "python_version", None)
+            if selected_python is None and author_environment is not None:
+                selected_python = author_environment.python_version
+            if selected_python is not None:
+                version = Version(selected_python)
+                if version.major != 3 or len(version.release) < 2:
+                    raise ValueError("Choose a Python 3 minor or patch version")
+                options = replace(options, python_version=f"{version.major}.{version.minor}")
             report = service.analyze(snapshot, options, author_environment)
             if arguments.command == "analyze":
                 print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
@@ -105,8 +129,10 @@ class CommandLine:
                 print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
                 return 0 if result.status == "ok" else 1
             packages = {}
-            if not arguments.entry and arguments.decisions is None:
-                raise ValueError("Supply --entry or a reviewed --decisions document")
+            if not arguments.entry and (
+                arguments.module or arguments.callable or arguments.cwd != "."
+            ):
+                raise ValueError("Launch kind and working directory flags require --entry")
             for value in arguments.package:
                 module, separator, requirement = value.partition("=")
                 if not separator or not module or not requirement:
@@ -124,7 +150,9 @@ class CommandLine:
                     if arguments.module
                     else "script",
                     working_directory=arguments.cwd,
-                ),
+                )
+                if arguments.entry
+                else None,
                 python_version=arguments.python_version,
                 description=arguments.description,
                 input_description=arguments.data,
@@ -139,10 +167,23 @@ class CommandLine:
                     raise ValueError("Decisions document exceeds 256 KiB")
                 decisions = DecisionsCodec().decode(json.loads(arguments.decisions.read_text()))
             plan = service.prepare(report, decisions)
+            generated = service.render(plan, include_dockerfile=arguments.docker)
+            if arguments.lock:
+                from .locking import LockExporter, ResolutionTarget, VersionResolver
+
+                if plan.python_version is None:
+                    raise ValueError("Supply --python or an author environment before locking")
+                if arguments.target_platform is None:
+                    raise ValueError("Supply --target-platform for the dependency lock")
+                target = ResolutionTarget(plan.python_version, arguments.target_platform)
+                lock = VersionResolver().resolve(plan, target)
+                generated = LockExporter().attach(generated, plan, lock)
+            elif arguments.target_platform is not None:
+                raise ValueError("--target-platform requires --lock")
             artifact = BundleWriter().write(
                 snapshot,
                 plan,
-                service.render(plan, include_dockerfile=arguments.docker),
+                generated,
                 arguments.output,
             )
             print(json.dumps(asdict(artifact), ensure_ascii=False, indent=2))

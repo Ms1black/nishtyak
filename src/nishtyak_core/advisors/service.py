@@ -37,7 +37,7 @@ class AdvisoryService:
         if (
             feature not in self._kinds
             or type(report.schema_version) is not int
-            or report.schema_version not in {1, 2}
+            or report.schema_version not in {1, 2, 3}
             or not self._identifier.fullmatch(report.analysis_id)
             or len(description) > 20_000
         ):

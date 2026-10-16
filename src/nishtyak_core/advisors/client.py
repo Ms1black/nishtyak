@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 class AdvisorUnavailable(Exception):
@@ -72,11 +72,17 @@ class Transport(Protocol):
     def send(self, request: HttpRequest) -> HttpResponse: ...
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class UrllibTransport:
     def send(self, request: HttpRequest) -> HttpResponse:
         outgoing = Request(request.url, request.body, request.headers, method="POST")
         try:
-            with urlopen(outgoing, timeout=request.timeout) as response:
+            opener = build_opener(ProxyHandler({}), _NoRedirect())
+            with opener.open(outgoing, timeout=request.timeout) as response:
                 return HttpResponse(response.status, response.read(request.max_response_bytes + 1))
         except HTTPError as error:
             return HttpResponse(error.code, b"")
@@ -94,6 +100,30 @@ class DeepSeekClient:
         return cls(DeepSeekConfig.from_env(), transport)
 
     def complete(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        return self._send(messages)
+
+    def complete_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        tool_choice: str = "auto",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        if tool_choice not in {"auto", "none"}:
+            raise ValueError("Unsupported tool choice")
+        return self._send(
+            messages,
+            {"tools": tools, "tool_choice": tool_choice, "thinking": {"type": "disabled"}},
+            timeout,
+        )
+
+    def _send(
+        self,
+        messages: list[dict[str, Any]],
+        extensions: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         if not self.config.api_key:
             raise AdvisorUnavailable("missing_api_key")
         if not self.config.model:
@@ -104,6 +134,10 @@ class DeepSeekClient:
             "response_format": {"type": "json_object"},
             "max_tokens": self.config.max_tokens,
         }
+        payload.update(extensions or {})
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        if len(body) > 131_072:
+            raise InvalidAdvisorResponse("request_too_large")
         request = HttpRequest(
             url=self.config.endpoint.rstrip("/") + "/chat/completions",
             headers={
@@ -111,8 +145,10 @@ class DeepSeekClient:
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
-            body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            timeout=self.config.timeout,
+            body=body,
+            timeout=min(self.config.timeout, timeout)
+            if timeout is not None
+            else self.config.timeout,
             max_response_bytes=self.config.max_response_bytes,
         )
         try:

@@ -165,6 +165,9 @@ def test_legacy_options_and_report_upgrade_without_losing_fields():
         "author_environment_id",
         "author_python_version",
         "author_platform",
+        "main_guards",
+        "parsed_sources",
+        "executable_sources",
     }
     legacy = {key: value for key, value in encoded.items() if key not in additions}
     legacy["schema_version"] = 1

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import shlex
 
+from .launches import LaunchCandidate, LaunchDetector
 from .layout import ProjectLauncher
-from .models import GeneratedFile, GeneratedFiles, PackagePlan
+from .models import GeneratedFile, GeneratedFiles, PackagePlan, RunSpec
 from .security import SecretScanner
 
 
@@ -51,7 +53,7 @@ class DocumentRenderer:
             "",
             f"Package state: **{plan.state}**.",
             "",
-            "This guide was generated from static analysis and author decisions. "
+            "This guide was generated from static analysis and any supplied author decisions. "
             "The uploaded code was not executed. Successful reproduction has not been verified.",
             "",
             "## Experiment",
@@ -62,7 +64,12 @@ class DocumentRenderer:
             "",
         ]
         if plan.python_version:
-            lines.append(f"Author-selected Python version: `{plan.python_version}`.")
+            if plan.decisions is not None and plan.decisions.python_version is None:
+                lines.append(
+                    f"Observed author-environment Python version: `{plan.python_version}`."
+                )
+            else:
+                lines.append(f"Author-selected Python version: `{plan.python_version}`.")
         else:
             lines.append("The author has not supplied a tested Python version.")
         if plan.report.python_requires:
@@ -82,12 +89,27 @@ class DocumentRenderer:
                 "python -m pip install -r requirements.txt",
                 "```",
                 "",
+                "`requirements.txt` retains declared constraints and any supplied decisions. "
+                "Unpinned packages are installable suggestions; their original tested versions "
+                "cannot be recovered from imports alone.",
+                "",
                 "## Launch",
                 "",
             ]
         )
         if plan.run_spec:
             run = plan.run_spec
+            if plan.run_spec_origin == "inferred":
+                lines.extend(
+                    [
+                        "The following command was inferred from project structure and static "
+                        "facts. It has not been confirmed by the author or executed; "
+                        "arguments may still be required.",
+                        "",
+                    ]
+                )
+            elif plan.run_spec_origin == "author":
+                lines.extend(["The author supplied this launch configuration.", ""])
             lines.extend(
                 [
                     "From the extracted package root with the environment activated:",
@@ -113,20 +135,25 @@ class DocumentRenderer:
             if ProjectLauncher.required(plan):
                 lines.extend(
                     [
-                        "`run_project.py` applies the reviewed working directory, source roots, "
+                        "`run_project.py` applies the recorded working directory, source roots, "
                         "entry point and arguments. It uses the extracted files directly; "
                         "no project build hooks are needed.",
                         "",
                     ]
                 )
         else:
+            assessment = LaunchDetector().detect(plan.report, plan.files)
             lines.extend(
                 [
-                    "A launch target has not been selected. "
-                    "Ask the author to provide it before running the experiment.",
+                    "A unique launch command could not be established statically. "
+                    "The dependency and source package remains available for review.",
                     "",
                 ]
             )
+            for candidate in assessment.candidates[:10]:
+                lines.extend(self._candidate_commands(plan, candidate))
+            if len(assessment.candidates) > 10:
+                lines.extend(["Additional source files may have their own launch scenarios.", ""])
 
         lines.extend(
             [
@@ -165,6 +192,7 @@ class DocumentRenderer:
                 "An existing project README remains there. "
                 "`analysis-report.json` records the analyzed facts and this package plan.",
                 "",
+                *self._file_tree(plan),
             ]
         )
         if plan.report.layout:
@@ -194,3 +222,64 @@ class DocumentRenderer:
             ]
         )
         return "\n".join(lines)
+
+    @staticmethod
+    def _file_tree(plan: PackagePlan) -> list[str]:
+        lines = ["```text", "README.md", "requirements.txt", "analysis-report.json"]
+        if ProjectLauncher.required(plan):
+            lines.append("run_project.py")
+        lines.append("project/")
+        for file in plan.files[:80]:
+            lines.append("  " + file.path.replace("`", "\\`"))
+        if len(plan.files) > 80:
+            lines.append(f"  ... {len(plan.files) - 80} additional files")
+        lines.extend(["```", ""])
+        return lines
+
+    @staticmethod
+    def _candidate_commands(plan: PackagePlan, candidate: LaunchCandidate) -> list[str]:
+        run = candidate.run_spec
+        lines = [f"Candidate: {candidate.reason}", "", "```sh", "cd project"]
+        if run.working_directory != ".":
+            lines.append("cd " + shlex.quote(run.working_directory))
+        roots = (
+            plan.report.layout.source_roots
+            if plan.report.layout
+            else plan.report.options.source_roots
+        )
+        relative_roots = [posixpath.relpath(root, run.working_directory) for root in roots]
+        if run.kind == "script" and set(relative_roots) == {posixpath.dirname(run.target) or "."}:
+            target = "./" + run.target if run.target.startswith("-") else run.target
+            command = ["python", target]
+        else:
+            code = DocumentRenderer._candidate_python(run, relative_roots)
+            command = ["python", "-c", code]
+        lines.extend([shlex.join(command), "```", ""])
+        return lines
+
+    @staticmethod
+    def _candidate_python(run: RunSpec, roots: list[str]) -> str:
+        statements = [
+            "import importlib, runpy, sys",
+            f"sys.path[:0] = {roots!r}",
+            f"sys.argv = [{run.target!r}]",
+        ]
+        if run.kind == "callable":
+            module, attribute = run.target.split(":", 1)
+            statements.append(f"entry = importlib.import_module({module!r})")
+            for part in attribute.split("."):
+                statements.append(f"entry = getattr(entry, {part!r})")
+            statements.append("raise SystemExit(entry())")
+        elif run.kind == "module":
+            statements.append(
+                f"runpy.run_module({run.target!r}, run_name='__main__', alter_sys=True)"
+            )
+        else:
+            parent = posixpath.dirname(run.target) or "."
+            statements.extend(
+                [
+                    f"sys.path.insert(0, {parent!r})",
+                    f"runpy.run_path({run.target!r}, run_name='__main__')",
+                ]
+            )
+        return "; ".join(statements)

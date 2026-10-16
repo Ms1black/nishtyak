@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from nishtyak_core.environment import AuthorEnvironmentSnapshot
 from nishtyak_core.jobs import AnalysisJobResult
+from nishtyak_core.locking import DependencyLock
 from nishtyak_core.models import AnalysisOptions, AnalysisReport
 from nishtyak_core.report_codec import (
     AnalysisReportCodec,
@@ -181,6 +182,7 @@ class SQLiteJobRepository:
                 decisions_json = NULL, updated_at = excluded.updated_at""",
                 (project_id, now),
             )
+            (self._project_directory(project_id) / "dependency-lock.json").unlink(missing_ok=True)
             return self._record(
                 connection.execute(
                     "SELECT * FROM projects WHERE project_id = ?", (project_id,)
@@ -196,6 +198,41 @@ class SQLiteJobRepository:
                 "SELECT * FROM decision_documents WHERE project_id = ?", (project_id,)
             ).fetchone()
             return self._decision_document(report.analysis_id, document)
+
+    def save_lock(self, owner_id: str, project_id: str, lock: DependencyLock) -> None:
+        payload = bounded_json(lock.to_dict(), 512 * 1024)
+        with self._transaction() as connection:
+            report = self._decision_report(connection, owner_id, project_id)
+            if lock.analysis_id != report.analysis_id:
+                raise ServiceError(409, "LOCK_STALE", "Lock belongs to another analysis")
+            self._write_file(
+                self._project_directory(project_id) / "dependency-lock.json", payload, replace=True
+            )
+
+    def read_lock(self, owner_id: str, project_id: str) -> DependencyLock:
+        with self._transaction() as connection:
+            report = self._decision_report(connection, owner_id, project_id)
+            path = self._project_directory(project_id) / "dependency-lock.json"
+            try:
+                descriptor = os.open(
+                    path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                )
+                with os.fdopen(descriptor, "rb") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise ValueError("Invalid lock file")
+                    raw = stream.read(512 * 1024 + 1)
+                if len(raw) > 512 * 1024:
+                    raise ValueError("Lock exceeds its limit")
+                lock = DependencyLock.from_dict(json.loads(raw))
+            except FileNotFoundError:
+                raise ServiceError(404, "LOCK_NOT_FOUND", "Resolve dependencies first") from None
+            except (OSError, ValueError, TypeError):
+                raise ServiceError(
+                    409, "LOCK_INVALID", "Stored dependency lock is invalid"
+                ) from None
+            if lock.analysis_id != report.analysis_id:
+                raise ServiceError(409, "LOCK_STALE", "Lock belongs to another analysis")
+            return lock
 
     def save_decisions(
         self,

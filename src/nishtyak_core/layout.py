@@ -50,7 +50,7 @@ class LayoutDetector:
             roots.append(src)
         return ProjectLayout(
             root=root,
-            source_roots=tuple(sorted(set(roots))),
+            source_roots=tuple(dict.fromkeys(roots)),
             root_candidates=candidates,
             ambiguous=ambiguous,
         )
@@ -122,7 +122,7 @@ class ProjectLauncher:
             "args": run.args,
         }
         content = (
-            '''"""Launch the author's reviewed command; run only on a trusted project."""
+            '''"""Launch the packaged command; run only on a trusted project."""
 from __future__ import annotations
 
 import importlib

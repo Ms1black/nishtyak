@@ -137,13 +137,16 @@ class AnalysisReport:
     declared_requirements: tuple[str, ...] = ()
     python_requires: str | None = None
     entrypoints: tuple[str, ...] = ()
-    schema_version: int = 2
+    schema_version: int = 3
     layout: ProjectLayout | None = None
     declarations: tuple[DependencyDeclaration, ...] = ()
     optional_groups: tuple[str, ...] = ()
     author_environment_id: str | None = None
     author_python_version: str | None = None
     author_platform: str | None = None
+    main_guards: tuple[str, ...] = ()
+    parsed_sources: tuple[str, ...] = ()
+    executable_sources: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return TextRedactor().redact_value(asdict(self))
@@ -188,6 +191,7 @@ class PackagePlan:
     input_description: str = ""
     expected_output: str = ""
     decisions: UserDecisions | None = None
+    run_spec_origin: str = "unknown"
 
     @property
     def analysis_id(self) -> str:

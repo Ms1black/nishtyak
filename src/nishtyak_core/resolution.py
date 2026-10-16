@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from .import_graph import LocalModuleIndex
 from .models import DependencyCandidate, Finding, ImportObservation, ProjectSnapshot
 
 PACKAGE_NAMES = {
@@ -41,45 +42,6 @@ PACKAGE_NAMES = {
 }
 
 
-class LocalModuleIndex:
-    def __init__(self, snapshot: ProjectSnapshot, source_roots: tuple[str, ...]) -> None:
-        self.modules: set[str] = set()
-        self.file_modules: dict[str, str] = {}
-        self.package_files: set[str] = set()
-        for source in snapshot.files:
-            if not source.path.endswith(".py"):
-                continue
-            for root in sorted(source_roots, key=len, reverse=True):
-                prefix = root.rstrip("/") + "/" if root != "." else ""
-                if not source.path.startswith(prefix):
-                    continue
-                relative = source.path[len(prefix) :]
-                parts = relative[:-3].split("/")
-                if parts[-1] == "__init__":
-                    parts.pop()
-                    self.package_files.add(source.path)
-                if not parts or not all(part.isidentifier() for part in parts):
-                    continue
-                module = ".".join(parts)
-                self.file_modules.setdefault(source.path, module)
-                for length in range(1, len(parts) + 1):
-                    self.modules.add(".".join(parts[:length]))
-
-    def resolve_relative(self, observation: ImportObservation) -> str | None:
-        current = self.file_modules.get(observation.path)
-        if current is None:
-            return None
-        package = current.split(".")
-        if observation.path not in self.package_files:
-            package.pop()
-        if observation.level > len(package):
-            return None
-        prefix = package[: len(package) - observation.level + 1]
-        suffix = observation.module.split(".") if observation.module else []
-        module = ".".join((*prefix, *suffix))
-        return module if module in self.modules else None
-
-
 class StandardLibraryProfile:
     def __init__(self, python_version: str) -> None:
         parts = python_version.split(".")
@@ -88,8 +50,19 @@ class StandardLibraryProfile:
         major, minor = (int(part) for part in parts)
         if major != 3 or minor < 8:
             raise ValueError("python_version must refer to Python 3.8 or later")
-        self.supported = (major, minor) == sys.version_info[:2]
-        self.modules = set(sys.stdlib_module_names)
+        self.supported = False
+        self.modules: set[str] = set()
+        try:
+            from stdlib_list import stdlib_list
+
+            self.modules = {name.split(".", 1)[0] for name in stdlib_list(python_version)}
+            self.supported = True
+        except (ImportError, ValueError):
+            # A missing/future table must never classify using another Python's
+            # standard library. The current interpreter remains a safe fallback.
+            if (major, minor) == sys.version_info[:2]:
+                self.modules = set(sys.stdlib_module_names)
+                self.supported = True
 
     def contains(self, module: str) -> bool:
         return self.supported and module in self.modules
@@ -122,13 +95,51 @@ class DependencyResolver:
         for observation in observations:
             module = observation.module.split(".", 1)[0]
             package = None
-            if observation.level:
-                resolved = self.local.resolve_relative(observation)
-                module = "." * observation.level + observation.module
-                category = "local" if resolved else "unresolved"
-            elif module in self.local.modules:
-                category = "local"
-                if self.stdlib.contains(module) or module in PACKAGE_NAMES:
+            local = self.local.resolve_observation(observation)
+            if local.status != "external":
+                category = (
+                    "unresolved"
+                    if (observation.level and local.status == "missing_local" and not local.paths)
+                    else "local"
+                )
+                if observation.level:
+                    module = "." * observation.level + observation.module
+                if local.status == "missing_local":
+                    findings.append(
+                        Finding(
+                            "LOCAL_MODULE_MISSING",
+                            local.reason,
+                            observation.path,
+                            observation.line,
+                            evidence_ids=(observation.id,),
+                        )
+                    )
+                if local.missing_names:
+                    findings.append(
+                        Finding(
+                            "LOCAL_IMPORT_NAME_UNRESOLVED",
+                            "Imported names are neither local submodules nor statically "
+                            "declared names: "
+                            + ", ".join(local.missing_names)
+                            + ". Runtime exports cannot be verified statically.",
+                            observation.path,
+                            observation.line,
+                            evidence_ids=(observation.id,),
+                        )
+                    )
+                if local.script_context:
+                    findings.append(
+                        Finding(
+                            "LOCAL_IMPORT_CONTEXT_REQUIRED",
+                            local.reason + " Verify the selected launch context.",
+                            observation.path,
+                            observation.line,
+                            evidence_ids=(observation.id,),
+                        )
+                    )
+                if not observation.level and (
+                    self.stdlib.contains(module) or module in PACKAGE_NAMES
+                ):
                     findings.append(
                         Finding(
                             "LOCAL_NAME_COLLISION",
@@ -138,6 +149,9 @@ class DependencyResolver:
                             evidence_ids=(observation.id,),
                         )
                     )
+            elif observation.level:
+                module = "." * observation.level + observation.module
+                category = "local"
             elif self.stdlib.contains(module):
                 category = "stdlib"
             else:
@@ -158,6 +172,12 @@ class DependencyResolver:
                 used_declarations.add(canonicalize_name(package))
             requirement = values[0] if len(values) == 1 else None
             status = "declared" if values else "inferred"
+            if category == "local" and any(
+                finding.code in {"LOCAL_MODULE_MISSING", "LOCAL_IMPORT_NAME_UNRESOLVED"}
+                and set(finding.evidence_ids) & {item.id for item in evidence}
+                for finding in findings
+            ):
+                status = "unresolved"
             if category == "unresolved":
                 status = "unresolved"
                 findings.append(
@@ -243,4 +263,4 @@ def normalize_roots(roots: tuple[str, ...]) -> tuple[str, ...]:
         if root.startswith("/") or ".." in root.split("/"):
             raise ValueError("Source roots must stay inside the project")
         normalized.append(path)
-    return tuple(sorted(set(normalized)))
+    return tuple(dict.fromkeys(normalized))
