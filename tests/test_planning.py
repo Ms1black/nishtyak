@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 from packaging.requirements import Requirement
 
+from nishtyak_core.analysis import ProjectAnalyzer
 from nishtyak_core.models import (
     AnalysisOptions,
     AnalysisReport,
@@ -18,6 +19,7 @@ from nishtyak_core.models import (
 )
 from nishtyak_core.planning import PackagePlanner
 from nishtyak_core.rendering import DocumentRenderer
+from nishtyak_core.snapshot import SnapshotBuilder
 
 
 @pytest.fixture
@@ -300,3 +302,166 @@ def test_excluded_source_secrets_are_redacted_from_nested_report_and_readme(repo
     for file in generated.files:
         assert token.encode() not in file.content
         assert b"user:password" not in file.content
+
+
+def test_excluding_a_local_dependency_blocks_retained_importer():
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "main.py": "import helpers\n",
+            "helpers.py": "VALUE = 42\n",
+        }
+    )
+    report = ProjectAnalyzer().analyze(snapshot)
+    plan = PackagePlanner().prepare(
+        report,
+        UserDecisions(
+            analysis_id=report.analysis_id,
+            excluded_files=("helpers.py",),
+            data_confirmed=True,
+            run_spec=RunSpec("main.py"),
+        ),
+    )
+    assert plan.state == "blocked"
+    finding = next(item for item in plan.findings if item.code == "LOCAL_MODULE_EXCLUDED")
+    assert finding.path == "main.py"
+    assert finding.line == 1
+    assert "helpers" in finding.message
+    assert plan.requirements == ()
+
+
+def test_excluding_importer_does_not_block_for_its_removed_local_dependency():
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "main.py": "print('standalone')\n",
+            "other.py": "import helpers\n",
+            "helpers.py": "VALUE = 42\n",
+        }
+    )
+    report = ProjectAnalyzer().analyze(snapshot)
+    plan = PackagePlanner().prepare(
+        report,
+        UserDecisions(
+            analysis_id=report.analysis_id,
+            excluded_files=("helpers.py", "other.py"),
+            data_confirmed=True,
+            run_spec=RunSpec("main.py"),
+        ),
+    )
+    assert plan.state == "ready_to_verify"
+    assert "LOCAL_MODULE_EXCLUDED" not in codes(plan)
+
+
+@pytest.mark.parametrize("package_name", ["env", "venv"])
+def test_ordinary_environment_named_python_packages_are_retained(package_name):
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "main.py": f"import {package_name}\n",
+            f"{package_name}/__init__.py": "VALUE = 42\n",
+        }
+    )
+    report = ProjectAnalyzer().analyze(snapshot)
+    plan = PackagePlanner().prepare(
+        report,
+        UserDecisions(
+            analysis_id=report.analysis_id, data_confirmed=True, run_spec=RunSpec("main.py")
+        ),
+    )
+    assert plan.state == "ready_to_verify"
+    assert f"{package_name}/__init__.py" in {file.path for file in plan.files}
+    assert plan.requirements == ()
+
+
+@pytest.mark.parametrize(
+    "environment_files",
+    [
+        {"env/pyvenv.cfg": "home = /python", "env/random.py": ""},
+        {"venv/bin/activate": "", "venv/bin/python": ""},
+        {"env/Scripts/activate": "", "env/Lib/site-packages/vendor/__init__.py": ""},
+    ],
+)
+def test_detected_virtual_environments_remain_excluded(environment_files):
+    snapshot = SnapshotBuilder().from_mapping({"main.py": "print('ok')", **environment_files})
+    report = ProjectAnalyzer().analyze(snapshot)
+    plan = PackagePlanner().prepare(
+        report,
+        UserDecisions(
+            analysis_id=report.analysis_id, data_confirmed=True, run_spec=RunSpec("main.py")
+        ),
+    )
+    assert {file.path for file in plan.files} == {"main.py"}
+    assert set(environment_files) <= set(plan.excluded_files)
+
+
+@pytest.mark.parametrize(
+    "import_statement",
+    [
+        "from .helpers import VALUE",
+        "from . import helpers",
+        "from experiment import helpers",
+        "import experiment.helpers",
+    ],
+)
+def test_excluded_relative_or_absolute_package_submodule_blocks(import_statement):
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "experiment/__init__.py": "",
+            "experiment/main.py": import_statement,
+            "experiment/helpers.py": "VALUE = 42",
+        }
+    )
+    report = ProjectAnalyzer().analyze(snapshot)
+    plan = PackagePlanner().prepare(
+        report,
+        UserDecisions(
+            analysis_id=report.analysis_id,
+            excluded_files=("experiment/helpers.py",),
+            data_confirmed=True,
+            run_spec=RunSpec("experiment.main", kind="module"),
+        ),
+    )
+    assert plan.state == "blocked"
+    finding = next(item for item in plan.findings if item.code == "LOCAL_MODULE_EXCLUDED")
+    assert "experiment.helpers" in finding.message
+
+
+def test_excluding_package_initializer_does_not_silently_change_to_namespace():
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "main.py": "import experiment.helpers",
+            "experiment/__init__.py": "CONFIGURED = True",
+            "experiment/helpers.py": "VALUE = 42",
+        }
+    )
+    report = ProjectAnalyzer().analyze(snapshot)
+    plan = PackagePlanner().prepare(
+        report,
+        UserDecisions(
+            analysis_id=report.analysis_id,
+            excluded_files=("experiment/__init__.py",),
+            data_confirmed=True,
+            run_spec=RunSpec("main.py"),
+        ),
+    )
+    assert plan.state == "blocked"
+    assert "LOCAL_MODULE_EXCLUDED" in codes(plan)
+
+
+def test_revalidation_uses_configured_source_roots():
+    snapshot = SnapshotBuilder().from_mapping(
+        {
+            "src/main.py": "import helpers",
+            "src/helpers.py": "VALUE = 42",
+        }
+    )
+    report = ProjectAnalyzer().analyze(snapshot, AnalysisOptions(source_roots=("src",)))
+    plan = PackagePlanner().prepare(
+        report,
+        UserDecisions(
+            analysis_id=report.analysis_id,
+            excluded_files=("src/helpers.py",),
+            data_confirmed=True,
+            run_spec=RunSpec("main.py", working_directory="src"),
+        ),
+    )
+    assert plan.state == "blocked"
+    assert "LOCAL_MODULE_EXCLUDED" in codes(plan)

@@ -12,11 +12,12 @@ class TextRedactor:
         re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
         re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*"),
         re.compile(
-            r"(?i)\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth[_-]?token|"
+            r"(?i)(?<![a-z0-9])(?:api[_-]?key|access[_-]?token|auth[_-]?token|"
             r"secret|password)\b[\"']?\s*[:=]\s*[\"'][^\"'\r\n]{8,}[\"']"
         ),
         re.compile(
-            r"(?m)^[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*\s*=\s*"
+            r"(?m)^(?=[A-Z0-9_]*\s*=)(?=[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))"
+            r"[A-Z0-9_]+\s*=\s*"
             r"[A-Za-z0-9+/=_-]{8,}(?=\s|$)"
         ),
     )

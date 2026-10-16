@@ -13,7 +13,7 @@ class SnapshotError(ValueError):
 
 class SnapshotBuilder:
     excluded_directories = frozenset(
-        {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"}
+        {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"}
     )
 
     def __init__(self, max_files: int = 1_000, max_total_bytes: int = 50_000_000):
@@ -35,12 +35,21 @@ class SnapshotBuilder:
     def from_mapping(self, files: Mapping[str, bytes | str]) -> ProjectSnapshot:
         records = []
         seen: set[str] = set()
+        directories: set[str] = set()
         total = 0
         for raw_path, value in files.items():
             path = self.normalize_path(raw_path)
             if path in seen:
                 raise SnapshotError("Duplicate normalized file path")
+            parents = {
+                parent.as_posix()
+                for parent in PurePosixPath(path).parents
+                if parent.as_posix() != "."
+            }
+            if path in directories or parents & seen:
+                raise SnapshotError("A project path is both a file and a directory")
             seen.add(path)
+            directories.update(parents)
             content = value.encode("utf-8") if isinstance(value, str) else bytes(value)
             total += len(content)
             if len(seen) > self.max_files or total > self.max_total_bytes:
@@ -61,7 +70,10 @@ class SnapshotBuilder:
                 if name not in self.excluded_directories and (Path(current) / name).is_symlink():
                     raise SnapshotError("Project contains a symbolic link directory")
             directories[:] = sorted(
-                name for name in directories if name not in self.excluded_directories
+                name
+                for name in directories
+                if name not in self.excluded_directories
+                and not self._is_virtual_environment(Path(current) / name)
             )
             for name in sorted(filenames):
                 path = Path(current) / name
@@ -74,6 +86,11 @@ class SnapshotBuilder:
                 total += len(content)
                 files[path.relative_to(root).as_posix()] = content
         return self.from_mapping(files)
+
+    @staticmethod
+    def _is_virtual_environment(directory: Path) -> bool:
+        marker = directory / "pyvenv.cfg"
+        return not marker.is_symlink() and marker.is_file()
 
     def validate(self, snapshot: ProjectSnapshot) -> None:
         if len({file.path for file in snapshot.files}) != len(snapshot.files):

@@ -8,7 +8,17 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from .models import AnalysisReport, FileInfo, Finding, PackagePlan, RunSpec, UserDecisions
+from .models import (
+    AnalysisReport,
+    FileInfo,
+    Finding,
+    PackagePlan,
+    ProjectSnapshot,
+    RunSpec,
+    SourceFile,
+    UserDecisions,
+)
+from .resolution import LocalModuleIndex
 from .security import SecretScanner
 
 
@@ -21,8 +31,6 @@ class PackagePlanner:
             ".hg",
             ".svn",
             ".venv",
-            "venv",
-            "env",
             "__pycache__",
             ".pytest_cache",
             ".mypy_cache",
@@ -60,7 +68,9 @@ class PackagePlanner:
         included, excluded = self._select_files(report.files, decisions.excluded_files)
         findings = list(report.findings)
         draft = report.status != "complete"
-        blocked = False
+        local_findings = self._validate_local_imports(report, included)
+        findings.extend(local_findings)
+        blocked = bool(local_findings)
 
         for finding in report.findings:
             if finding.code == "SECRET_DETECTED":
@@ -340,6 +350,7 @@ class PackagePlanner:
         self, files: tuple[FileInfo, ...], requested_exclusions: tuple[str, ...]
     ) -> tuple[tuple[FileInfo, ...], tuple[str, ...]]:
         prefixes = tuple(self._safe_path(path.rstrip("/")) for path in requested_exclusions)
+        environment_roots = self._virtual_environment_roots(files)
         included = []
         excluded = []
         for file in sorted(files, key=lambda item: item.path):
@@ -347,6 +358,7 @@ class PackagePlanner:
             parts = PurePosixPath(path).parts
             filename = parts[-1]
             omit = bool(set(parts[:-1]) & self._excluded_directories)
+            omit = omit or any(path.startswith(root + "/") for root in environment_roots)
             omit = omit or filename == ".env" or filename.startswith(".env.")
             omit = omit or PurePosixPath(path).suffix.lower() in self._excluded_suffixes
             omit = omit or filename in {"id_rsa", "id_ed25519", "id_dsa", ".DS_Store"}
@@ -355,6 +367,91 @@ class PackagePlanner:
             )
             (excluded if omit else included).append(file.path if omit else file)
         return tuple(included), tuple(excluded)
+
+    @staticmethod
+    def _virtual_environment_roots(files: tuple[FileInfo, ...]) -> set[str]:
+        paths = {file.path for file in files}
+        roots = {
+            str(PurePosixPath(path).parent)
+            for path in paths
+            if PurePosixPath(path).name == "pyvenv.cfg" and str(PurePosixPath(path).parent) != "."
+        }
+        candidates = set()
+        for path in paths:
+            parts = PurePosixPath(path).parts
+            for index, part in enumerate(parts[:-1]):
+                if part in {"env", "venv"}:
+                    candidates.add("/".join(parts[: index + 1]))
+        for root in candidates:
+            activation = {root + "/bin/activate", root + "/Scripts/activate"}
+            interpreters = {root + "/bin/python", root + "/Scripts/python.exe"}
+            site_packages = any(
+                path.startswith(root + "/") and "site-packages" in PurePosixPath(path).parts
+                for path in paths
+            )
+            if paths & activation and (paths & interpreters or site_packages):
+                roots.add(root)
+        return roots
+
+    @staticmethod
+    def _validate_local_imports(
+        report: AnalysisReport, included: tuple[FileInfo, ...]
+    ) -> list[Finding]:
+        original = LocalModuleIndex(
+            ProjectSnapshot(tuple(SourceFile(file.path, b"") for file in report.files), ""),
+            report.options.source_roots,
+        )
+        retained = LocalModuleIndex(
+            ProjectSnapshot(tuple(SourceFile(file.path, b"") for file in included), ""),
+            report.options.source_roots,
+        )
+        included_paths = {file.path for file in included}
+        original_providers = set(original.file_modules.values())
+        retained_providers = set(retained.file_modules.values())
+        findings = []
+        for observation in report.imports:
+            if observation.path not in included_paths:
+                continue
+            if observation.level:
+                module = original.resolve_relative(observation)
+                if module is None:
+                    continue
+            else:
+                module = observation.module
+                if module not in original.modules:
+                    module = module.split(".", 1)[0]
+                if module not in original.modules:
+                    continue
+            required = {module}
+            if observation.kind == "from":
+                required.update(
+                    f"{module}.{name}"
+                    for name in observation.names
+                    if f"{module}.{name}" in original.modules
+                )
+            missing = set()
+            for target in required:
+                if target not in retained.modules:
+                    missing.add(target)
+                parts = target.split(".")
+                for length in range(1, len(parts) + 1):
+                    parent = ".".join(parts[:length])
+                    if parent in original_providers and parent not in retained_providers:
+                        missing.add(parent)
+            if missing:
+                findings.append(
+                    Finding(
+                        "LOCAL_MODULE_EXCLUDED",
+                        "An included source imports local modules removed from the package: "
+                        + ", ".join(sorted(missing))
+                        + ". Restore their files or exclude the importer.",
+                        path=observation.path,
+                        line=observation.line,
+                        severity="error",
+                        evidence_ids=(observation.id,),
+                    )
+                )
+        return findings
 
     @staticmethod
     def _safe_path(value: str, allow_dot: bool = False) -> str:

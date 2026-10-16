@@ -1,115 +1,196 @@
 openapi: 3.1.0
 info:
   title: nishtyak HTTP adapter contract
-  version: 0.1.0
-  description: Proposed integration contract for the backend developer. Python library and CLI are implemented;
-    HTTP routes are not implemented in this branch.
+  version: 0.2.0
+  description: Proposed asynchronous HTTP integration contract. Python core and worker are implemented; these HTTP
+    routes are not implemented. All resources belong to the authenticated server-side session. Foreign resources
+    return the same 404 as unknown resources. Server quotas override client options; overload returns 429 with Retry-After.
+    See API_CONTRACT.md for lifecycle and limits.
+security:
+- SessionAuth: []
 paths:
   /api/projects:
     post:
       operationId: createProject
-      summary: Upload ZIP and analyze without execution
+      summary: Store a bounded ZIP and enqueue static analysis
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
+              additionalProperties: false
               required:
               - file
               properties:
                 file:
                   type: string
                   format: binary
+                  description: ZIP up to 10 MiB. Uploaded files and build hooks are never executed.
                 options:
                   type: string
+                  maxLength: 65536
                   description: Optional JSON object matching AnalysisOptions; server limits take precedence.
       responses:
-        '201':
-          description: Successful result
+        '202':
+          description: Project stored and analysis accepted; no analysis report is returned yet.
+          headers:
+            Location:
+              description: Relative URL /api/jobs/{job_id} for polling.
+              schema:
+                type: string
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProjectResponse'
-        default: &id001
-          description: Sanitized adapter error; see API_CONTRACT.md for status mapping.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/projects/{project_id}:
+                $ref: '#/components/schemas/ProjectAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/UploadLimit'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '422':
+          $ref: '#/components/responses/InvalidDto'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/AdapterError'
+  /api/jobs/{job_id}:
     parameters:
-    - &id002
-      name: project_id
+    - name: job_id
       in: path
       required: true
       schema:
         type: string
     get:
-      operationId: getProject
-      summary: Return the stored analysis
+      operationId: getJob
+      summary: Return the owned job lifecycle and its public report after success
       responses:
         '200':
-          description: Successful result
+          description: Lifecycle status is independent of analysis.status complete/partial. Only succeeded includes
+            analysis, serialized through AnalysisReport.to_dict(). Failure states include a sanitized error. An
+            expired owned job may remain as a metadata tombstone.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/AdapterError'
+  /api/projects/{project_id}:
+    parameters:
+    - $ref: '#/components/parameters/ProjectId'
+    get:
+      operationId: getProject
+      summary: Return the public analysis only after a successful job
+      responses:
+        '200':
+          description: Stored report serialized through AnalysisReport.to_dict().
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProjectResponse'
-        default: *id001
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AnalysisConflict'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/AdapterError'
+    delete:
+      operationId: deleteProject
+      summary: Revoke access, cancel active work and remove project data
+      description: After 204 all project and job reads return 404, including racing worker results. Inputs, reports,
+        bundles and advisory data are removed; a failed physical cleanup is retried internally without restoring
+        access. Repeating DELETE after removal returns 404.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Access revoked and cleanup accepted; no response body.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/AdapterError'
   /api/projects/{project_id}/plan:
     parameters:
-    - *id002
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: preparePlan
-      summary: Prepare a plan from author decisions
+      summary: Prepare a plan from author decisions after analysis succeeds
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/UserDecisions'
-            example: &id003
-              analysis_id: 5bf6b373dcb03bb8ab58
-              packages: {}
-              versions: {}
-              excluded_modules: []
-              excluded_files: []
-              run_spec:
-                target: main.py
-                kind: script
-                args: []
-                working_directory: .
-              python_version: '3.11'
-              description: ''
-              input_description: data.csv contains the values 2, 4 and 6.
-              expected_output: mean=4.00
-              data_confirmed: true
       responses:
         '200':
-          description: Draft, blocked or ready_to_verify plan with findings.
+          description: Draft, blocked or ready_to_verify plan with findings via plan.to_dict().
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PackagePlan'
-        default: *id001
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AnalysisConflict'
+        '422':
+          $ref: '#/components/responses/InvalidDto'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/AdapterError'
   /api/projects/{project_id}/bundle:
     parameters:
-    - *id002
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: downloadBundle
-      summary: Recompute a server-side plan and download its ZIP
+      summary: Recompute a stored successful report into a plan and download ZIP
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/BundleRequest'
-            example:
-              decisions: *id003
-              include_dockerfile: false
       responses:
         '200':
-          description: Reproducibility ZIP; draft export is allowed.
+          description: Reproducibility ZIP; draft export is allowed, blocked export is rejected.
           headers:
             Content-Disposition:
               schema:
@@ -120,31 +201,157 @@ paths:
               schema:
                 type: string
                 format: binary
-        default: *id001
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AnalysisConflict'
+        '422':
+          $ref: '#/components/responses/InvalidDto'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/AdapterError'
   /api/projects/{project_id}/advice:
     parameters:
-    - *id002
+    - $ref: '#/components/parameters/ProjectId'
     post:
       operationId: requestAdvice
-      summary: Request optional AI suggestions that require confirmation
+      summary: Request optional AI suggestions after analysis succeeds
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/AdviceRequest'
-            example:
-              feature: explain
-              description: ''
       responses:
         '200':
-          description: AI status is independent of the core pipeline.
+          description: AI status is independent of the core pipeline; suggestions require confirmation.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AdvisoryResult'
-        default: *id001
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AnalysisConflict'
+        '422':
+          $ref: '#/components/responses/InvalidDto'
+        '429':
+          $ref: '#/components/responses/QuotaExceeded'
+        default:
+          $ref: '#/components/responses/AdapterError'
 components:
+  securitySchemes:
+    SessionAuth:
+      type: apiKey
+      in: cookie
+      name: __Host-nishtyak_session
+      description: 'Opaque random session ID backed by server-side ownership records. Cookie attributes: Secure;
+        HttpOnly; SameSite=Strict; Path=/; no Domain. Session issuance/login is outside this contract. No route
+        permits anonymous access.'
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Session-bound token supplied by the hosting UI bootstrap; validate Origin as well.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+  headers:
+    RetryAfter:
+      description: Required on 429; suggested polling delay on 202 and pending job responses, in seconds.
+      schema:
+        type: integer
+        minimum: 1
+        default: 2
+  responses:
+    BadRequest:
+      description: Malformed JSON/options or an upload rejected before queueing; sanitized code/message.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthenticated:
+      description: SESSION_REQUIRED; session cookie is absent, invalid or expired.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: REQUEST_FORBIDDEN; CSRF token or Origin validation failed. Never used for foreign IDs.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: RESOURCE_NOT_FOUND; identical for foreign, unknown, deleted and fully expired resources.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    AnalysisConflict:
+      description: ANALYSIS_NOT_READY for queued/running; ANALYSIS_UNAVAILABLE for failed/timed_out/resource_limited;
+        STALE_ANALYSIS for obsolete analysis_id; PLAN_BLOCKED for blocked bundle export.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UploadLimit:
+      description: UPLOAD_LIMIT; compressed upload exceeds the server limit before queueing.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnsupportedMedia:
+      description: UNSUPPORTED_MEDIA; only ZIP multipart uploads are accepted.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidDto:
+      description: INVALID_REQUEST; invalid typed DTO, options, decisions or generator configuration.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    QuotaExceeded:
+      description: QUEUE_FULL, RATE_LIMITED, STORAGE_QUOTA_EXCEEDED or ADVISORY_BUDGET_EXCEEDED. No partial project/job
+        allocation is exposed when upload is rejected.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    AdapterError:
+      description: Sanitized unexpected adapter failure; no traceback, source content or server paths.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
     FileInfo:
       type: object
@@ -544,3 +751,74 @@ components:
           type: string
           maxLength: 20000
           default: ''
+    JobStatus:
+      type: string
+      enum:
+      - queued
+      - running
+      - succeeded
+      - failed
+      - timed_out
+      - resource_limited
+      - expired
+    ProjectAccepted:
+      type: object
+      additionalProperties: false
+      required:
+      - project_id
+      - job_id
+      - status
+      properties:
+        project_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+    JobResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - project_id
+      - job_id
+      - status
+      properties:
+        project_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        analysis:
+          $ref: '#/components/schemas/AnalysisReport'
+        error:
+          $ref: '#/components/schemas/ErrorResponse'
+      allOf:
+      - if:
+          properties:
+            status:
+              const: succeeded
+        then:
+          required:
+          - analysis
+        else:
+          not:
+            required:
+            - analysis
+      - if:
+          properties:
+            status:
+              enum:
+              - failed
+              - timed_out
+              - resource_limited
+        then:
+          required:
+          - error
+        else:
+          not:
+            required:
+            - error
