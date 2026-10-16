@@ -23,7 +23,7 @@ export const termsEn: TermsContent = {
         'Whoever creates a team becomes its owner. The owner and admins manage members, roles and invite links.',
         'Anyone with a valid invite link can join the team. Do not publish links publicly and delete them when they are no longer needed.',
         'Team members see all current and future team projects.',
-        'Deleting a team is irreversible: its projects, archives and invite links are deleted with it.',
+        'Deleting a team is irreversible: access to its projects and archives is revoked, and invite links stop working. Stored files are deleted when their retention period ends.',
       ],
     },
     {
@@ -32,7 +32,7 @@ export const termsEn: TermsContent = {
       items: [
         'Rights to uploaded code and data remain with you or their rights holders.',
         'By uploading a project you confirm you are entitled to do so and allow the service to store and process it as needed for analysis and building the archive.',
-        'The service looks for secrets (tokens, keys, passwords) and excludes such files from the archive by default, but detection is not guaranteed to be complete. Review your project before uploading and before sharing the archive.',
+        'The service looks for secrets (tokens, keys, passwords) and blocks building until files with detected secrets are excluded from the package. Detection is not guaranteed to be complete. Review your project before uploading and before sharing the archive.',
         'Texts you write in the project description go into the archive README.',
       ],
     },
