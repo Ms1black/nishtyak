@@ -6,10 +6,13 @@
 .ruff_cache
 build
 dist
+var
 tests
 docs
 examples
 .env
 .env.*
+**/.env
+**/.env.*
 **/*.pem
 **/*.key
