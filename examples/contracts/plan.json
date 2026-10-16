@@ -1,0 +1,232 @@
+{
+  "report": {
+    "analysis_id": "5bf6b373dcb03bb8ab58",
+    "fingerprint": "4053f8dea9b9a5761d40",
+    "options": {
+      "python_version": "3.11",
+      "source_roots": [
+        "."
+      ],
+      "max_source_bytes": 1000000,
+      "max_files": 1000
+    },
+    "files": [
+      {
+        "path": "data.csv",
+        "size": 12,
+        "sha256": "4bf52ef5f6a4bb4d36efed5a331d561e4f0a7d2d25f77f48345f89ba364374e0"
+      },
+      {
+        "path": "helpers.py",
+        "size": 58,
+        "sha256": "487b1ab0923ae2da897e35367001324ac3207533dead1d8d37ce27eb969fd48f"
+      },
+      {
+        "path": "main.py",
+        "size": 192,
+        "sha256": "b5aea3ff2dd568c233b691e3742744b733403b3f1ff2c9d732608c9d48ba9a6c"
+      }
+    ],
+    "imports": [
+      {
+        "module": "csv",
+        "path": "main.py",
+        "line": 1,
+        "names": [],
+        "level": 0,
+        "context": "runtime",
+        "kind": "import",
+        "id": "b804a78d0d8f2eb8b5d7"
+      },
+      {
+        "module": "helpers",
+        "path": "main.py",
+        "line": 3,
+        "names": [
+          "average"
+        ],
+        "level": 0,
+        "context": "runtime",
+        "kind": "from",
+        "id": "39f8a12223a8e81be537"
+      }
+    ],
+    "dependencies": [
+      {
+        "module": "csv",
+        "category": "stdlib",
+        "package": null,
+        "requirement": null,
+        "status": "inferred",
+        "evidence_ids": [
+          "b804a78d0d8f2eb8b5d7"
+        ],
+        "reason": "Recognized by the selected Python standard-library profile.",
+        "context": "runtime",
+        "id": "c00cb55b12d0968cc543"
+      },
+      {
+        "module": "helpers",
+        "category": "local",
+        "package": null,
+        "requirement": null,
+        "status": "inferred",
+        "evidence_ids": [
+          "39f8a12223a8e81be537"
+        ],
+        "reason": "Resolved against the configured project source roots.",
+        "context": "runtime",
+        "id": "6c718d02ee8a647be243"
+      }
+    ],
+    "findings": [
+      {
+        "code": "DATA_DEPENDENCIES_UNVERIFIED",
+        "message": "Input files, configuration and external services need author confirmation.",
+        "path": null,
+        "line": null,
+        "severity": "warning",
+        "evidence_ids": [],
+        "id": "003f530dcd17adefc25f"
+      },
+      {
+        "code": "PYTHON_VERSION_UNKNOWN",
+        "message": "Project Python version is undeclared; the profile is not evidence.",
+        "path": null,
+        "line": null,
+        "severity": "warning",
+        "evidence_ids": [],
+        "id": "6bc74778ad8f444c52d2"
+      },
+      {
+        "code": "README_MISSING",
+        "message": "No README was found at the project root.",
+        "path": null,
+        "line": null,
+        "severity": "info",
+        "evidence_ids": [],
+        "id": "d9744dccc659a815c167"
+      },
+      {
+        "code": "LICENSE_MISSING",
+        "message": "No license document was found at the project root; clarify reuse terms.",
+        "path": null,
+        "line": null,
+        "severity": "info",
+        "evidence_ids": [],
+        "id": "29c40812965895f632ac"
+      },
+      {
+        "code": "DATA_FILES_SUMMARY",
+        "message": "Project includes 1 CSV and 0 JSON files; their role as experiment inputs needs author confirmation.",
+        "path": null,
+        "line": null,
+        "severity": "info",
+        "evidence_ids": [],
+        "id": "7bebd41fe84835ec3649"
+      }
+    ],
+    "status": "complete",
+    "declared_requirements": [],
+    "python_requires": null,
+    "entrypoints": [
+      "main.py"
+    ],
+    "schema_version": 1
+  },
+  "requirements": [],
+  "run_spec": {
+    "target": "main.py",
+    "kind": "script",
+    "args": [],
+    "working_directory": "."
+  },
+  "python_version": "3.11",
+  "files": [
+    {
+      "path": "data.csv",
+      "size": 12,
+      "sha256": "4bf52ef5f6a4bb4d36efed5a331d561e4f0a7d2d25f77f48345f89ba364374e0"
+    },
+    {
+      "path": "helpers.py",
+      "size": 58,
+      "sha256": "487b1ab0923ae2da897e35367001324ac3207533dead1d8d37ce27eb969fd48f"
+    },
+    {
+      "path": "main.py",
+      "size": 192,
+      "sha256": "b5aea3ff2dd568c233b691e3742744b733403b3f1ff2c9d732608c9d48ba9a6c"
+    }
+  ],
+  "excluded_files": [],
+  "findings": [
+    {
+      "code": "DATA_DEPENDENCIES_UNVERIFIED",
+      "message": "Input files, configuration and external services need author confirmation.",
+      "path": null,
+      "line": null,
+      "severity": "warning",
+      "evidence_ids": [],
+      "id": "003f530dcd17adefc25f"
+    },
+    {
+      "code": "PYTHON_VERSION_UNKNOWN",
+      "message": "Project Python version is undeclared; the profile is not evidence.",
+      "path": null,
+      "line": null,
+      "severity": "warning",
+      "evidence_ids": [],
+      "id": "6bc74778ad8f444c52d2"
+    },
+    {
+      "code": "README_MISSING",
+      "message": "No README was found at the project root.",
+      "path": null,
+      "line": null,
+      "severity": "info",
+      "evidence_ids": [],
+      "id": "d9744dccc659a815c167"
+    },
+    {
+      "code": "LICENSE_MISSING",
+      "message": "No license document was found at the project root; clarify reuse terms.",
+      "path": null,
+      "line": null,
+      "severity": "info",
+      "evidence_ids": [],
+      "id": "29c40812965895f632ac"
+    },
+    {
+      "code": "DATA_FILES_SUMMARY",
+      "message": "Project includes 1 CSV and 0 JSON files; their role as experiment inputs needs author confirmation.",
+      "path": null,
+      "line": null,
+      "severity": "info",
+      "evidence_ids": [],
+      "id": "7bebd41fe84835ec3649"
+    }
+  ],
+  "state": "ready_to_verify",
+  "description": "",
+  "input_description": "data.csv contains the values 2, 4 and 6.",
+  "expected_output": "mean=4.00",
+  "decisions": {
+    "analysis_id": "5bf6b373dcb03bb8ab58",
+    "packages": {},
+    "versions": {},
+    "excluded_modules": [],
+    "excluded_files": [],
+    "run_spec": {
+      "target": "main.py",
+      "kind": "script",
+      "args": [],
+      "working_directory": "."
+    },
+    "python_version": "3.11",
+    "description": "",
+    "input_description": "data.csv contains the values 2, 4 and 6.",
+    "expected_output": "mean=4.00",
+    "data_confirmed": true
+  }
+}

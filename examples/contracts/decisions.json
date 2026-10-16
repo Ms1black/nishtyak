@@ -1,0 +1,18 @@
+{
+  "analysis_id": "5bf6b373dcb03bb8ab58",
+  "packages": {},
+  "versions": {},
+  "excluded_modules": [],
+  "excluded_files": [],
+  "run_spec": {
+    "target": "main.py",
+    "kind": "script",
+    "args": [],
+    "working_directory": "."
+  },
+  "python_version": "3.11",
+  "description": "",
+  "input_description": "data.csv contains the values 2, 4 and 6.",
+  "expected_output": "mean=4.00",
+  "data_confirmed": true
+}

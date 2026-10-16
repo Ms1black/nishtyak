@@ -1,0 +1,10 @@
+{
+  "python_ast": "https://docs.python.org/3/library/ast.html",
+  "import_resolution": "https://docs.python.org/3/library/importlib.html#importlib.util.find_spec",
+  "requirements": "https://packaging.pypa.io/en/stable/requirements.html",
+  "requirements_format": "https://pip.pypa.io/en/stable/reference/requirements-file-format/",
+  "pyproject": "https://packaging.python.org/en/latest/specifications/pyproject-toml/",
+  "conda": "https://conda.org/learn/ceps/cep-0024/",
+  "deepseek": "https://api-docs.deepseek.com/",
+  "deepseek_json": "https://api-docs.deepseek.com/guides/json_mode/"
+}

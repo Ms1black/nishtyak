@@ -1,0 +1,546 @@
+openapi: 3.1.0
+info:
+  title: nishtyak HTTP adapter contract
+  version: 0.1.0
+  description: Proposed integration contract for the backend developer. Python library and CLI are implemented;
+    HTTP routes are not implemented in this branch.
+paths:
+  /api/projects:
+    post:
+      operationId: createProject
+      summary: Upload ZIP and analyze without execution
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                options:
+                  type: string
+                  description: Optional JSON object matching AnalysisOptions; server limits take precedence.
+      responses:
+        '201':
+          description: Successful result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        default: &id001
+          description: Sanitized adapter error; see API_CONTRACT.md for status mapping.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/projects/{project_id}:
+    parameters:
+    - &id002
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getProject
+      summary: Return the stored analysis
+      responses:
+        '200':
+          description: Successful result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        default: *id001
+  /api/projects/{project_id}/plan:
+    parameters:
+    - *id002
+    post:
+      operationId: preparePlan
+      summary: Prepare a plan from author decisions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserDecisions'
+            example: &id003
+              analysis_id: 5bf6b373dcb03bb8ab58
+              packages: {}
+              versions: {}
+              excluded_modules: []
+              excluded_files: []
+              run_spec:
+                target: main.py
+                kind: script
+                args: []
+                working_directory: .
+              python_version: '3.11'
+              description: ''
+              input_description: data.csv contains the values 2, 4 and 6.
+              expected_output: mean=4.00
+              data_confirmed: true
+      responses:
+        '200':
+          description: Draft, blocked or ready_to_verify plan with findings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackagePlan'
+        default: *id001
+  /api/projects/{project_id}/bundle:
+    parameters:
+    - *id002
+    post:
+      operationId: downloadBundle
+      summary: Recompute a server-side plan and download its ZIP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BundleRequest'
+            example:
+              decisions: *id003
+              include_dockerfile: false
+      responses:
+        '200':
+          description: Reproducibility ZIP; draft export is allowed.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: attachment; filename="project.zip"
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        default: *id001
+  /api/projects/{project_id}/advice:
+    parameters:
+    - *id002
+    post:
+      operationId: requestAdvice
+      summary: Request optional AI suggestions that require confirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdviceRequest'
+            example:
+              feature: explain
+              description: ''
+      responses:
+        '200':
+          description: AI status is independent of the core pipeline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvisoryResult'
+        default: *id001
+components:
+  schemas:
+    FileInfo:
+      type: object
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+        sha256:
+          type: string
+      required:
+      - path
+      - size
+      - sha256
+    AnalysisOptions:
+      type: object
+      properties:
+        python_version:
+          type: string
+        source_roots:
+          type: array
+          items:
+            type: string
+        max_source_bytes:
+          type: integer
+        max_files:
+          type: integer
+    ImportObservation:
+      type: object
+      properties:
+        module:
+          type: string
+        path:
+          type: string
+        line:
+          type: integer
+        names:
+          type: array
+          items:
+            type: string
+        level:
+          type: integer
+        context:
+          type: string
+        kind:
+          type: string
+        id:
+          type: string
+      required:
+      - module
+      - path
+      - line
+    Finding:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+        line:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        severity:
+          type: string
+        evidence_ids:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+      required:
+      - code
+      - message
+    DependencyCandidate:
+      type: object
+      properties:
+        module:
+          type: string
+        category:
+          type: string
+          enum:
+          - stdlib
+          - local
+          - external
+          - unresolved
+        package:
+          anyOf:
+          - type: string
+          - type: 'null'
+        requirement:
+          anyOf:
+          - type: string
+          - type: 'null'
+        status:
+          type: string
+        evidence_ids:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+        context:
+          type: string
+        id:
+          type: string
+      required:
+      - module
+      - category
+    AnalysisReport:
+      type: object
+      properties:
+        analysis_id:
+          type: string
+        fingerprint:
+          type: string
+        options:
+          $ref: '#/components/schemas/AnalysisOptions'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileInfo'
+        imports:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportObservation'
+        dependencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/DependencyCandidate'
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
+        status:
+          type: string
+          enum:
+          - complete
+          - partial
+        declared_requirements:
+          type: array
+          items:
+            type: string
+        python_requires:
+          anyOf:
+          - type: string
+          - type: 'null'
+        entrypoints:
+          type: array
+          items:
+            type: string
+        schema_version:
+          type: integer
+      required:
+      - analysis_id
+      - fingerprint
+      - options
+      - files
+    RunSpec:
+      type: object
+      properties:
+        target:
+          type: string
+        kind:
+          type: string
+          enum:
+          - script
+          - module
+          default: script
+        args:
+          type: array
+          items:
+            type: string
+        working_directory:
+          type: string
+      required:
+      - target
+      additionalProperties: false
+    UserDecisions:
+      type: object
+      properties:
+        analysis_id:
+          type: string
+        packages:
+          type: object
+          additionalProperties:
+            type: string
+        versions:
+          type: object
+          additionalProperties:
+            type: string
+        excluded_modules:
+          type: array
+          items:
+            type: string
+        excluded_files:
+          type: array
+          items:
+            type: string
+        run_spec:
+          anyOf:
+          - $ref: '#/components/schemas/RunSpec'
+          - type: 'null'
+        python_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+        description:
+          type: string
+        input_description:
+          type: string
+        expected_output:
+          type: string
+        data_confirmed:
+          type: boolean
+      required:
+      - analysis_id
+      additionalProperties: false
+    PackagePlan:
+      type: object
+      properties:
+        report:
+          $ref: '#/components/schemas/AnalysisReport'
+        requirements:
+          type: array
+          items:
+            type: string
+        run_spec:
+          anyOf:
+          - $ref: '#/components/schemas/RunSpec'
+          - type: 'null'
+        python_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileInfo'
+        excluded_files:
+          type: array
+          items:
+            type: string
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
+        state:
+          type: string
+          enum:
+          - draft
+          - ready_to_verify
+          - blocked
+        description:
+          type: string
+        input_description:
+          type: string
+        expected_output:
+          type: string
+        decisions:
+          anyOf:
+          - $ref: '#/components/schemas/UserDecisions'
+          - type: 'null'
+      required:
+      - report
+      - requirements
+      - run_spec
+      - python_version
+      - files
+      - excluded_files
+      - findings
+      - state
+    AdvisorySuggestion:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+          - explanation
+          - readme_description
+          - package_hypothesis
+        text:
+          type: string
+        evidence_ids:
+          type: array
+          items:
+            type: string
+        module:
+          anyOf:
+          - type: string
+          - type: 'null'
+        package:
+          anyOf:
+          - type: string
+          - type: 'null'
+        requires_confirmation:
+          type: boolean
+      required:
+      - kind
+      - text
+    TokenUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+      required:
+      - prompt_tokens
+      - completion_tokens
+      - total_tokens
+    AdvisoryResult:
+      type: object
+      properties:
+        analysis_id:
+          type: string
+        feature:
+          type: string
+        status:
+          type: string
+          enum:
+          - ok
+          - unavailable
+          - invalid_response
+          - invalid_request
+        suggestions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdvisorySuggestion'
+        usage:
+          anyOf:
+          - $ref: '#/components/schemas/TokenUsage'
+          - type: 'null'
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+        schema_version:
+          type: integer
+      required:
+      - analysis_id
+      - feature
+      - status
+    ProjectResponse:
+      type: object
+      required:
+      - project_id
+      - analysis
+      properties:
+        project_id:
+          type: string
+        analysis:
+          $ref: '#/components/schemas/AnalysisReport'
+    ErrorResponse:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
+    BundleRequest:
+      type: object
+      required:
+      - decisions
+      additionalProperties: false
+      properties:
+        decisions:
+          $ref: '#/components/schemas/UserDecisions'
+        include_dockerfile:
+          type: boolean
+          default: false
+    AdviceRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        feature:
+          type: string
+          enum:
+          - explain
+          - readme
+          - packages
+          default: explain
+        description:
+          type: string
+          maxLength: 20000
+          default: ''

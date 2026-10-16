@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+
+import pytest
+from packaging.requirements import Requirement
+
+from nishtyak_core.models import (
+    AnalysisOptions,
+    AnalysisReport,
+    DependencyCandidate,
+    FileInfo,
+    Finding,
+    ImportObservation,
+    RunSpec,
+    UserDecisions,
+)
+from nishtyak_core.planning import PackagePlanner
+from nishtyak_core.rendering import DocumentRenderer
+
+
+@pytest.fixture
+def report() -> AnalysisReport:
+    return AnalysisReport(
+        analysis_id="analysis-1",
+        fingerprint="snapshot-1",
+        options=AnalysisOptions(),
+        files=(FileInfo("main.py", 1, "hash-main"), FileInfo("data.csv", 2, "hash-data")),
+        dependencies=(
+            DependencyCandidate("os", "stdlib"),
+            DependencyCandidate("helpers", "local"),
+            DependencyCandidate("numpy", "external", package="numpy"),
+        ),
+    )
+
+
+@pytest.fixture
+def decisions(report: AnalysisReport) -> UserDecisions:
+    return UserDecisions(
+        analysis_id=report.analysis_id,
+        run_spec=RunSpec("main.py"),
+        data_confirmed=True,
+        python_version="3.11",
+        description="A small numerical experiment.",
+    )
+
+
+def codes(plan) -> set[str]:
+    return {finding.code for finding in plan.findings}
+
+
+def test_known_dependency_is_ready_but_not_verified(report, decisions):
+    plan = PackagePlanner().prepare(report, decisions)
+    assert plan.requirements == ("numpy",)
+    assert plan.state == "ready_to_verify"
+    assert plan.decisions == decisions
+    assert "VERSION_NOT_PINNED" in codes(plan)
+    assert [file.path for file in plan.files] == ["data.csv", "main.py"]
+
+
+def test_stale_decisions_are_rejected(report, decisions):
+    with pytest.raises(ValueError, match="another analysis"):
+        PackagePlanner().prepare(report, replace(decisions, analysis_id="outdated"))
+
+
+def test_unresolved_dependency_keeps_draft_until_author_maps_it(report, decisions):
+    report = replace(report, dependencies=(DependencyCandidate("special", "unresolved"),))
+    draft = PackagePlanner().prepare(report, decisions)
+    assert draft.requirements == ()
+    assert draft.state == "draft"
+    assert "DEPENDENCY_UNRESOLVED" in codes(draft)
+    resolved = PackagePlanner().prepare(
+        report, replace(decisions, packages={"special": "special-package>=2"})
+    )
+    assert resolved.requirements == ("special-package>=2",)
+    assert resolved.state == "ready_to_verify"
+
+
+def test_versions_are_selected_by_module_or_distribution_name(report, decisions):
+    report = replace(
+        report, dependencies=(DependencyCandidate("sklearn", "external", package="scikit-learn"),)
+    )
+    for versions in ({"sklearn": "1.5"}, {"scikit_learn": "==1.5"}):
+        plan = PackagePlanner().prepare(report, replace(decisions, versions=versions))
+        assert plan.requirements == ("scikit-learn==1.5",)
+        assert "VERSION_NOT_PINNED" not in codes(plan)
+
+
+def test_declared_requirements_survive_without_imports_and_preserve_markers(report, decisions):
+    report = replace(
+        report,
+        declared_requirements=(
+            'numpy==1.26; python_version < "3.12"',
+            'numpy==2.1; python_version >= "3.12"',
+            'rich[foo]>=13; sys_platform == "linux"',
+        ),
+    )
+    plan = PackagePlanner().prepare(report, decisions)
+    assert len(plan.requirements) == 3
+    requirements = [Requirement(raw) for raw in plan.requirements]
+    assert all(item.marker for item in requirements)
+    assert {str(item.specifier) for item in requirements if item.name == "numpy"} == {
+        "==1.26",
+        "==2.1",
+    }
+    assert plan.state == "ready_to_verify"
+
+
+def test_version_override_retains_declared_markers(report, decisions):
+    report = replace(
+        report,
+        declared_requirements=(
+            'numpy>=1; sys_platform == "linux"',
+            'numpy>=2; sys_platform == "win32"',
+        ),
+    )
+    plan = PackagePlanner().prepare(report, replace(decisions, versions={"numpy": "2.3"}))
+    assert len(plan.requirements) == 2
+    assert all(str(Requirement(raw).specifier) == "==2.3" for raw in plan.requirements)
+    assert all(Requirement(raw).marker for raw in plan.requirements)
+
+
+def test_module_named_version_override_updates_declared_distribution(report, decisions):
+    report = replace(
+        report,
+        declared_requirements=('scikit-learn>=1; sys_platform == "linux"',),
+        dependencies=(DependencyCandidate("sklearn", "external", package="scikit-learn"),),
+    )
+    plan = PackagePlanner().prepare(report, replace(decisions, versions={"sklearn": "1.5"}))
+    assert plan.requirements == ('scikit-learn==1.5; sys_platform == "linux"',)
+
+
+def test_declared_exact_version_conflict_is_draft(report, decisions):
+    report = replace(report, declared_requirements=("numpy<2", "numpy==2.1"))
+    plan = PackagePlanner().prepare(report, decisions)
+    assert plan.state == "draft"
+    assert "DEPENDENCY_CONFLICT" in codes(plan)
+
+
+@pytest.mark.parametrize(
+    "packages,versions",
+    [
+        ({"numpy": "numpy\npandas"}, {}),
+        ({"numpy": "numpy @ https://example.com/numpy.whl"}, {}),
+        ({"os": "evil-package"}, {}),
+        ({"unseen": "new-package"}, {}),
+        ({}, {"numpy": "whatever"}),
+        ({}, {"unseen": "1.0"}),
+    ],
+)
+def test_invalid_dependency_decisions_fail_instead_of_guessing(
+    report, decisions, packages, versions
+):
+    with pytest.raises(ValueError):
+        PackagePlanner().prepare(report, replace(decisions, packages=packages, versions=versions))
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        RunSpec("../main.py"),
+        RunSpec("/main.py"),
+        RunSpec("C:/main.py"),
+        RunSpec("main.py", working_directory="../other"),
+        RunSpec("main.py", args=("bad\nargument",)),
+        RunSpec("package; evil", kind="module"),
+        RunSpec("main.py", kind="command"),
+    ],
+)
+def test_unsafe_launch_specs_are_rejected(report, decisions, run):
+    with pytest.raises(ValueError):
+        PackagePlanner().prepare(report, replace(decisions, run_spec=run))
+
+
+def test_launch_target_must_remain_included(report, decisions):
+    plan = PackagePlanner().prepare(report, replace(decisions, excluded_files=("main.py",)))
+    assert plan.state == "blocked"
+    assert "RUN_TARGET_MISSING" in codes(plan)
+    with pytest.raises(ValueError, match="blocking"):
+        DocumentRenderer().render(plan)
+
+
+def test_baseline_exclusions_and_directory_exclusions(report, decisions):
+    paths = [
+        "main.py",
+        ".git/config",
+        ".venv/lib/dependency.py",
+        ".env",
+        ".env.production",
+        "private.key",
+        "id_ed25519",
+        "data.csv",
+        "data/more.csv",
+        "__pycache__/main.pyc",
+    ]
+    report = replace(report, files=tuple(FileInfo(path, 1, path) for path in paths))
+    plan = PackagePlanner().prepare(report, replace(decisions, excluded_files=("data/",)))
+    assert [file.path for file in plan.files] == ["data.csv", "main.py"]
+    assert set(plan.excluded_files) == set(paths) - {"main.py", "data.csv"}
+
+
+def test_detected_secret_blocks_export_until_file_is_excluded(report, decisions):
+    report = replace(
+        report,
+        findings=(
+            Finding(
+                "SECRET_DETECTED", "A credential was detected.", path="data.csv", severity="error"
+            ),
+        ),
+    )
+    blocked = PackagePlanner().prepare(report, decisions)
+    assert blocked.state == "blocked"
+    with pytest.raises(ValueError):
+        DocumentRenderer().render(blocked)
+    excluded = PackagePlanner().prepare(report, replace(decisions, excluded_files=("data.csv",)))
+    assert excluded.state == "draft"
+    assert "SECRET_FILE_EXCLUDED" in codes(excluded)
+    assert [file.path for file in excluded.files] == ["main.py"]
+
+
+def test_partial_analysis_and_unconfirmed_data_are_draft(report, decisions):
+    partial = PackagePlanner().prepare(replace(report, status="partial"), decisions)
+    assert partial.state == "draft"
+    missing_data = PackagePlanner().prepare(report, replace(decisions, data_confirmed=False))
+    assert missing_data.state == "draft"
+    assert "DATA_NOT_CONFIRMED" in codes(missing_data)
+
+
+def test_module_launch_resolves_from_working_directory(report, decisions):
+    report = replace(report, files=(FileInfo("src/lab/__main__.py", 1, "hash"),))
+    plan = PackagePlanner().prepare(
+        report, replace(decisions, run_spec=RunSpec("lab", kind="module", working_directory="src"))
+    )
+    assert plan.state == "ready_to_verify"
+    readme = DocumentRenderer().render(plan).get("README.md").decode()
+    assert "cd project\ncd src\npython -m lab" in readme
+
+
+def test_documents_are_deterministic_and_commands_quote_arguments(report, decisions):
+    report = replace(report, files=(FileInfo("nested folder/main file.py", 1, "hash"),))
+    decisions = replace(
+        decisions,
+        run_spec=RunSpec(
+            "main file.py",
+            args=("$(touch unwanted)", "--label", "a b"),
+            working_directory="nested folder",
+        ),
+    )
+    plan = PackagePlanner().prepare(report, decisions)
+    renderer = DocumentRenderer()
+    generated = renderer.render(plan)
+    assert generated == renderer.render(plan)
+    readme = generated.get("README.md").decode()
+    assert "cd project\ncd 'nested folder'" in readme
+    assert "python 'main file.py' '$(touch unwanted)' --label 'a b'" in readme
+    assert "python -m pip install -r requirements.txt" in readme
+    assert "Successful reproduction has not been verified" in readme
+    assert json.loads(generated.get("analysis-report.json"))["state"] == "ready_to_verify"
+    assert generated.get("requirements.txt").decode().endswith("numpy\n")
+
+
+def test_launch_credentials_are_rejected_without_echoing_values(report, decisions):
+    token = "sk-" + "x" * 24
+    for run in (
+        RunSpec("main.py", args=("--token", "short-private-value")),
+        RunSpec("main.py", args=("--password=private-value",)),
+        RunSpec("main.py", args=("--api-key", "${API_KEY}")),
+        RunSpec("main.py", args=("--option", token)),
+        RunSpec(f"{token}.py"),
+        RunSpec("main.py", working_directory=token),
+    ):
+        with pytest.raises(ValueError, match="credentials") as error:
+            PackagePlanner().prepare(report, replace(decisions, run_spec=run))
+        assert token not in str(error.value)
+        assert "private-value" not in str(error.value)
+
+
+def test_excluded_source_secrets_are_redacted_from_nested_report_and_readme(report, decisions):
+    token = "sk-" + "a" * 24
+    report = replace(
+        report,
+        imports=(ImportObservation(token, "data.csv", 1, kind="dynamic"),),
+        dependencies=(DependencyCandidate(token, "unresolved", reason=f"Inspect {token}"),),
+        findings=(Finding("SECRET_DETECTED", f"Credential {token}", path="data.csv"),),
+    )
+    plan = PackagePlanner().prepare(
+        report,
+        replace(
+            decisions,
+            excluded_files=("data.csv",),
+            description=f"Do not share {token}",
+            input_description="URL https://user:password@example.com/data",
+        ),
+    )
+    generated = DocumentRenderer().render(plan)
+    public_report = json.loads(generated.get("analysis-report.json"))
+    assert public_report["report"]["imports"][0]["module"] == "[REDACTED]"
+    assert "[REDACTED]" in public_report["report"]["dependencies"][0]["reason"]
+    for file in generated.files:
+        assert token.encode() not in file.content
+        assert b"user:password" not in file.content
