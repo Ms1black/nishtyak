@@ -110,7 +110,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
         pollTimer = setTimeout(() => void loadAnalysis(), POLL_INTERVAL_MS)
         return
       }
-      project.value = { ...project.value!, analysis: result.status }
+      project.value = { ...project.value!, analysis: result.status, filesCount: result.files.length }
       projectStore.upsert(project.value)
       if (result.status === 'failed') return
 

@@ -408,6 +408,37 @@ class ProjectAdvisoryService:
             if feature == "repair":
                 focus = context.facts["summary"].get("assistant_focus", {})
                 example["suggestions"] = []
+                if "packages" in focus.get("aspects", []):
+                    observed = next(
+                        (
+                            item
+                            for item in context.facts["imports"]
+                            if item.get("module", "").split(".")[0] in focus.get("modules", [])
+                            and item["id"] in tools.revealed_ids
+                        ),
+                        None,
+                    )
+                    source = next(
+                        (
+                            item
+                            for item in context.files
+                            if observed
+                            and item["path"] == observed["path"]
+                            and item["id"] in tools.revealed_source_ids
+                        ),
+                        None,
+                    )
+                    if observed is not None and source is not None:
+                        example["suggestions"].append(
+                            {
+                                "kind": "package_hypothesis",
+                                "text": "Гипотеза поставщика наблюдаемого импорта.",
+                                "evidence_ids": [observed["id"], source["id"]],
+                                "candidate_id": None,
+                                "module": observed["module"].split(".")[0],
+                                "package": "distribution-name",
+                            }
+                        )
                 if "description" in focus.get("aspects", []) and initial_facts.get(
                     "source_previews"
                 ):
@@ -430,7 +461,7 @@ class ProjectAdvisoryService:
                 "Each suggestion has exactly kind,text,evidence_ids,candidate_id,module,package. "
                 "kind must be "
                 + (
-                    "readme_description, entrypoint_hypothesis, package_hypothesis or explanation"
+                    ", ".join(sorted(self._focused_kinds(context))) or "no suggestions"
                     if feature == "repair"
                     else "readme_description or entrypoint_hypothesis"
                     if feature == "review"
@@ -499,6 +530,10 @@ class ProjectAdvisoryService:
                     "cite its candidate ID and actual launch source file ID. Optional description "
                     "is concise factual project prose, without installation commands/checklists. "
                     "No versions, URLs, extras, paths, new commands or files. unknowns=[]."
+                    " Include ONLY the requested suggestion kinds listed above. For a "
+                    "package_hypothesis candidate_id MUST be JSON null; launch IDs do not "
+                    "identify package mappings. The example distribution-name is a placeholder, "
+                    "not a package recommendation. Do not propose an already established launch."
                     " If the requested aspect is environment, examine the retained constraints "
                     "and source evidence and return a concise explanation of the conflict. "
                     "You may not change authored constraints or invent a successful resolution. "
@@ -866,6 +901,78 @@ class ProjectAdvisoryService:
         evidence_ids: set[str] | None = None,
         source_ids: set[str] | None = None,
     ) -> tuple[tuple[ProjectAdvisorySuggestion, ...], tuple[str, ...]]:
+        if feature != "repair":
+            return self._parse_strict(
+                value, context, feature, evidence_ids=evidence_ids, source_ids=source_ids
+            )
+        if not isinstance(value, dict) or not isinstance(value.get("suggestions"), list):
+            raise InvalidAdvisorResponse("invalid_project_advice")
+        # Validate the envelope and budgets even when all proposals are out of scope.
+        self._parse_strict(
+            {**value, "suggestions": []},
+            context,
+            feature,
+            evidence_ids=evidence_ids,
+            source_ids=source_ids,
+        )
+        if len(value["suggestions"]) > 10:
+            raise InvalidAdvisorResponse("invalid_project_advice")
+        allowed = self._focused_kinds(context)
+        known = {"package_hypothesis", "entrypoint_hypothesis", "readme_description", "explanation"}
+        suggestions = []
+        rejected = None
+        for raw in value["suggestions"]:
+            if not isinstance(raw, dict) or raw.get("kind") not in known:
+                rejected = InvalidAdvisorResponse("invalid_project_suggestion")
+                continue
+            if raw["kind"] not in allowed:
+                continue
+            item = dict(raw)
+            if item["kind"] != "entrypoint_hypothesis":
+                item["candidate_id"] = None
+            if item["kind"] != "package_hypothesis":
+                item["module"] = item["package"] = None
+            try:
+                parsed, _ = self._parse_strict(
+                    {**value, "suggestions": [item]},
+                    context,
+                    feature,
+                    evidence_ids=evidence_ids,
+                    source_ids=source_ids,
+                )
+                suggestions.extend(parsed)
+            except (InvalidAdvisorResponse, ValueError, TypeError, KeyError) as error:
+                rejected = error
+        if sum(item.kind == "entrypoint_hypothesis" for item in suggestions) > 1:
+            suggestions = [item for item in suggestions if item.kind != "entrypoint_hypothesis"]
+            rejected = InvalidAdvisorResponse("invalid_project_suggestion")
+        if not suggestions and rejected is not None:
+            raise rejected
+        return tuple(suggestions), ()
+
+    @staticmethod
+    def _focused_kinds(context: SafeProjectContext) -> set[str]:
+        mapping = {
+            "packages": "package_hypothesis",
+            "entrypoint": "entrypoint_hypothesis",
+            "description": "readme_description",
+            "environment": "explanation",
+        }
+        return {
+            mapping[aspect]
+            for aspect in context.facts["summary"].get("assistant_focus", {}).get("aspects", [])
+            if aspect in mapping
+        }
+
+    def _parse_strict(
+        self,
+        value: Any,
+        context: SafeProjectContext,
+        feature: str,
+        *,
+        evidence_ids: set[str] | None = None,
+        source_ids: set[str] | None = None,
+    ) -> tuple[tuple[ProjectAdvisorySuggestion, ...], tuple[str, ...]]:
         if (
             not isinstance(value, dict)
             or set(value) != {"schema_version", "analysis_id", "feature", "suggestions", "unknowns"}
@@ -1090,7 +1197,9 @@ class ProjectAdvisoryService:
                 document["suggestions"].append(
                     {key: val for key, val in item.items() if key != "requires_confirmation"}
                 )
-            self._parse(document, context, feature)
+            # Worker output must already be normalized; never apply an unvalidated
+            # raw proposal merely because another suggestion was valid.
+            self._parse_strict(document, context, feature)
         elif value["suggestions"] or value["unknowns"]:
             raise ValueError("Unexpected project advisory suggestions")
         usage = value["usage"]

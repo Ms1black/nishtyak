@@ -226,13 +226,98 @@ def test_focused_package_repair_requires_requested_module_and_its_actual_import_
     assert invalid.status == "invalid_response"
 
 
-def test_focused_repair_cannot_change_an_unrequested_launch(context):
+def test_focused_repair_ignores_an_unrequested_launch(context):
     focused = context.focused(("description",))
     suggestion = combined_review_suggestions(focused)[1]
     result = advisor(Responses(final(focused, "repair", suggestions=[suggestion]))).advise_context(
         focused, "repair"
     )
-    assert result.status == "invalid_response"
+    assert result.status == "ok" and result.suggestions == ()
+
+
+@pytest.mark.parametrize(
+    "unrequested_kind", ["entrypoint_hypothesis", "readme_description", "explanation"]
+)
+def test_focused_package_answer_survives_unrequested_proposals(context, unrequested_kind):
+    focused = context.focused(("packages",), ("numpy",))
+    observation = next(item for item in focused.facts["imports"] if item["module"] == "numpy")
+    source = next(item for item in focused.files if item["path"] == observation["path"])
+    package = {
+        "kind": "package_hypothesis",
+        "text": "Пакет предоставляет импорт numpy.",
+        "evidence_ids": [observation["id"], source["id"]],
+        "candidate_id": None,
+        "module": "numpy",
+        "package": "numpy",
+    }
+    unrequested = {
+        "kind": unrequested_kind,
+        "candidate_id": "not-a-real-launch",
+        "evidence_ids": ["invented"],
+    }
+    service = advisor(Responses(final(focused, "repair", suggestions=[unrequested, package])))
+    result = service.advise_context(focused, "repair")
+    assert result.status == "ok" and len(result.suggestions) == 1
+    assert result.suggestions[0].package == "numpy"
+    assert result.suggestions[0].candidate_id is None
+    service.validate_result(json.loads(json.dumps(result.to_dict())), focused, "repair")
+
+
+@pytest.mark.parametrize("candidate", ["existing", "invented"])
+def test_focused_package_answer_discards_semantically_unused_launch_id(context, candidate):
+    focused = context.focused(("packages",), ("numpy",))
+    observation = next(item for item in focused.facts["imports"] if item["module"] == "numpy")
+    source = next(item for item in focused.files if item["path"] == observation["path"])
+    package = {
+        "kind": "package_hypothesis",
+        "text": "Пакет предоставляет импорт numpy.",
+        "evidence_ids": [observation["id"], source["id"]],
+        "candidate_id": focused.launches[0]["id"] if candidate == "existing" else "invented",
+        "module": "numpy",
+        "package": "numpy",
+    }
+    transport = Responses(final(focused, "repair", suggestions=[package]))
+    service = advisor(transport)
+    result = service.advise_context(focused, "repair")
+    assert result.status == "ok" and result.suggestions[0].candidate_id is None
+    service.validate_result(json.loads(json.dumps(result.to_dict())), focused, "repair")
+    system = json.loads(transport.requests[0].body)["messages"][0]["content"]
+    assert "kind must be package_hypothesis." in system
+    assert "candidate_id MUST be JSON null" in system
+
+
+def test_focused_repair_keeps_valid_description_but_rejects_unproven_mapping(context):
+    focused = context.focused(("packages", "description"), ("numpy",))
+    description = combined_review_suggestions(focused)[0]
+    invalid_package = {
+        "kind": "package_hypothesis",
+        "text": "Неподтверждённый пакет.",
+        "evidence_ids": ["invented"],
+        "candidate_id": None,
+        "module": "numpy",
+        "package": "numpy",
+    }
+    service = advisor(
+        Responses(final(focused, "repair", suggestions=[invalid_package, description]))
+    )
+    result = service.advise_context(focused, "repair")
+    assert result.status == "ok" and len(result.suggestions) == 1
+    assert result.suggestions[0].kind == "readme_description"
+    canonical = json.loads(json.dumps(result.to_dict()))
+    service.validate_result(canonical, focused, "repair")
+    canonical["suggestions"].append({**invalid_package, "requires_confirmation": True})
+    with pytest.raises(InvalidAdvisorResponse):
+        service.validate_result(canonical, focused, "repair")
+
+
+def test_requested_focused_launch_still_requires_existing_candidate_and_its_source(context):
+    focused = context.focused(("entrypoint",))
+    suggestion = combined_review_suggestions(focused)[1]
+    suggestion["candidate_id"] = "invented"
+    result = advisor(Responses(final(focused, "repair", suggestions=[suggestion]))).advise_context(
+        focused, "repair"
+    )
+    assert result.status == "invalid_response" and result.suggestions == ()
 
 
 def test_unknown_evidence_and_automatic_action_fields_rejected(context: SafeProjectContext) -> None:

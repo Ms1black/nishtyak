@@ -248,7 +248,7 @@ function toggleAdvanced(event: Event) {
             <div class="overview__run-head">
               <span>{{ $t('analysis.automatic.environmentTitle') }}</span>
               <BaseIcon v-if="wizard.isPreparingEnvironment || wizard.isAutomating" name="refresh" :size="16" spin />
-              <BaseIcon v-else-if="resolvedRequirements" name="check" :size="16" />
+              <BaseIcon v-else-if="resolvedRequirements && wizard.automation?.phase !== 'needs_input'" name="check" :size="16" />
             </div>
             <template v-if="wizard.isPreparingEnvironment || wizard.isAutomating">
               <p>{{ progressText ?? $t('analysis.automatic.resolving') }}</p>
@@ -259,7 +259,10 @@ function toggleAdvanced(event: Event) {
                 <li v-for="requirement in summaryRequirements" :key="requirement"><code>{{ requirement }}</code></li>
               </ul>
               <p v-else>{{ $t('analysis.deps.empty') }}</p>
-              <p v-if="resolvedRequirements" class="overview__hint">
+              <p v-if="wizard.automation?.phase === 'needs_input'" class="overview__hint">
+                {{ $t('analysis.automation.environmentAwaitingAnswer') }}
+              </p>
+              <p v-else-if="resolvedRequirements" class="overview__hint">
                 {{ $t('analysis.automatic.resolved', { platform: wizard.lock?.target.platform ?? resolution?.target?.platform ?? '' }) }}
               </p>
               <p v-else-if="!wizard.automation && resolution?.status === 'needs_input'" class="overview__hint">
@@ -268,7 +271,7 @@ function toggleAdvanced(event: Event) {
               <p v-else-if="resolution?.status === 'unavailable' || resolution?.status === 'disabled'" class="overview__hint">
                 {{ $t('analysis.automatic.unavailable') }}
               </p>
-              <p v-if="resolvedRequirements" class="overview__hint">{{ $t('analysis.automatic.provenance') }}</p>
+              <p v-if="resolvedRequirements && wizard.automation?.phase !== 'needs_input'" class="overview__hint">{{ $t('analysis.automatic.provenance') }}</p>
             </template>
           </div>
         </BaseCard>

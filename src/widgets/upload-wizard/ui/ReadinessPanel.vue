@@ -27,8 +27,29 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ build: []; reset: []; reload: []; refresh: [] }>()
+const needsInput = computed(() => props.plan?.automation?.phase === 'needs_input')
+const isWorking = computed(() =>
+  props.isBuilding || props.isProcessing || props.isPreparingEnvironment || props.isRefreshing,
+)
+const planState = computed(() =>
+  props.plan?.automation?.phase === 'draft' ? 'draft' : props.plan?.state,
+)
+const stateTone = computed(() =>
+  props.isRefreshing ? 'processing' : needsInput.value ? 'needs_input' : isWorking.value ? 'processing' : planState.value,
+)
+const stateIcon = computed(() => {
+  if (isWorking.value) return 'refresh'
+  if (needsInput.value || planState.value === 'blocked') return 'alert'
+  return planState.value === 'draft' ? 'circle-dashed' : 'check'
+})
 
 const state = computed(() => {
+  if (props.isRefreshing) {
+    return { title: t('analysis.automation.validatingAnswer'), text: t('analysis.automation.phases.validating') }
+  }
+  if (needsInput.value) {
+    return { title: t('analysis.automation.awaitingAnswer'), text: t('analysis.automation.answerNext') }
+  }
   if (props.isProcessing && props.progressText) {
     return { title: t('analysis.automation.preparing'), text: props.progressText }
   }
@@ -40,12 +61,14 @@ const state = computed(() => {
   }
   if (!props.plan) return null
   return {
-    title: t(`analysis.plan.${props.plan.state}.title`),
-    text: t(`analysis.plan.${props.plan.state}.text`),
+    title: t(`analysis.plan.${planState.value}.title`),
+    text: t(`analysis.plan.${planState.value}.text`),
   }
 })
 
 const buttonText = computed(() => {
+  if (props.isRefreshing) return t('analysis.automation.validatingAnswer')
+  if (needsInput.value) return t('analysis.automation.awaitingAnswer')
   if (props.isProcessing) return t('analysis.automation.preparing')
   if (props.isPreparingEnvironment) return t('analysis.automatic.preparingTitle')
   if (props.isBuilding) return t('analysis.automatic.buildingTitle')
@@ -78,14 +101,16 @@ const saveText = computed(() => {
         <span class="panel__name">{{ project.name }}</span>
         <span class="panel__meta">{{ getProjectMeta(project).join(' · ') }}</span>
       </div>
-      <AnalysisBadge :status="project.analysis" />
+      <span v-if="needsInput && !isWorking" class="panel__badge">{{ $t('analysis.automation.needsAnswer') }}</span>
+      <span v-else-if="isWorking" class="panel__badge">{{ $t('analysis.automation.preparing') }}</span>
+      <AnalysisBadge v-else-if="!plan?.automation" :status="project.analysis" />
     </div>
 
-    <div v-if="plan && state" class="panel__state" :class="`panel__state--${plan.state}`">
+    <div v-if="plan && state" class="panel__state" :class="`panel__state--${stateTone}`">
       <span class="panel__state-icon">
         <BaseIcon
-          :name="isProcessing || isPreparingEnvironment || isBuilding ? 'refresh' : plan.state === 'blocked' ? 'alert' : plan.state === 'draft' ? 'circle-dashed' : 'check'"
-          :spin="isProcessing || isPreparingEnvironment || isBuilding"
+          :name="stateIcon"
+          :spin="isWorking"
           :size="22"
           :stroke-width="plan.state === 'ready_to_verify' ? 2.6 : 2"
         />
@@ -108,10 +133,10 @@ const saveText = computed(() => {
       >
         {{ $t('analysis.panel.refresh') }}
       </BaseButton>
-      <BaseButton block :disabled="!canBuild" :loading="isBuilding || isPreparingEnvironment || isProcessing" @click="emit('build')">
+      <BaseButton block :disabled="!canBuild" :loading="isWorking" @click="emit('build')">
         {{ buttonText }}
       </BaseButton>
-      <p class="panel__next">{{ $t('analysis.review.nextStep') }}</p>
+      <p v-if="!needsInput && !isWorking" class="panel__next">{{ $t('analysis.review.nextStep') }}</p>
       <p v-if="saveState !== 'idle'" class="panel__save" :class="`panel__save--${saveState}`" aria-live="polite">
         {{ saveText }}
         <button v-if="saveState === 'conflict'" type="button" class="panel__link" @click="emit('reload')">
@@ -143,6 +168,10 @@ const saveText = computed(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.panel__badge {
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 .panel__project-text {
@@ -189,6 +218,10 @@ const saveText = computed(() => {
 .panel__state--blocked .panel__state-icon {
   background: rgb(255 77 77 / 0.14);
   color: #ff5c5c;
+}
+.panel__state--needs_input .panel__state-icon {
+  background: rgb(230 160 59 / 0.14);
+  color: #e6a03b;
 }
 
 .panel__state--ready_to_verify .panel__state-icon {

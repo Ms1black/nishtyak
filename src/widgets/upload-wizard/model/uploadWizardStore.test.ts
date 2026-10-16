@@ -323,6 +323,18 @@ describe('upload wizard request coordination', () => {
     expect(api.buildArchive).not.toHaveBeenCalled()
   })
 
+  it('replaces the initial queued file count with the analyzed project inventory', async () => {
+    api.getAnalysis.mockImplementation(async (id: string) => ({
+      ...analysis(id), files: [
+        { path: 'experiment.py', size: 40 }, { path: 'calculations.py', size: 80 }, { path: 'plot.py', size: 30 },
+      ],
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject({ ...project('uploaded'), filesCount: 0 })
+    expect(store.project?.filesCount).toBe(3)
+    expect(projects.upsert.mock.lastCall?.[0].filesCount).toBe(3)
+  })
+
   it('pauses at genuine ambiguity and permits an explicit draft export', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
       ...plan(decisions),

@@ -169,9 +169,9 @@ export const en: MessageSchema = {
     hintUploading: 'Uploading and analyzing…',
     analyze: 'Prepare package',
     automaticReviewConditional:
-      'If automatic descriptions are enabled on the server, filtered source excerpts are sent to DeepSeek after upload. Files with detected secrets are excluded; code is not executed.',
+      'The project is analyzed statically first. If facts are missing and DeepSeek is enabled on the server, it receives filtered source excerpts. Files with detected secrets are excluded; code is not executed.',
     automaticReviewDisclosure:
-      'After upload, DeepSeek automatically prepares a project description from filtered source excerpts. Files with detected secrets are not sent; project code is not executed.',
+      'The project is analyzed statically first. If facts are missing, DeepSeek helps using filtered source excerpts. Files with detected secrets are not sent; project code is not executed.',
     errors: {
       type: 'A ZIP archive or .py file is required',
       empty: 'The file is empty',
@@ -241,6 +241,11 @@ export const en: MessageSchema = {
   analysis: {
     automation: {
       preparing: 'Preparing package…',
+      awaitingAnswer: 'Waiting for your answer',
+      needsAnswer: 'Clarification needed',
+      answerNext: 'Answer one question. The service will validate your answer and continue preparing the archive.',
+      validatingAnswer: 'Validating answer…',
+      environmentAwaitingAnswer: 'Environment preparation will continue after you answer the question below.',
       assisting: 'Clarifying {aspect} from sources: attempt {attempt} of {max}.',
       assistingBrief: 'Clarifying {aspect} from sources.',
       phases: {
