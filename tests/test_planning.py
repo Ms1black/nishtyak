@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 
 import pytest
@@ -295,11 +294,15 @@ def test_documents_are_deterministic_and_commands_quote_arguments(report, decisi
     assert "python 'main file.py' '$(touch unwanted)' --label 'a b'" in readme
     assert "python -m pip install -r requirements.txt" in readme
     assert "Код на сервере не выполнялся" in readme
-    assert json.loads(generated.get("analysis-report.json"))["state"] == "ready_to_verify"
+    assert plan.to_dict()["state"] == "ready_to_verify"
+    assert {"pyproject.toml", "environment.yml"} <= {file.path for file in generated.files}
+    assert not {"analysis-report.json", "dependency-lock.json"} & {
+        file.path for file in generated.files
+    }
     assert generated.get("requirements.txt").decode().endswith("numpy\n")
 
 
-def test_readme_consolidates_limits_but_json_retains_all_evidence():
+def test_readme_consolidates_limits_but_plan_retains_all_evidence():
     snapshot = SnapshotBuilder().from_mapping(
         {
             "experiment.py": "import pandas\nimport numpy\npandas.read_csv('measurements.csv')\n",
@@ -318,7 +321,7 @@ def test_readme_consolidates_limits_but_json_retains_all_evidence():
     assert "DATA_NOT_CONFIRMED" not in review
     assert "DATA_DEPENDENCIES_UNVERIFIED" not in review
     assert "README_MISSING" not in review
-    document = json.loads(generated.get("analysis-report.json"))
+    document = plan.to_dict()
     raw_codes = [item["code"] for item in document["findings"]]
     assert raw_codes.count("VERSION_NOT_PINNED") == 2
     assert {"DATA_DEPENDENCIES_UNVERIFIED", "README_MISSING"} <= set(raw_codes)
@@ -336,7 +339,7 @@ def test_generated_description_is_distinguished_from_author_confirmation(report,
     )
     generated = DocumentRenderer().render(automatic)
     assert "это не подтверждение автора" in generated.get("README.md").decode()
-    document = json.loads(generated.get("analysis-report.json"))
+    document = automatic.to_dict()
     assert document["automatic_review"]["provider"] == "deepseek"
     assert document["decisions"]["description"] == decisions.description
 
@@ -369,7 +372,7 @@ def test_launch_credentials_are_rejected_without_echoing_values(report, decision
         assert "private-value" not in str(error.value)
 
 
-def test_excluded_source_secrets_are_redacted_from_nested_report_and_readme(report, decisions):
+def test_excluded_source_secrets_are_redacted_from_public_documents(report, decisions):
     token = "sk-" + "a" * 24
     report = replace(
         report,
@@ -387,9 +390,10 @@ def test_excluded_source_secrets_are_redacted_from_nested_report_and_readme(repo
         ),
     )
     generated = DocumentRenderer().render(plan)
-    public_report = json.loads(generated.get("analysis-report.json"))
-    assert public_report["report"]["imports"][0]["module"] == "[REDACTED]"
-    assert "[REDACTED]" in public_report["report"]["dependencies"][0]["reason"]
+    raw_report = plan.to_dict()
+    assert raw_report["report"]["imports"][0]["module"] == "[REDACTED]"
+    assert "[REDACTED]" in raw_report["report"]["dependencies"][0]["reason"]
+    assert "[REDACTED]" in generated.get("README.md").decode()
     for file in generated.files:
         assert token.encode() not in file.content
         assert b"user:password" not in file.content

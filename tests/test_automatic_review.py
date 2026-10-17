@@ -96,7 +96,9 @@ def test_background_review_is_cached_and_preserves_decisions_and_requirements(re
     with zipfile.ZipFile(io.BytesIO(logic.bundle("alice", record.project_id))) as archive:
         readme = archive.read("README.md").decode()
         assert DESCRIPTION in readme and "Описание составлено автоматически" in readme
-        metadata = json.loads(archive.read("analysis-report.json"))
+        assert not {"analysis-report.json", "dependency-lock.json"} & set(archive.namelist())
+        assert {"pyproject.toml", "environment.yml"} <= set(archive.namelist())
+        metadata = logic.plan("alice", record.project_id)
         assert metadata["automatic_review"]["evidence_ids"]
         assert metadata["decisions"]["description"] == ""
     reopened = LogicService(logic.settings, SQLiteJobRepository(logic.settings))

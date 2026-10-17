@@ -86,7 +86,10 @@ def test_locks_persist_and_reanalysis_invalidates_them(project, monkeypatch):
     assert bundle.status_code == 200
     with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
         assert "requirements.lock.txt" in archive.namelist()
-        assert json.loads(archive.read("dependency-lock.json"))["id"] == lock["id"]
+        assert archive.read("requirements.lock.txt").decode() == lock["requirements"]
+        assert not {"analysis-report.json", "dependency-lock.json"} & set(archive.namelist())
+        assert {"pyproject.toml", "environment.yml"} <= set(archive.namelist())
+        assert client.get(prefix + "/lock", headers=HEADERS).json()["id"] == lock["id"]
     replacement = client.post(
         prefix + "/resolve",
         headers=HEADERS,

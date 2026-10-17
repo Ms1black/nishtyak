@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from nishtyak_client import LogicClient, LogicClientError
 from nishtyak_core.advisors.project_context import ProjectTextFilter
 from nishtyak_core.archives import ArchiveReader
+from nishtyak_core.locking import DependencyLock
 from nishtyak_core.redaction import TextRedactor
 from nishtyak_core.snapshot import SnapshotBuilder
 
@@ -30,6 +31,7 @@ from .mapping import (
 from .storage import ProjectStore
 
 ARCHIVE_SECURITY_POLICY = 1
+ARCHIVE_FORMAT_VERSION = 2
 
 
 class BrowserService:
@@ -449,16 +451,33 @@ class BrowserService:
                 )
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 files = archive.namelist()
-                if "dependency-lock.json" in files:
-                    lock_document = json.loads(archive.read("dependency-lock.json"))
-                    included_lock = lock_document.get("id")
-                    if not isinstance(included_lock, str) or not re.fullmatch(
-                        r"[a-f0-9]{64}", included_lock
+                if "requirements.lock.txt" in files:
+                    try:
+                        included_lock = DependencyLock.from_dict(client.lock(project_id))
+                    except (TypeError, ValueError, KeyError):
+                        raise LogicClientError(
+                            502, "RESPONSE_INVALID", "The service returned an invalid lock"
+                        ) from None
+                    if (
+                        files.count("requirements.lock.txt") != 1
+                        or included_lock.analysis_id != report["analysis_id"]
+                        or included_lock.requirements.encode()
+                        != archive.read("requirements.lock.txt")
+                        or lock_id is not None
+                        and included_lock.id != lock_id
                     ):
                         raise LogicClientError(
-                            502, "RESPONSE_INVALID", "The archive contains an invalid lock"
+                            409, "LOCK_STALE", "The archive does not match the current lock"
                         )
-                    lock_id = included_lock
+                    lock_id = included_lock.id
+                elif lock_id is not None:
+                    raise LogicClientError(
+                        502, "RESPONSE_INVALID", "The requested lock is missing from the archive"
+                    )
+            if client.decisions(project_id)["revision"] != revision:
+                raise LogicClientError(
+                    409, "DECISIONS_REVISION_CONFLICT", "Decisions changed during export"
+                )
             tag = json.dumps(
                 {
                     "analysis": report["analysis_id"],
@@ -468,6 +487,7 @@ class BrowserService:
                     "sha256": hashlib.sha256(content).hexdigest(),
                     "files": files,
                     "security_policy": ARCHIVE_SECURITY_POLICY,
+                    "format_version": ARCHIVE_FORMAT_VERSION,
                 },
                 sort_keys=True,
             )
@@ -480,6 +500,8 @@ class BrowserService:
             if record["archive_tag"] is None:
                 raise LogicClientError(409, "ARCHIVE_NOT_BUILT", "Build the archive first")
             tag = json.loads(record["archive_tag"])
+            if tag.get("format_version") != ARCHIVE_FORMAT_VERSION:
+                raise LogicClientError(409, "ARCHIVE_STALE", "Пересоберите ZIP в новом формате")
             if tag.get("security_policy") != ARCHIVE_SECURITY_POLICY:
                 raise LogicClientError(
                     409,
@@ -585,6 +607,7 @@ class BrowserService:
         if (
             record["archive_tag"] is not None
             and json.loads(record["archive_tag"]).get("security_policy") == ARCHIVE_SECURITY_POLICY
+            and json.loads(record["archive_tag"]).get("format_version") == ARCHIVE_FORMAT_VERSION
         ):
             tag = json.loads(record["archive_tag"])
             archive = {

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import socket
 import threading
 import time
@@ -128,9 +127,10 @@ def test_backend_sdk_full_saved_workflow_and_reanalysis(workflow_client):
     with zipfile.ZipFile(io.BytesIO(package)) as archive:
         assert "run_project.py" in archive.namelist()
         assert "Dockerfile" not in archive.namelist()
-        assert json.loads(archive.read("analysis-report.json"))["decisions"]["selected_extras"] == [
-            "plot"
-        ]
+        assert not {"analysis-report.json", "dependency-lock.json"} & set(archive.namelist())
+        assert {"pyproject.toml", "environment.yml"} <= set(archive.namelist())
+        assert client.plan(identity)["decisions"]["selected_extras"] == ["plot"]
+        assert "matplotlib>=3" in archive.read("requirements.txt").decode()
     bad = {**decisions, "selected_extras": ["nonexistent"]}
     with pytest.raises(LogicClientError) as invalid:
         client.save_decisions(identity, bad, saved["revision"])

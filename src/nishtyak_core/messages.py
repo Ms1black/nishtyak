@@ -64,7 +64,8 @@ class RussianFindingFormatter:
                 finding.code,
                 "Требуется проверка условия «"
                 + finding.code
-                + "»; подробности в analysis-report.json.",
+                + "»: "
+                + finding.message,
             )
         modules = sorted(
             {

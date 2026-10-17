@@ -43,11 +43,17 @@ def test_full_package_can_be_built_for_own_examples(name, tmp_path):
     generated = service.render(plan)
     artifact = BundleWriter().write(snapshot, plan, generated, tmp_path / "bundle.zip")
     with zipfile.ZipFile(artifact.path) as archive:
-        assert {"README.md", "requirements.txt", "analysis-report.json"} <= set(archive.namelist())
+        assert {"README.md", "requirements.txt", "pyproject.toml", "environment.yml"} <= set(
+            archive.namelist()
+        )
+        assert not {"analysis-report.json", "dependency-lock.json"} & set(archive.namelist())
         assert "project/data.csv" in archive.namelist()
-        payload = json.loads(archive.read("analysis-report.json"))
+        payload = plan.to_dict()
         assert payload["state"] == "ready_to_verify"
         assert "verified" not in payload
+        readme = archive.read("README.md").decode()
+        assert "## Оставшиеся ограничения" in readme
+        assert "Код на сервере не выполнялся" in readme
     second = BundleWriter().write(snapshot, plan, generated, tmp_path / "second.zip")
     assert artifact.sha256 == second.sha256
 

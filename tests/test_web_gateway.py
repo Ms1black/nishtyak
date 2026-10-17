@@ -211,7 +211,7 @@ def test_single_python_upload_and_draft_export(gateway):
 def test_raw_upload_examples_export_without_manual_answers(
     gateway, archive_name, expected_requirements, local_module
 ):
-    client, _, _ = gateway
+    client, service, _ = gateway
     content = (Path(__file__).parent / "fixtures/examples" / archive_name).read_bytes()
     with zipfile.ZipFile(io.BytesIO(content)) as source:
         sources = {name: source.read(name) for name in source.namelist()}
@@ -243,7 +243,9 @@ def test_raw_upload_examples_export_without_manual_answers(
     downloaded = client.get(prefix + "/archive")
     assert downloaded.status_code == 200, downloaded.text
     with zipfile.ZipFile(io.BytesIO(downloaded.content)) as package:
-        assert {"README.md", "requirements.txt", "analysis-report.json"} <= set(package.namelist())
+        assert {"README.md", "requirements.txt", "pyproject.toml", "environment.yml"} <= set(
+            package.namelist()
+        )
         assert not any(name.endswith("measurements.csv") for name in package.namelist())
         for name, source in sources.items():
             assert package.read("project/" + name) == source
@@ -253,7 +255,10 @@ def test_raw_upload_examples_export_without_manual_answers(
             if line and not line.startswith("#")
         ]
         assert requirements == expected_requirements
-        report = json.loads(package.read("analysis-report.json"))
+        assert "analysis-report.json" not in package.namelist()
+        report = service.client_factory(WorkspaceIdentity("local", "local", "local").scope).plan(
+            project["id"]
+        )
         assert report["state"] == "draft"
         assert report["decisions"]["run_spec"] is None
         assert report["decisions"]["python_version"] is None
@@ -584,7 +589,7 @@ def test_lock_and_explicit_ai_source_consent(gateway):
     archive = client.get(prefix + "/archive")
     with zipfile.ZipFile(io.BytesIO(archive.content)) as package:
         assert "requirements.lock.txt" in package.namelist()
-        assert "dependency-lock.json" in package.namelist()
+        assert "dependency-lock.json" not in package.namelist()
     assert client.post(prefix + "/advice", json={"feature": "readme"}).status_code == 422
     assert client.post(prefix + "/advice", json={"shareSource": False}).status_code == 422
     unavailable = client.post(prefix + "/advice", json={"feature": "readme", "shareSource": True})
@@ -827,8 +832,8 @@ def test_final_archive_preview_reads_actual_generated_files_and_checks_selected_
             "README.md",
             "requirements.txt",
             "requirements.lock.txt",
-            "dependency-lock.json",
-            "analysis-report.json",
+            "pyproject.toml",
+            "environment.yml",
             "Dockerfile",
             "project/main.py",
             "project/data.csv",

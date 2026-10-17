@@ -8,10 +8,9 @@ from nishtyak_core import ReproducibilityService, SnapshotBuilder
 from nishtyak_core.exporting import BundleWriter
 from nishtyak_core.installation import EnvironmentInstructions
 from nishtyak_core.locking import (
-    DependencyLock,
     LockExporter,
     ResolutionTarget,
-    resolution_input_id,
+    VersionResolver,
 )
 from nishtyak_core.models import AnalysisOptions, RunSpec, UserDecisions
 
@@ -49,9 +48,7 @@ def test_nested_pyproject_and_extras_keep_their_real_archive_path_after_lock_exp
         extras=("plot",),
     )
     target = ResolutionTarget("3.11", "linux-x86_64")
-    lock = DependencyLock(
-        "a" * 64, plan.analysis_id, resolution_input_id(plan, target), target, "", ()
-    )
+    lock = VersionResolver().resolve(plan, target)
     generated = LockExporter().attach(
         service.render(plan, snapshot=snapshot), plan, lock, snapshot=snapshot
     )
@@ -68,7 +65,8 @@ def test_nested_pyproject_and_extras_keep_their_real_archive_path_after_lock_exp
         for name in (
             "Dockerfile",
             "requirements.lock.txt",
-            "dependency-lock.json",
+            "pyproject.toml",
+            "environment.yml",
         ):
             assert name in tree
             assert name in archive.namelist()
@@ -192,9 +190,7 @@ def test_audited_archive_retains_pyproject_without_installing_unchecked_build_pa
     snapshot, service, plan = prepare({"pyproject.toml": manifest}, root="research")
     plan = replace(plan, automatic_resolution={"package_safety": receipt})
     target = ResolutionTarget("3.11", "linux-x86_64")
-    lock = DependencyLock(
-        "a" * 64, plan.analysis_id, resolution_input_id(plan, target), target, "", ()
-    )
+    lock = VersionResolver().resolve(plan, target)
     plan = replace(
         plan, automatic_resolution={"package_safety": receipt, "safety_lock_id": lock.id}
     )
@@ -227,9 +223,7 @@ def test_audited_conda_archive_keeps_unchecked_yaml_but_only_recommends_generate
     snapshot, service, plan = prepare({filename: manifest}, root="research package")
     plan = replace(plan, automatic_resolution={"package_safety": {"status": "checked"}})
     target = ResolutionTarget("3.11", platform)
-    lock = DependencyLock(
-        "a" * 64, plan.analysis_id, resolution_input_id(plan, target), target, "", ()
-    )
+    lock = VersionResolver().resolve(plan, target)
     generated = LockExporter().attach(
         service.render(plan, snapshot=snapshot, target_platform=platform),
         plan,
@@ -240,8 +234,8 @@ def test_audited_conda_archive_keeps_unchecked_yaml_but_only_recommends_generate
     with zipfile.ZipFile(tmp_path / "package.zip") as archive:
         text = archive.read("README.md").decode()
         assert archive.read("project/research package/" + filename).decode() == manifest
-        assert "conda env create" not in text
-        assert "conda activate" not in text
+        assert "conda env create --prefix ./.conda-env --file environment.yml" in text
+        assert "--file 'project/research package/" not in text
         assert "каналы Conda" in text
         assert "отдельная проверка исходного YAML" in text
         assert "--only-binary=:all: --require-hashes -r requirements.lock.txt" in text
@@ -291,3 +285,60 @@ def test_audited_unlocked_requirements_do_not_offer_unchecked_transitive_install
     assert "транзитивных зависимостей" in text
     assert "проверенный lock-файл" in text
     assert "Выберите один способ" not in text
+
+
+def test_generated_locked_profiles_describe_only_their_retained_secure_installation():
+    snapshot, _, plan = prepare(
+        {"environment.yml": "dependencies: [python=3.11, unchecked-native-library]\n"}
+    )
+    plan = replace(plan, automatic_resolution={"package_safety": {"status": "checked"}})
+    text = "\n".join(
+        EnvironmentInstructions(
+            plan,
+            "3.11",
+            "linux-x86_64",
+            locked=True,
+            generated_paths=("pyproject.toml", "environment.yml", "requirements.lock.txt"),
+            snapshot=snapshot,
+        ).installation()
+    )
+    assert "Корневой `pyproject.toml` — новый профиль зависимостей" in text
+    assert "служебные имя и версия" in text
+    assert "pip install ." not in text
+    assert "--only-binary=:all: --require-hashes -r requirements.lock.txt" in text
+    assert "conda env create --prefix ./.conda-env --file environment.yml" in text
+    assert "доступной для записи" in text
+    assert "не охватывает Python, pip, каналы и системные пакеты Conda" in text
+    assert "не является полным Conda-lock" in text
+    assert "Исходный YAML автора в `project/` сохранён отдельно" in text
+    assert "--file project/environment.yml" not in text
+    assert "dependency-lock.json" not in text
+
+
+@pytest.mark.parametrize(
+    ("locked", "python_version", "platform"),
+    [(False, "3.11", "linux-x86_64"), (True, "unknown", "linux-x86_64"), (True, "3.11", None)],
+)
+def test_generated_conda_draft_has_no_create_or_install_command(locked, python_version, platform):
+    _, _, plan = prepare({})
+    plan = replace(plan, automatic_resolution={"package_safety": {"status": "checked"}})
+    instructions = EnvironmentInstructions(
+        plan,
+        python_version,
+        platform,
+        locked=locked,
+        generated_paths=("pyproject.toml", "environment.yml"),
+    )
+    text = "\n".join(instructions._generated_profiles())
+    assert "черновик без установки пакетов проекта" in text
+    assert "conda env create" not in text
+    assert "conda activate" not in text
+    assert "pip install" not in text
+
+
+def test_absent_generated_profiles_do_not_add_phantom_conda_or_metadata_guides():
+    _, _, plan = prepare({})
+    text = "\n".join(EnvironmentInstructions(plan, "3.11", "linux-x86_64").installation())
+    assert "Другие форматы среды" not in text
+    assert "Корневой `pyproject.toml`" not in text
+    assert "Корневой `environment.yml`" not in text

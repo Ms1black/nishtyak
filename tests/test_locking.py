@@ -306,7 +306,8 @@ def test_locked_zip_readme_and_docker_install_only_hashed_dependencies(
         assert "-r requirements.txt" not in docker
         assert "requests>=2" in archive.read("requirements.txt").decode()
         assert archive.read("requirements.lock.txt").decode() == lock.requirements
-        assert json.loads(archive.read("dependency-lock.json"))["id"] == lock.id
+        assert "dependency-lock.json" not in archive.namelist()
+        assert {"pyproject.toml", "environment.yml"} <= set(archive.namelist())
 
 
 def test_non_linux_lock_is_usable_without_docker_but_refuses_linux_container():

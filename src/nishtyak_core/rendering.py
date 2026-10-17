@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import posixpath
 import shlex
 
 from packaging.requirements import InvalidRequirement, Requirement
 
+from .environment_export import EnvironmentExportGenerator
 from .installation import EnvironmentInstructions
 from .launches import LaunchCandidate, LaunchDetector
 from .layout import ProjectLauncher
@@ -27,21 +27,9 @@ class DocumentRenderer:
     ) -> GeneratedFiles:
         if plan.state == "blocked":
             raise ValueError("Resolve blocking findings before generating package files")
-        scanner = SecretScanner()
         files = (
             GeneratedFile("requirements.txt", self._requirements(plan).encode("utf-8")),
-            GeneratedFile(
-                "analysis-report.json",
-                (
-                    json.dumps(
-                        scanner.redact_value(plan.to_dict()),
-                        ensure_ascii=False,
-                        indent=2,
-                        sort_keys=True,
-                    )
-                    + "\n"
-                ).encode("utf-8"),
-            ),
+            *EnvironmentExportGenerator().generate(plan),
         )
         if ProjectLauncher.required(plan):
             files = (*files, ProjectLauncher().generate(plan))
@@ -72,6 +60,7 @@ class DocumentRenderer:
         locked: bool = False,
         generated_paths: tuple[str, ...] = (),
         snapshot: ProjectSnapshot | None = None,
+        locked_packages: tuple[str, ...] = (),
     ) -> str:
         target = (
             target
@@ -253,6 +242,34 @@ class DocumentRenderer:
                 )
 
         lines.extend(instructions.docker())
+        lines.extend(["## Зависимости", ""])
+        requirements = locked_packages if locked else plan.requirements
+        if requirements:
+            lines.append(
+                "Полный выбранный набор, включая транзитивные зависимости:"
+                if locked
+                else "Известные зависимости и ограничения версий:"
+            )
+            lines.extend("- `" + value.replace("`", "\\`") + "`" for value in requirements)
+        else:
+            lines.append("Внешние Python-зависимости не выявлены.")
+        lines.extend(
+            [
+                "",
+                "Локальные модули сохранены в `project/`; устанавливать их из PyPI не нужно. "
+                "Модули стандартной библиотеки входят в выбранный Python.",
+                "",
+            ]
+        )
+        if plan.decisions and plan.decisions.selected_extras:
+            lines.extend(
+                [
+                    "Включены дополнительные группы: "
+                    + ", ".join(f"`{value}`" for value in plan.decisions.selected_extras)
+                    + ".",
+                    "",
+                ]
+            )
         lines.extend(
             [
                 "## Входные данные",
@@ -299,7 +316,8 @@ class DocumentRenderer:
                 "",
                 "Исходники и относительные пути сохранены в `project/`. "
                 "Исходный README, если он был, остаётся там. "
-                "Полные факты анализа и происхождение решений записаны в `analysis-report.json`.",
+                "Отчёт о целевой среде, зависимостях, данных и ограничениях приведён выше. "
+                "Подробная машинная диагностика доступна в сервисе.",
                 "",
                 *self._file_tree(plan, locked=locked, generated_paths=generated_paths),
             ]
@@ -375,9 +393,9 @@ class DocumentRenderer:
     def _file_tree(
         plan: PackagePlan, *, locked: bool = False, generated_paths: tuple[str, ...] = ()
     ) -> list[str]:
-        lines = ["```text", "README.md", "requirements.txt", "analysis-report.json"]
+        lines = ["```text", "README.md", "requirements.txt"]
         if locked:
-            lines.extend(["requirements.lock.txt", "dependency-lock.json"])
+            lines.append("requirements.lock.txt")
         if ProjectLauncher.required(plan):
             lines.append("run_project.py")
         lines.extend(path for path in generated_paths if path not in lines)

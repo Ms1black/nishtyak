@@ -19,7 +19,6 @@ from packaging.version import InvalidVersion, Version
 
 from .models import GeneratedFile, GeneratedFiles, PackagePlan, ProjectSnapshot
 from .rendering import DocumentRenderer
-from .report_codec import bounded_json
 from .resolver_proxy import RestrictedIndexProxy
 
 MAX_LOCK_BYTES = 384 * 1024
@@ -447,6 +446,11 @@ class LockExporter:
             )
         _validate_target(plan, lock.target)
         _validate_coverage(_validated_requirements(plan.requirements), lock.packages, lock.target)
+        from .environment_export import EnvironmentExportGenerator
+
+        formats = {
+            file.path: file for file in EnvironmentExportGenerator().generate(plan, lock=lock)
+        }
         files = []
         for file in generated.files:
             if file.path == "README.md":
@@ -455,8 +459,9 @@ class LockExporter:
                     target=asdict(lock.target),
                     locked=True,
                     generated_paths=tuple(item.path for item in generated.files)
-                    + ("requirements.lock.txt", "dependency-lock.json"),
+                    + ("requirements.lock.txt",),
                     snapshot=snapshot,
+                    locked_packages=lock.packages,
                 )
                 files.append(GeneratedFile(file.path, text.encode()))
             elif file.path == "Dockerfile":
@@ -483,14 +488,12 @@ class LockExporter:
                     "--require-hashes -r requirements.lock.txt",
                 )
                 files.append(GeneratedFile(file.path, text.encode()))
+            elif file.path in formats:
+                files.append(formats.pop(file.path))
             else:
                 files.append(file)
         return GeneratedFiles(
             tuple(files)
-            + (
-                GeneratedFile("requirements.lock.txt", lock.requirements.encode()),
-                GeneratedFile(
-                    "dependency-lock.json", bounded_json(lock.to_dict(), MAX_LOCK_BYTES * 2)
-                ),
-            )
+            + tuple(formats.values())
+            + (GeneratedFile("requirements.lock.txt", lock.requirements.encode()),)
         )

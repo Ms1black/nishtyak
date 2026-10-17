@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -100,7 +99,9 @@ def test_resolves_without_questions_and_automatically_exports_hashed_set(automat
         assert "Предложенная версия Python: `3.11`" in readme
         assert "Python из добровольного снимка среды автора" not in readme
         assert "--require-hashes -r requirements.lock.txt" in readme
-        metadata = json.loads(archive.read("analysis-report.json"))
+        assert not {"analysis-report.json", "dependency-lock.json"} & set(archive.namelist())
+        assert {"pyproject.toml", "environment.yml"} <= set(archive.namelist())
+        metadata = logic.plan("alice", record.project_id)
         assert metadata["decisions"]["python_version"] is None
     reopened = LogicService(logic.settings)
     reopened.review_pending()

@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tomllib
 import zipfile
 from dataclasses import replace
 
@@ -23,6 +24,20 @@ def prepare(files, **choices):
     report = service.analyze(snapshot)
     plan = service.prepare(report, UserDecisions(report.analysis_id, **choices))
     return snapshot, service, plan
+
+
+@pytest.fixture
+def cli_plans(monkeypatch):
+    plans = []
+    prepare = ReproducibilityService.prepare
+
+    def capture(service, *args, **kwargs):
+        plan = prepare(service, *args, **kwargs)
+        plans.append(plan)
+        return plan
+
+    monkeypatch.setattr(ReproducibilityService, "prepare", capture)
+    return plans
 
 
 def test_lone_scientific_script_needs_neither_main_guard_nor_manual_entry(tmp_path):
@@ -234,7 +249,7 @@ def test_configured_source_root_search_order_is_retained():
     assert report.layout.source_roots == ("b", "a")
 
 
-def test_cli_build_without_entry_exports_automatic_command(tmp_path, capsys):
+def test_cli_build_without_entry_exports_automatic_command(tmp_path, capsys, cli_plans):
     source = tmp_path / "source"
     source.mkdir()
     (source / "experiment.py").write_text("print(42)\n")
@@ -242,7 +257,12 @@ def test_cli_build_without_entry_exports_automatic_command(tmp_path, capsys):
     assert CommandLine().run(["build", str(source), "--output", str(output)]) == 0
     capsys.readouterr()
     with zipfile.ZipFile(output) as archive:
-        report = json.loads(archive.read("analysis-report.json"))
+        assert not {"analysis-report.json", "dependency-lock.json"} & set(archive.namelist())
+        assert {"pyproject.toml", "environment.yml"} <= set(archive.namelist())
+        readme = archive.read("README.md").decode()
+        assert "cd project\npython experiment.py" in readme
+        assert "определена по структуре" in readme
+    report = cli_plans[-1].to_dict()
     assert report["run_spec"]["target"] == "experiment.py"
     assert report["run_spec_origin"] == "inferred"
     assert report["decisions"]["run_spec"] is None
@@ -318,8 +338,12 @@ def test_cli_lock_export_uses_the_selected_target_and_keeps_direct_requirements(
         assert "numpy==2.2.0" in archive.read("requirements.lock.txt").decode()
         assert "\nnumpy\n" in archive.read("requirements.txt").decode()
         assert "requirements.lock.txt" in archive.read("README.md").decode()
-        metadata = json.loads(archive.read("dependency-lock.json"))
-        assert metadata["target"] == {"python_version": "3.11", "platform": "linux-x86_64"}
+        assert "dependency-lock.json" not in archive.namelist()
+        metadata = tomllib.loads(archive.read("pyproject.toml").decode())
+        profile = metadata["tool"]["nishtyak-reproducibility"]
+        assert profile["target-python"] == "3.11"
+        assert profile["target-platform"] == "linux-x86_64"
+        assert metadata["project"]["dependencies"] == ["numpy==2.2.0"]
 
 
 @pytest.mark.parametrize(
@@ -399,7 +423,9 @@ def test_cli_analysis_classifies_imports_for_selected_python(
     assert report["dependencies"][0]["category"] == category
 
 
-def test_cli_build_other_python_warns_for_module_missing_from_its_stdlib(tmp_path, capsys):
+def test_cli_build_other_python_warns_for_module_missing_from_its_stdlib(
+    tmp_path, capsys, cli_plans
+):
     source = tmp_path / "source"
     source.mkdir()
     (source / "experiment.py").write_text("import tomllib\nprint(tomllib)\n")
@@ -409,8 +435,9 @@ def test_cli_build_other_python_warns_for_module_missing_from_its_stdlib(tmp_pat
     )
     capsys.readouterr()
     with zipfile.ZipFile(output) as archive:
-        plan = json.loads(archive.read("analysis-report.json"))
+        assert "analysis-report.json" not in archive.namelist()
         assert "DEPENDENCY_UNRESOLVED" in archive.read("README.md").decode()
+    plan = cli_plans[-1].to_dict()
     assert plan["report"]["options"]["python_version"] == "3.10"
     assert plan["report"]["dependencies"][0]["category"] == "unresolved"
     assert plan["state"] == "draft"

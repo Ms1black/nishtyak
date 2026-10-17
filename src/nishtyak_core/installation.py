@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import posixpath
+import re
 import shlex
 import tomllib
 from dataclasses import dataclass
@@ -152,8 +153,8 @@ class EnvironmentInstructions:
             if self.locked:
                 lines.extend(
                     [
-                        "`requirements.lock.txt` и `dependency-lock.json` относятся к "
-                        "отдельному pip-профилю целевой платформы. Они не являются lock-файлом "
+                        "`requirements.lock.txt` относится к "
+                        "отдельному pip-профилю целевой платформы. Он не является lock-файлом "
                         "этой Conda-среды; не устанавливайте их поверх неё автоматически.",
                         "",
                     ]
@@ -180,12 +181,12 @@ class EnvironmentInstructions:
             if self.locked:
                 lines.extend(
                     [
-                        "`dependency-lock.json` содержит целевую платформу, список пакетов "
-                        "и происхождение подбора. Это отчёт о lock-профиле; для установки "
-                        "используется `requirements.lock.txt`, отдельной команды для JSON нет.",
+                        "Точные версии и хеши пакетов записаны в `requirements.lock.txt`. "
+                        "Устанавливайте его на указанной выше версии Python и платформе.",
                         "",
                     ]
                 )
+        lines.extend(self._generated_profiles())
         pyproject = next((item for item in self.manifests if item.kind == "pyproject.toml"), None)
         if pyproject is not None:
             lines.extend(
@@ -233,6 +234,65 @@ class EnvironmentInstructions:
                     "Используйте описанную выше среду для запуска исходников."
                 )
             lines.append("")
+        return lines
+
+    def _generated_profiles(self) -> list[str]:
+        pyproject = "pyproject.toml" in self.generated_paths
+        conda = "environment.yml" in self.generated_paths
+        if not pyproject and not conda:
+            return []
+        lines = ["### Другие форматы среды", ""]
+        if pyproject:
+            lines.extend(
+                [
+                    "Корневой `pyproject.toml` — новый профиль зависимостей. Его служебные "
+                    "имя и версия не описывают исходный проект; устанавливаемую библиотеку "
+                    "сервис не создаёт. Этот файл не заменяет lock-файл с хешами.",
+                    "",
+                ]
+            )
+        if conda:
+            known_target = self.locked and self.platform and re.fullmatch(
+                r"3\.[0-9]+(?:\.[0-9]+)?", self.python_version
+            )
+            if known_target:
+                lines.extend(
+                    [
+                        "Корневой `environment.yml` — альтернатива venv: Conda создаёт "
+                        "отдельную среду с Python, затем pip устанавливает зависимости из "
+                        "`requirements.lock.txt` с проверкой хешей и без сборки исходных пакетов. "
+                        "Установите Conda и выполните из локальной папки распакованного ZIP, "
+                        "доступной для записи:",
+                        "",
+                        self.fence,
+                        "conda env create --prefix ./.conda-env --file environment.yml",
+                        "conda activate ./.conda-env",
+                        "```",
+                        "",
+                        "Используйте указанную выше целевую платформу. Проверка PyPI-пакетов "
+                        "не охватывает Python, pip, каналы и системные пакеты Conda; "
+                        "этот файл не является полным Conda-lock. После pip не добавляйте "
+                        "Conda-пакеты в эту среду: создайте новую при изменении состава.",
+                        "",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "Корневой `environment.yml` — черновик без установки пакетов проекта. "
+                        "Команда создания Conda-среды не сформирована: сначала нужны "
+                        "известная целевая среда и проверенный lock-файл зависимостей.",
+                        "",
+                    ]
+                )
+            if any(item.kind == "conda" for item in self.manifests):
+                lines.extend(
+                    [
+                        "Исходный YAML автора в `project/` сохранён отдельно. Сгенерированный "
+                        "pip-профиль не воспроизводит его каналы и системные зависимости.",
+                        "",
+                    ]
+                )
         return lines
 
     def _venv(self) -> list[str]:
