@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { projectHttpApi } from './projectApi.http'
 
-const { get } = vi.hoisted(() => ({ get: vi.fn() }))
-vi.mock('@/shared/api', () => ({ apiClient: { get } }))
+const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
+vi.mock('@/shared/api', () => ({ apiClient: { get, post } }))
 
 describe('built archive file API', () => {
   beforeEach(() => { vi.resetAllMocks() })
@@ -17,5 +17,14 @@ describe('built archive file API', () => {
     expect(url.pathname).toBe('/projects/project/archive/files')
     expect(url.searchParams.get('path')).toBe(path)
     expect(url.searchParams.get('archiveTag')).toBe(archiveTag)
+  })
+})
+
+describe('target environment API', () => {
+  it('submits Python and OS with the decision revision in a single request', async () => {
+    post.mockResolvedValueOnce({ id: 'project', analysis: 'analyzing' })
+    const target = { pythonVersion: '3.12', platform: 'windows-x86_64' as const }
+    await projectHttpApi.applyTarget('project', target, 7)
+    expect(post).toHaveBeenCalledExactlyOnceWith('/projects/project/target', { expectedRevision: 7, target })
   })
 })

@@ -8,16 +8,18 @@ import { useUploadWizardStore } from '../model/uploadWizardStore'
 const wizard = useUploadWizardStore()
 const projectRoot = ref('')
 const sourceRoots = ref('.')
-const profilePython = ref<string | null>(null)
 const targetPython = ref<string | null>(null)
 const platform = ref<TargetPlatform | null>('linux-x86_64')
 const environment = ref<unknown>()
 const environmentName = ref('')
 const localError = ref<string | null>(null)
+let environmentRead = 0
+let targetDirty = false
 
-const pythonOptions: SelectOption[] = Array.from({ length: 7 }, (_, index) => {
-  const version = `3.${index + 8}`
-  return { value: version, label: `Python ${version}` }
+const pythonOptions = computed<SelectOption[]>(() => {
+  const versions = Array.from({ length: 7 }, (_, index) => `3.${index + 8}`)
+  if (targetPython.value && !versions.includes(targetPython.value)) versions.push(targetPython.value)
+  return versions.map((version) => ({ value: version, label: `Python ${version}` }))
 })
 const platformOptions: SelectOption<TargetPlatform>[] = [
   { value: 'linux-x86_64', label: 'Linux x86_64' },
@@ -27,16 +29,31 @@ const platformOptions: SelectOption<TargetPlatform>[] = [
   { value: 'windows-x86_64', label: 'Windows x86_64' },
 ]
 const rootHints = computed(() => wizard.analysis?.projectRoots?.join(', ') ?? '.')
-const targetMatchesProfile = computed(() => targetPython.value === wizard.analysis?.options?.pythonVersion)
+const waitingForAnswers = computed(() => wizard.automation?.phase === 'needs_input')
+const disabled = computed(() => wizard.isBusy || !wizard.canEdit)
+const targetChanged = computed(() => !wizard.targetEnvironment ||
+  targetPython.value !== wizard.targetEnvironment.pythonVersion || platform.value !== wizard.targetEnvironment.platform,
+)
+
+watch(
+  () => [wizard.project?.id, wizard.analysis?.analysisId, wizard.targetEnvironment?.pythonVersion, wizard.targetEnvironment?.platform],
+  (value, previous) => {
+    if (!previous || value[0] !== previous[0] || value[1] !== previous[1]) targetDirty = false
+    if (targetDirty) return
+    targetPython.value = wizard.targetEnvironment?.pythonVersion ?? wizard.plan?.pythonVersion ??
+      wizard.decisions?.pythonVersion ?? wizard.analysis?.options?.pythonVersion ?? '3.11'
+    platform.value = wizard.targetEnvironment?.platform ?? 'linux-x86_64'
+  },
+  { immediate: true },
+)
 
 watch(
   () => wizard.analysis?.analysisId,
   () => {
+    environmentRead += 1
     const options = wizard.analysis?.options
     projectRoot.value = options?.projectRoot ?? ''
     sourceRoots.value = options?.sourceRoots.join(', ') ?? '.'
-    profilePython.value = options?.pythonVersion ?? '3.11'
-    targetPython.value = wizard.decisions?.pythonVersion ?? options?.pythonVersion ?? '3.11'
     environment.value = undefined
     environmentName.value = ''
     localError.value = null
@@ -45,8 +62,10 @@ watch(
 )
 
 async function readEnvironment(event: Event) {
+  if (disabled.value) return
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
+  const request = ++environmentRead
   input.value = ''
   environment.value = undefined
   environmentName.value = ''
@@ -55,18 +74,21 @@ async function readEnvironment(event: Event) {
   try {
     if (file.size > 256 * 1024) throw new Error(t('workflow.environmentTooLarge'))
     const value: unknown = JSON.parse(await file.text())
+    if (request !== environmentRead) return
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error(t('workflow.environmentInvalid'))
     environment.value = value
     environmentName.value = file.name
   } catch (cause) {
+    if (request !== environmentRead) return
     localError.value =
       cause instanceof SyntaxError ? t('workflow.environmentInvalid') : (cause as Error).message
   }
 }
 
 async function reanalyze() {
-  if (!profilePython.value) return
+  const options = wizard.analysis?.options
+  if (!options || disabled.value || waitingForAnswers.value) return
   localError.value = null
   const roots = sourceRoots.value
     .split(',')
@@ -74,7 +96,8 @@ async function reanalyze() {
     .filter(Boolean)
   await wizard.reanalyze(
     {
-      pythonVersion: profilePython.value,
+      pythonVersion: options.pythonVersion,
+      targetPlatform: wizard.targetEnvironment?.platform ?? options.targetPlatform,
       projectRoot: projectRoot.value.trim() || null,
       sourceRoots: roots.length ? roots : ['.'],
     },
@@ -82,43 +105,83 @@ async function reanalyze() {
   )
 }
 
+async function applyTarget() {
+  if (!targetPython.value || !platform.value || disabled.value || waitingForAnswers.value) return
+  await wizard.applyTarget({ pythonVersion: targetPython.value, platform: platform.value })
+}
 </script>
 
 <template>
   <div class="tools">
+    <section class="tools__section" aria-labelledby="target-environment-title">
+      <h3 id="target-environment-title">{{ $t('workflow.targetTitle') }}</h3>
+      <div class="tools__body">
+        <p class="tools__hint">{{ $t('workflow.targetHint') }}</p>
+        <div class="tools__row">
+          <label class="tools__field">
+            <span>{{ $t('workflow.targetPython') }}</span>
+            <BaseSelect
+              v-model="targetPython"
+              :options="pythonOptions"
+              :aria-label="$t('workflow.targetPython')"
+              :disabled="disabled || waitingForAnswers"
+              @update:model-value="targetDirty = true"
+            />
+          </label>
+          <label class="tools__field">
+            <span>{{ $t('workflow.targetPlatform') }}</span>
+            <BaseSelect
+              v-model="platform"
+              :options="platformOptions"
+              :aria-label="$t('workflow.targetPlatform')"
+              :disabled="disabled || waitingForAnswers"
+              @update:model-value="targetDirty = true"
+            />
+          </label>
+        </div>
+        <p v-if="wizard.analysis?.pythonRequires" class="tools__hint">{{ $t('workflow.pythonRequires', { spec: wizard.analysis.pythonRequires }) }}</p>
+        <p v-if="waitingForAnswers" class="tools__hint">{{ $t('workflow.targetAfterQuestions') }}</p>
+        <BaseButton
+          v-if="wizard.canEdit"
+          variant="tonal"
+          :disabled="disabled || waitingForAnswers || !platform || !targetPython || !targetChanged"
+          :loading="wizard.isRefreshing"
+          @click="applyTarget"
+          >{{ $t('workflow.applyTarget') }}</BaseButton
+        >
+      </div>
+    </section>
+
     <details class="tools__section">
       <summary>{{ $t('workflow.analysisSettings') }}</summary>
       <div class="tools__body">
         <p class="tools__hint">{{ $t('workflow.reanalysisWarning') }}</p>
-        <label class="tools__field">
-          <span>{{ $t('workflow.profilePython') }}</span>
-          <BaseSelect v-model="profilePython" :options="pythonOptions" :disabled="wizard.isBusy" />
-        </label>
+        <p class="tools__hint">{{ $t('workflow.analysisProfile', { version: wizard.analysis?.options?.pythonVersion ?? '—' }) }}</p>
         <label class="tools__field">
           <span>{{ $t('workflow.projectRoot') }}</span>
           <BaseInput
             v-model="projectRoot"
             mono
             :placeholder="$t('workflow.autoRoot')"
-            :disabled="wizard.isBusy"
+            :disabled="disabled || waitingForAnswers"
           />
           <span class="tools__hint">{{ $t('workflow.rootCandidates', { roots: rootHints }) }}</span>
         </label>
         <label class="tools__field">
           <span>{{ $t('workflow.sourceRoots') }}</span>
-          <BaseInput v-model="sourceRoots" mono placeholder="., src" :disabled="wizard.isBusy" />
+          <BaseInput v-model="sourceRoots" mono placeholder="., src" :disabled="disabled || waitingForAnswers" />
         </label>
         <label class="tools__field">
           <span>{{ $t('workflow.authorEnvironment') }}</span>
           <input
             type="file"
             accept=".json,application/json"
-            :disabled="wizard.isBusy"
+            :disabled="disabled || waitingForAnswers"
             @change="readEnvironment"
           />
           <span class="tools__hint">{{ environmentName || $t('workflow.environmentHint') }}</span>
         </label>
-        <BaseButton variant="tonal" :disabled="wizard.isBusy || !profilePython" @click="reanalyze">{{
+        <BaseButton v-if="wizard.canEdit" variant="tonal" :disabled="disabled || waitingForAnswers || !wizard.analysis?.options" @click="reanalyze">{{
           $t('workflow.reanalyze')
         }}</BaseButton>
       </div>
@@ -131,40 +194,17 @@ async function reanalyze() {
           v-for="group in wizard.analysis.optionalGroups"
           :key="group"
           :model-value="wizard.decisions?.selectedExtras.includes(group) ?? false"
-          :disabled="wizard.isBusy"
+          :disabled="disabled"
           @update:model-value="wizard.toggleExtra(group)"
           >{{ group }}</BaseCheckbox
         >
       </div>
     </div>
 
-    <details class="tools__section">
-      <summary>{{ $t('workflow.lockTitle') }}</summary>
+    <details v-if="wizard.lock" class="tools__section">
+      <summary>{{ $t('workflow.environmentDetails') }}</summary>
       <div class="tools__body">
-        <p class="tools__hint">{{ $t('workflow.lockHint') }}</p>
-        <div class="tools__row">
-          <BaseSelect
-            v-model="targetPython"
-            :options="pythonOptions"
-            :aria-label="$t('workflow.targetPython')"
-            :disabled="wizard.isBusy"
-          />
-          <BaseSelect
-            v-model="platform"
-            :options="platformOptions"
-            :aria-label="$t('workflow.targetPlatform')"
-            :disabled="wizard.isBusy"
-          />
-        </div>
-        <p v-if="!targetMatchesProfile" class="tools__hint">{{ $t('workflow.profileMismatch') }}</p>
-        <BaseButton
-          variant="tonal"
-          :disabled="wizard.isBusy || !wizard.canEdit || wizard.automation?.phase === 'needs_input' || !platform || !targetPython || !targetMatchesProfile"
-          :loading="wizard.isResolving"
-          @click="targetPython && platform && wizard.resolve({ pythonVersion: targetPython, platform })"
-          >{{ $t('workflow.resolve') }}</BaseButton
-        >
-        <div v-if="wizard.lock" class="tools__result">
+        <div class="tools__result">
           <p>{{ $t('workflow.lockReady', { count: wizard.lock.packages.length }) }}</p>
           <CodeBlock :code="wizard.lock.requirements" language="plaintext" filename="requirements.lock.txt" />
           <p class="tools__hint">{{ $t('workflow.lockNotExecution') }}</p>
@@ -174,7 +214,7 @@ async function reanalyze() {
 
     <BaseCheckbox
       v-model="wizard.includeDockerfile"
-      :disabled="wizard.isBusy || (!wizard.canIncludeDockerfile && !wizard.includeDockerfile)"
+      :disabled="disabled || waitingForAnswers || (!wizard.canIncludeDockerfile && !wizard.includeDockerfile)"
       >{{ $t('workflow.dockerfile') }}</BaseCheckbox
     >
     <p v-if="!wizard.canIncludeDockerfile" class="tools__hint">{{ $t('workflow.dockerUnavailable') }}</p>

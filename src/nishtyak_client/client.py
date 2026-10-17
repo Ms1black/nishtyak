@@ -142,6 +142,15 @@ class LogicClient:
     def decisions(self, project_id: str) -> dict:
         return self._request("GET", self._project_path(project_id) + "/decisions")
 
+    def apply_target(
+        self, project_id: str, python_version: str, platform: str, expected_revision: int
+    ) -> dict:
+        body = {
+            "target": {"python_version": python_version, "platform": platform},
+            "expected_revision": expected_revision,
+        }
+        return self._request("POST", self._project_path(project_id) + "/target", self._json(body))
+
     def replace_source(self, project_id: str, archive: bytes, expected_revision: int) -> dict:
         if not isinstance(archive, bytes) or not 0 < len(archive) <= 10 * 1024**2:
             raise ValueError("Expected a ZIP of at most 10 MiB")

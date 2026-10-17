@@ -34,6 +34,7 @@ export type {
   PackagePlan,
   DependencyLock,
   TargetPlatform,
+  TargetEnvironment,
 } from './model/types'
 export { useProjectStore } from './model/projectStore'
 export { projectApi } from './api'

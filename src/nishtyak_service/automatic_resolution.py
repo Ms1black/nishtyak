@@ -275,9 +275,11 @@ class AutomaticDependencyResolution:
                 "TARGET_PYTHON_UNSUPPORTED", "No compatible supported Python target"
             )
         report = plan.report
-        platform = self._author_platform(report.author_platform)
-        manual = cached is not None and cached.get("target_source") == "author"
-        if manual:
+        platform = report.options.target_platform or self._author_platform(report.author_platform)
+        manual = bool(report.options.target_platform) or (
+            cached is not None and cached.get("target_source") == "author"
+        )
+        if manual and not report.options.target_platform:
             platform = cached.get("target", {}).get("platform")
         target = ResolutionTarget(plan.python_version, platform or self.default_platform)
         return target, {

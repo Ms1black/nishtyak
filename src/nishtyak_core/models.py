@@ -48,6 +48,8 @@ class AnalysisOptions:
     max_files: int = 1_000
     project_root: str | None = None
     python_version_auto: bool = False
+    target_platform: str | None = None
+    target_python_version: str | None = None
 
 
 @dataclass(frozen=True)

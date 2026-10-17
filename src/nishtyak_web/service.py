@@ -367,6 +367,19 @@ class BrowserService:
             self.store.invalidate(identity.scope, project_id)
             return self._project(self.store.update_job(identity.scope, project_id, value))
 
+    def apply_target(self, identity, project_id, python_version, platform, expected_revision):
+        if identity.role == "viewer":
+            raise LogicClientError(
+                403, "ROLE_FORBIDDEN", "Viewers cannot change target environment"
+            )
+        with self.store.locked(project_id):
+            self.store.get(identity.scope, project_id)
+            value = self.client_factory(identity.scope).apply_target(
+                project_id, python_version, platform, expected_revision
+            )
+            self.store.invalidate(identity.scope, project_id)
+            return self._project(self.store.update_job(identity.scope, project_id, value))
+
     def replace_source(self, identity, project_id, content, expected_revision):
         if identity.role == "viewer":
             raise LogicClientError(403, "ROLE_FORBIDDEN", "Viewers cannot replace project source")

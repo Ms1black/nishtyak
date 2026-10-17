@@ -10,6 +10,16 @@ from nishtyak_core.planning import DecisionError, PackagePlanner
 class SourceDecisionCarry:
     """Retain compatible author choices when the same project receives new files."""
 
+    @staticmethod
+    def pending_choices(saved: dict, *, source_changed: bool = False) -> dict:
+        while "_source_carry" in saved or "_analysis_carry" in saved:
+            if "_source_carry" in saved:
+                source_changed = True
+                saved = saved["_source_carry"]
+            else:
+                saved = saved["_analysis_carry"]
+        return {**saved, "data_confirmed": False} if source_changed else saved
+
     def restore(self, report: AnalysisReport, saved: dict) -> dict:
         result = {"analysis_id": report.analysis_id}
         modules = {item.module for item in report.dependencies}

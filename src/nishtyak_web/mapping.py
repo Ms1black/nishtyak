@@ -75,6 +75,7 @@ def options_to_core(value: dict) -> dict:
         "pythonVersionAuto": "python_version_auto",
         "sourceRoots": "source_roots",
         "projectRoot": "project_root",
+        "targetPlatform": "target_platform",
     }
     if not isinstance(value, dict) or set(value) - fields.keys():
         raise ValueError("Invalid browser analysis options")
@@ -295,9 +296,16 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
         "options": {
             "pythonVersion": options.get("python_version", "3.11"),
             "pythonVersionAuto": options.get("python_version_auto", False),
+            "targetPlatform": options.get("target_platform"),
             "projectRoot": options.get("project_root"),
             "sourceRoots": options.get("source_roots", ["."]),
         },
+        "targetEnvironment": {
+            "pythonVersion": options.get("target_python_version") or options["python_version"],
+            "platform": options["target_platform"],
+        }
+        if options.get("target_platform")
+        else None,
         "projectRoots": layout.get("root_candidates", ["."]),
         "optionalGroups": report.get("optional_groups", []),
         "layout": layout,

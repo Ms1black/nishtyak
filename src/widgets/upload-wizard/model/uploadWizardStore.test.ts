@@ -18,6 +18,7 @@ const { api, projects, team } = vi.hoisted(() => ({
     reanalyze: vi.fn(),
     replaceSource: vi.fn(),
     resolve: vi.fn(),
+    applyTarget: vi.fn(),
   },
   projects: { upsert: vi.fn(), patch: vi.fn() },
 }))
@@ -75,10 +76,12 @@ function plan(decisions: AnalysisDecisions): PackagePlan {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function batchAutomation(): PackagePlan['automation'] {
@@ -101,6 +104,7 @@ describe('upload wizard request coordination', () => {
     api.getAnalysis.mockImplementation(async (id: string) => analysis(id))
     api.get.mockImplementation(async (id: string) => ({ project: project(id), teamId: 'workspace' }))
     api.replaceSource.mockImplementation(async (id: string) => project(id))
+    api.applyTarget.mockImplementation(async (id: string) => project(id))
     api.getDecisions.mockResolvedValue({ revision: 0, decisions: null, updatedAt: null })
     api.getLock.mockRejectedValue(new ApiError(404, 'No lock'))
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => plan(decisions))
@@ -534,10 +538,11 @@ describe('upload wizard request coordination', () => {
     await vi.advanceTimersByTimeAsync(5000)
     await store.refreshPlan()
     await store.build()
-    await store.resolve({ pythonVersion: '3.11', platform: 'linux-x86_64' })
+    await store.applyTarget({ pythonVersion: '3.11', platform: 'linux-x86_64' })
     expect(api.saveDecisions).not.toHaveBeenCalled()
     expect(api.submitClarifications).not.toHaveBeenCalled()
     expect(api.resolve).not.toHaveBeenCalled()
+    expect(api.applyTarget).not.toHaveBeenCalled()
     expect(api.buildArchive).not.toHaveBeenCalled()
     expect(store.decisions?.packages).toEqual({ first: 'requests' })
     expect(store.canBuild).toBe(false)
@@ -794,6 +799,201 @@ describe('upload wizard request coordination', () => {
     expect(store.decisions?.description).toBe('')
     expect(api.saveDecisions).not.toHaveBeenCalled()
     expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('applies Python and OS together after saving pending author edits, then prepares the new analysis', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('target'))
+    store.update({ description: 'Keep my description', packages: { graph: 'networkx' } })
+    const target = { pythonVersion: '3.12', platform: 'windows-x86_64' as const }
+    const nextAnalysis = {
+      ...analysis('target'), analysisId: 'analysis-target-next', targetEnvironment: target,
+      options: { pythonVersion: target.pythonVersion, targetPlatform: target.platform, projectRoot: null, sourceRoots: ['.'] },
+    }
+    api.getAnalysis.mockResolvedValueOnce(nextAnalysis)
+    api.getDecisions.mockImplementationOnce(async () => ({
+      revision: 2,
+      decisions: { ...api.saveDecisions.mock.calls.at(-1)![1], analysisId: nextAnalysis.analysisId, pythonVersion: target.pythonVersion },
+      updatedAt: null,
+    }))
+
+    await store.applyTarget(target)
+
+    expect(api.saveDecisions).toHaveBeenCalledOnce()
+    expect(api.applyTarget).toHaveBeenCalledExactlyOnceWith('target', target, 1)
+    expect(api.reanalyze).not.toHaveBeenCalled()
+    expect(api.resolve).not.toHaveBeenCalled()
+    expect(store.analysis?.options?.pythonVersion).toBe('3.12')
+    expect(store.decisions?.pythonVersion).toBe('3.12')
+    expect(store.decisions?.description).toBe('Keep my description')
+    expect(store.decisions?.packages).toEqual({ graph: 'networkx' })
+    expect(store.targetEnvironment).toEqual(target)
+    expect(api.buildArchive).toHaveBeenCalledOnce()
+    expect(store.step).toBe(3)
+  })
+
+  it('restores the persisted target even if dependency preparation is unavailable after reload', async () => {
+    const target = { pythonVersion: '3.13', platform: 'macos-arm64' as const }
+    api.getAnalysis.mockImplementation(async (id: string) => ({
+      ...analysis(id),
+      options: { pythonVersion: '3.13', targetPlatform: target.platform, projectRoot: null, sourceRoots: ['.'] },
+      targetEnvironment: target,
+    }))
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automaticResolution: { status: 'unavailable' },
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('persisted'))
+    expect(store.targetEnvironment).toEqual(target)
+    await store.reloadProject()
+    expect(store.targetEnvironment).toEqual(target)
+    expect(api.applyTarget).not.toHaveBeenCalled()
+    expect(api.resolve).not.toHaveBeenCalled()
+  })
+
+  it('waits for the current decision save before applying a target with its latest revision', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('target'))
+    const pending = deferred<{ revision: number; decisions: AnalysisDecisions; updatedAt: null }>()
+    api.saveDecisions.mockReturnValueOnce(pending.promise)
+    store.update({ description: 'Already saving' })
+    await vi.advanceTimersByTimeAsync(500)
+    api.getDecisions.mockImplementationOnce(async () => ({
+      revision: 8, decisions: { ...api.saveDecisions.mock.calls[0]![1], pythonVersion: '3.12' }, updatedAt: null,
+    }))
+    const applying = store.applyTarget({ pythonVersion: '3.12', platform: 'linux-aarch64' })
+    expect(api.applyTarget).not.toHaveBeenCalled()
+    pending.resolve({ revision: 7, decisions: api.saveDecisions.mock.calls[0]![1], updatedAt: null })
+    await applying
+    expect(api.saveDecisions).toHaveBeenCalledOnce()
+    expect(api.applyTarget).toHaveBeenCalledExactlyOnceWith('target', { pythonVersion: '3.12', platform: 'linux-aarch64' }, 7)
+  })
+
+  it('keeps the existing analysis and target usable when applying the new environment fails', async () => {
+    const target = { pythonVersion: '3.11', platform: 'macos-arm64' as const }
+    api.getAnalysis.mockResolvedValueOnce({ ...analysis('target'), targetEnvironment: target })
+    const store = useUploadWizardStore()
+    await store.openProject(project('target'))
+    api.applyTarget.mockRejectedValueOnce(new ApiError(503, 'Target temporarily unavailable'))
+    await store.applyTarget({ pythonVersion: '3.12', platform: 'windows-x86_64' })
+    expect(store.targetEnvironment).toEqual(target)
+    expect(store.analysis?.analysisId).toBe('analysis-target')
+    expect(store.error).toBe('Target temporarily unavailable')
+    expect(store.isBusy).toBe(false)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a target when the awaited save opens the shared clarification form', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('target'))
+    const pending = deferred<{ revision: number; decisions: AnalysisDecisions; updatedAt: null }>()
+    api.saveDecisions.mockReturnValueOnce(pending.promise)
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: batchAutomation(),
+    }))
+    store.update({ description: 'Need clarification first' })
+    await vi.advanceTimersByTimeAsync(500)
+    const applying = store.applyTarget({ pythonVersion: '3.12', platform: 'windows-x86_64' })
+    pending.resolve({ revision: 1, decisions: api.saveDecisions.mock.calls[0]![1], updatedAt: null })
+    await applying
+    expect(store.automation?.phase).toBe('needs_input')
+    expect(api.applyTarget).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('stops after a failed pending save without silently retrying it or changing the target', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('target'))
+    const pending = deferred<{ revision: number; decisions: AnalysisDecisions; updatedAt: null }>()
+    api.saveDecisions.mockReturnValueOnce(pending.promise)
+    store.update({ description: 'Unsaved author text' })
+    await vi.advanceTimersByTimeAsync(500)
+    const applying = store.applyTarget({ pythonVersion: '3.12', platform: 'windows-x86_64' })
+    pending.reject(new ApiError(503, 'Save unavailable'))
+    await applying
+    expect(api.saveDecisions).toHaveBeenCalledOnce()
+    expect(api.applyTarget).not.toHaveBeenCalled()
+    expect(store.decisions?.description).toBe('Unsaved author text')
+    expect(store.error).toBe('Save unavailable')
+    expect(store.isBusy).toBe(false)
+  })
+
+  it('keeps the selected Dockerfile when changing to a target that can build it', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), state: 'ready_to_verify', pythonVersion: '3.12',
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('docker'))
+    store.includeDockerfile = true
+    await store.applyTarget({ pythonVersion: '3.12', platform: 'linux-aarch64' })
+    expect(store.includeDockerfile).toBe(true)
+    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('docker', { includeDockerfile: true })
+  })
+
+  it('omits the carried Dockerfile if the changed target only permits a draft ZIP', async () => {
+    api.plan.mockImplementationOnce(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), state: 'ready_to_verify', pythonVersion: '3.11',
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('docker'))
+    store.includeDockerfile = true
+    await store.applyTarget({ pythonVersion: '3.12', platform: 'windows-x86_64' })
+    expect(store.includeDockerfile).toBe(false)
+    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('docker', { includeDockerfile: false })
+    expect(store.step).toBe(3)
+  })
+
+  it('preserves a supported Dockerfile choice through a diagnostic rerun of the same project', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), state: 'ready_to_verify', pythonVersion: '3.12',
+    }))
+    api.reanalyze.mockResolvedValueOnce(project('docker'))
+    const store = useUploadWizardStore()
+    await store.openProject(project('docker'))
+    store.includeDockerfile = true
+    await store.reanalyze({ pythonVersion: '3.12', targetPlatform: 'linux-aarch64', projectRoot: null, sourceRoots: ['.'] })
+    expect(store.includeDockerfile).toBe(true)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it.each(['windows-x86_64', 'macos-arm64'] as const)('exports a ready %s package without carrying a Linux Dockerfile', async (platform) => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), state: 'ready_to_verify', pythonVersion: '3.12',
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('docker'))
+    store.includeDockerfile = true
+    const target = { pythonVersion: '3.12', platform }
+    api.getAnalysis.mockResolvedValueOnce({ ...analysis('docker'), targetEnvironment: target })
+    await store.applyTarget(target)
+    expect(store.canIncludeDockerfile).toBe(false)
+    expect(store.includeDockerfile).toBe(false)
+    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('docker', { includeDockerfile: false })
+    expect(store.step).toBe(3)
+  })
+
+  it('ignores an applied target response after the user switches projects', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('old'))
+    const pending = deferred<Project>()
+    api.applyTarget.mockReturnValueOnce(pending.promise)
+    const applying = store.applyTarget({ pythonVersion: '3.12', platform: 'windows-x86_64' })
+    await vi.waitFor(() => expect(api.applyTarget).toHaveBeenCalledOnce())
+    await store.openProject(project('new'))
+    pending.resolve(project('old'))
+    await applying
+    expect(store.project?.id).toBe('new')
+    expect(store.analysis?.analysisId).toBe('analysis-new')
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('does not let a viewer change the target environment', async () => {
+    team.canEditProjects = false
+    const store = useUploadWizardStore()
+    await store.openProject(project('viewer'))
+    await store.applyTarget({ pythonVersion: '3.12', platform: 'windows-x86_64' })
+    expect(api.applyTarget).not.toHaveBeenCalled()
+    expect(api.saveDecisions).not.toHaveBeenCalled()
   })
 
   it('clears project data and rejects pending responses when the account changes', async () => {

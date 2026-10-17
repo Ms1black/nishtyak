@@ -2,15 +2,15 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { VerificationStatus } from '@/entities/project'
 import { sessionGeneration } from '@/shared/api'
-import { BaseButton, BaseCard, BaseInput, BaseTextarea, CodeBlock, MarkdownContent } from '@/shared/ui'
+import { BaseButton, BaseCard, BaseInput, BaseTextarea, CodeBlock } from '@/shared/ui'
 import { ArchiveReview, readmeCommands } from '../model/archiveReview'
 
 const props = defineProps<{ projectId: string; archiveTag?: string; canEdit: boolean }>()
-const emit = defineEmits<{ refresh: [] }>()
+const emit = defineEmits<{ refresh: []; 'open-file': [path: string] }>()
 const review = new ArchiveReview()
 const state = review.state
-const copyStatus = ref<'copied' | 'error' | null>(null)
-const readmeRendered = ref(true)
+const verificationDetailsOpen = ref(false)
+const canPreviewReadme = computed(() => /^[a-f0-9]{64}$/.test(props.archiveTag ?? ''))
 const commands = computed(() => readmeCommands(state.readme))
 const statuses: VerificationStatus[] = ['not_checked', 'passed', 'failed', 'unable']
 const canSave = computed(() => props.canEdit && !!state.verification?.analysisId &&
@@ -19,19 +19,18 @@ const canSave = computed(() => props.canEdit && !!state.verification?.analysisId
 function load() { void review.open(props.projectId, props.archiveTag) }
 onMounted(load)
 watch(() => [props.projectId, props.archiveTag], () => {
-  copyStatus.value = null
-  readmeRendered.value = true
+  verificationDetailsOpen.value = false
   load()
 })
 watch(sessionGeneration, () => review.reset(), { flush: 'sync' })
 onBeforeUnmount(() => review.reset())
 
-async function copy(content: string) {
-  copyStatus.value = null
-  try {
-    await navigator.clipboard.writeText(content)
-    copyStatus.value = 'copied'
-  } catch { copyStatus.value = 'error' }
+function openReadme() {
+  if (canPreviewReadme.value) emit('open-file', 'README.md')
+}
+
+function toggleVerificationDetails(event: Event) {
+  verificationDetailsOpen.value = (event.currentTarget as HTMLDetailsElement).open
 }
 </script>
 
@@ -39,6 +38,7 @@ async function copy(content: string) {
   <BaseCard class="archive-review" padding="lg">
     <h2 class="step-title">{{ $t('ready.repeat.title') }}</h2>
     <p class="step-muted">{{ $t('ready.repeat.hint') }}</p>
+    <BaseButton variant="tonal" :disabled="!canPreviewReadme" @click="openReadme">{{ $t('ready.readme.preview') }}</BaseButton>
     <p v-if="state.readmeLoading" role="status">{{ $t('ready.readme.loading') }}</p>
     <div v-else-if="state.readmeError" class="archive-review__notice" role="alert">
       <p>{{ $t(state.readmeError) }}</p>
@@ -49,17 +49,6 @@ async function copy(content: string) {
         <h3>{{ command.title || $t('ready.readme.commands') }}</h3>
         <CodeBlock :code="command.content" :language="command.language" :line-numbers="false" />
       </div>
-      <details class="archive-review__readme">
-        <summary>{{ $t('ready.readme.preview') }}</summary>
-        <div class="archive-review__modes" role="group" :aria-label="$t('analysis.files.previewMode')">
-          <BaseButton size="sm" variant="tonal" :aria-pressed="readmeRendered" @click="readmeRendered = true">{{ $t('analysis.files.rendered') }}</BaseButton>
-          <BaseButton size="sm" variant="tonal" :aria-pressed="!readmeRendered" @click="readmeRendered = false">{{ $t('analysis.files.source') }}</BaseButton>
-        </div>
-        <MarkdownContent v-if="readmeRendered" :content="state.readme" />
-        <CodeBlock v-else :code="state.readme" language="markdown" filename="README.md" />
-        <BaseButton v-if="readmeRendered" size="sm" variant="tonal" @click="copy(state.readme)">{{ $t('ready.readme.copyReadme') }}</BaseButton>
-      </details>
-      <p v-if="copyStatus" role="status">{{ $t(copyStatus === 'copied' ? 'ready.readme.copied' : 'ready.readme.copyError') }}</p>
     </template>
 
     <form class="archive-review__verification" @submit.prevent="review.save(canEdit)">
@@ -78,28 +67,34 @@ async function copy(content: string) {
             <option v-for="status in statuses" :key="status" :value="status">{{ $t(`ready.verification.statuses.${status}`) }}</option>
           </select>
         </label>
-        <div class="archive-review__row">
-          <label class="archive-review__field">
-            <span>Python</span>
-            <BaseInput v-model="state.form.pythonVersion" :maxlength="100" />
-          </label>
-          <label class="archive-review__field">
-            <span>{{ $t('ready.verification.platform') }}</span>
-            <BaseInput v-model="state.form.platform" :maxlength="100" />
-          </label>
-        </div>
-        <label class="archive-review__field">
-          <span>{{ $t('ready.verification.command') }}</span>
-          <BaseInput v-model="state.form.command" mono :maxlength="2000" />
-        </label>
-        <label class="archive-review__field">
-          <span>{{ $t('ready.verification.output') }}</span>
-          <BaseTextarea v-model="state.form.output" :maxlength="12000" :rows="3" />
-        </label>
         <label class="archive-review__field">
           <span>{{ $t('ready.verification.notes') }}</span>
           <BaseTextarea v-model="state.form.notes" :maxlength="6000" :rows="2" />
         </label>
+        <details class="archive-review__details" :open="verificationDetailsOpen" @toggle="toggleVerificationDetails">
+          <summary>{{ $t('ready.verification.details') }}</summary>
+          <div class="archive-review__details-body">
+            <p class="step-muted">{{ $t('ready.verification.detailsHint') }}</p>
+            <div class="archive-review__row">
+              <label class="archive-review__field">
+                <span>{{ $t('ready.verification.pythonVersion') }}</span>
+                <BaseInput v-model="state.form.pythonVersion" :maxlength="100" />
+              </label>
+              <label class="archive-review__field">
+                <span>{{ $t('ready.verification.platform') }}</span>
+                <BaseInput v-model="state.form.platform" :maxlength="100" />
+              </label>
+            </div>
+            <label class="archive-review__field">
+              <span>{{ $t('ready.verification.command') }}</span>
+              <BaseInput v-model="state.form.command" mono :maxlength="2000" />
+            </label>
+            <label class="archive-review__field">
+              <span>{{ $t('ready.verification.output') }}</span>
+              <BaseTextarea v-model="state.form.output" :maxlength="12000" :rows="3" />
+            </label>
+          </div>
+        </details>
         <BaseButton v-if="canEdit" type="submit" variant="tonal" :disabled="!canSave" :loading="state.saving">{{ $t('ready.verification.save') }}</BaseButton>
       </fieldset>
       <p v-if="state.saved" role="status">{{ $t('ready.verification.saved') }}</p>
@@ -120,7 +115,8 @@ async function copy(content: string) {
 .archive-review fieldset,
 .archive-review__field,
 .archive-review__command,
-.archive-review__notice {
+.archive-review__notice,
+.archive-review__details-body {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -131,7 +127,7 @@ async function copy(content: string) {
 .archive-review__verification { padding-top: 24px; border-top: 1px solid var(--color-border); }
 .archive-review__field { gap: 8px; font-size: 14px; }
 .archive-review__row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.archive-review__modes { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.archive-review__details-body { margin-top: 14px; }
 .archive-review h3 { font-size: 15px; font-weight: 500; }
 .archive-review summary { cursor: pointer; }
 .archive-review select { padding: 14px; background: var(--color-bg); border-radius: var(--radius-md); }

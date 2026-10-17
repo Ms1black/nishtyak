@@ -51,7 +51,19 @@ class DocumentRenderer:
         return "\n".join(lines) + "\n"
 
     def readme(self, plan: PackagePlan, *, target: dict | None = None, locked: bool = False) -> str:
-        target = target or (plan.automatic_resolution or {}).get("target", {})
+        target = (
+            target
+            or (plan.automatic_resolution or {}).get("target")
+            or (
+                {
+                    "python_version": plan.report.options.target_python_version
+                    or plan.report.options.python_version,
+                    "platform": plan.report.options.target_platform,
+                }
+                if plan.report.options.target_platform
+                else {}
+            )
+        )
         python_version = (
             target.get("python_version")
             or plan.python_version
@@ -83,7 +95,13 @@ class DocumentRenderer:
             )
         lines.extend(["", "## Целевая среда", ""])
         if plan.python_version:
-            if plan.python_version_origin == "inferred":
+            if plan.report.options.target_python_version or plan.report.options.target_platform:
+                lines.append(
+                    f"Выбранный Python для целевой среды: `{plan.python_version}`. "
+                    "Это выбор для нового набора зависимостей, а не подтверждение "
+                    "исходной среды автора или успешного запуска."
+                )
+            elif plan.python_version_origin == "inferred":
                 lines.append(
                     f"Предложенная версия Python: `{plan.python_version}`. "
                     "Это целевой профиль для нового набора зависимостей; исходная "
@@ -97,6 +115,8 @@ class DocumentRenderer:
                 lines.append(f"Python, указанный автором: `{plan.python_version}`.")
         else:
             lines.append("Проверенная версия Python автора неизвестна.")
+        if platform:
+            lines.append(f"Целевая ОС и архитектура: `{platform}`.")
         if plan.report.python_requires:
             lines.append(
                 f"Ограничение Python в метаданных проекта: `{plan.report.python_requires}`."

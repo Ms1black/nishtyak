@@ -408,6 +408,43 @@ def test_author_environment_python_and_supported_platform_take_precedence(automa
     assert calls[0][1].platform == "macos-arm64"
 
 
+def test_explicit_target_survives_new_analysis_and_author_snapshot(automatic):
+    logic, calls = automatic
+    environment = AuthorEnvironmentSnapshot.from_dict(
+        {
+            "python_version": "3.10.14",
+            "platform": "macos-arm64",
+            "distributions": [],
+        }
+    )
+    record, _ = create_project(
+        logic,
+        {"experiment.py": "import tomllib\nprint('ok')\n"},
+        environment=environment,
+    )
+    selected = ResolutionTarget("3.12", "windows-x86_64")
+    result = logic.apply_target("alice", record.project_id, selected, 0)
+    updated = logic.repository.get_project("alice", record.project_id)
+    assert updated.job_id == result["job_id"] and updated.job_id != record.job_id
+    assert updated.author_environment == environment
+    assert updated.options.python_version == "3.12"
+    assert updated.options.target_platform == "windows-x86_64"
+    assert logic.repository.claim().job_id == updated.job_id
+    report = logic.core.analyze(
+        ArchiveReader().from_path(logic.repository.archive_path(record.project_id)),
+        updated.options,
+        updated.author_environment,
+    )
+    assert report.dependencies[0].category == "stdlib"
+    assert report.author_python_version == "3.10.14"
+    assert logic.repository.finish(updated.job_id, AnalysisJobResult("succeeded", report))
+    pending = logic.plan("alice", record.project_id)
+    assert pending["automatic_resolution"]["target"] == selected.__dict__
+    logic.review_pending()
+    assert calls[-1][1] == selected
+    assert logic.get_lock("alice", record.project_id)["target"] == selected.__dict__
+
+
 @pytest.mark.parametrize(
     "constraint, expected",
     [

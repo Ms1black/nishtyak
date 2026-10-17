@@ -38,6 +38,7 @@ from .dto import (
     ResolveDTO,
     SaveDecisionsDTO,
     SubmittedProjectDTO,
+    TargetEnvironmentDTO,
 )
 from .errors import ServiceError
 from .middleware import RequestBoundaryMiddleware
@@ -398,6 +399,20 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
             request.state.owner_id,
             project_id,
             decisions.to_core() if decisions else None,
+        )
+
+    @app.post(
+        "/v1/projects/{project_id}/target",
+        status_code=202,
+        response_model=SubmittedProjectDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def apply_target(
+        request: Request, project_id: ProjectId, body: TargetEnvironmentDTO
+    ) -> dict[str, Any]:
+        target = ResolutionTarget(body.target.python_version, body.target.platform)
+        return await run_in_threadpool(
+            logic.apply_target, request.state.owner_id, project_id, target, body.expected_revision
         )
 
     @app.get(

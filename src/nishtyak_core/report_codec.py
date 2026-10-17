@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -90,6 +91,8 @@ class AnalysisReportCodec:
         required = set(AnalysisOptions.__dataclass_fields__) - {
             "project_root",
             "python_version_auto",
+            "target_platform",
+            "target_python_version",
         }
         if not isinstance(value, dict) or not required <= set(value) <= set(
             AnalysisOptions.__dataclass_fields__
@@ -108,6 +111,22 @@ class AnalysisReportCodec:
         automatic = data.get("python_version_auto", False)
         if type(automatic) is not bool:
             raise InvalidWorkerReport("Invalid automatic Python selection")
+        platform = self._nullable_text(data.get("target_platform"))
+        target_python = self._nullable_text(data.get("target_python_version"))
+        if target_python is not None and not re.fullmatch(
+            r"3\.(?:8|9|1[0-4])(?:\.[0-9]{1,3})?", target_python
+        ):
+            raise InvalidWorkerReport("Invalid target Python version")
+        if target_python and ".".join(target_python.split(".")[:2]) != version:
+            raise InvalidWorkerReport("Target Python differs from the analysis profile")
+        if platform is not None and platform not in {
+            "linux-x86_64",
+            "linux-aarch64",
+            "macos-arm64",
+            "macos-x86_64",
+            "windows-x86_64",
+        }:
+            raise InvalidWorkerReport("Invalid target platform")
         return AnalysisOptions(
             python_version=version,
             source_roots=roots,
@@ -115,6 +134,8 @@ class AnalysisReportCodec:
             max_files=self._integer(data["max_files"], 1, 1_000),
             project_root=project_root,
             python_version_auto=automatic,
+            target_platform=platform,
+            target_python_version=target_python,
         )
 
     def _layout(self, value: Any) -> ProjectLayout | None:

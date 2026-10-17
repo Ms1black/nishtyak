@@ -26,6 +26,9 @@ import ReplaceSourceForm from './ReplaceSourceForm.vue'
 
 const wizard = useUploadWizardStore()
 const explorer = ref<InstanceType<typeof ProjectFileExplorer> | null>(null)
+const runSettings = ref<InstanceType<typeof RunSettings> | null>(null)
+const dataDetails = ref<InstanceType<typeof DataConfirmation> | null>(null)
+const replaceSourceOpen = ref(false)
 const expanded = ref<Record<string, boolean>>({})
 const advancedOpen = computed({
   get: () => wizard.advancedOpen,
@@ -34,11 +37,12 @@ const advancedOpen = computed({
 const lastPlan = ref<PackagePlan | null>(wizard.plan)
 
 watch(
-  () => wizard.analysis?.analysisId,
+  [() => wizard.project?.id, () => wizard.analysis?.analysisId],
   () => {
     expanded.value = {}
     advancedOpen.value = false
     lastPlan.value = null
+    replaceSourceOpen.value = false
   },
 )
 
@@ -50,16 +54,18 @@ watch(
 )
 
 const DATA_EXTENSIONS = /\.(csv|tsv|json|xlsx?|parquet|txt|yaml|yml)$/i
+const DOCUMENT_FILES = /(^|\/)(?:requirements[^/]*\.txt|readme(?:\.[^/]*)?|licen[sc]e(?:\.[^/]*)?|copying(?:\.[^/]*)?)$/i
 const includedFiles = computed(() => {
   const excluded = new Set(wizard.decisions?.excludedFiles ?? [])
-  return wizard.analysis?.files.filter((file) => !excluded.has(file.path)) ?? []
+  const planned = wizard.plan?.files ? new Set(wizard.plan.files) : null
+  return wizard.analysis?.files.filter((file) => !excluded.has(file.path) && (!planned || planned.has(file.path))) ?? []
 })
 const scriptFiles = computed(() =>
   includedFiles.value.filter((file) => file.path.endsWith('.py')).map((file) => file.path),
 )
 const dataFiles = computed(() =>
   includedFiles.value
-    .filter((file) => DATA_EXTENSIONS.test(file.path) && !/(^|\/)requirements[^/]*\.txt$/.test(file.path))
+    .filter((file) => DATA_EXTENSIONS.test(file.path) && !DOCUMENT_FILES.test(file.path))
     .map((file) => file.path),
 )
 const visiblePlan = computed(() => {
@@ -74,6 +80,9 @@ const visiblePlan = computed(() => {
   }
 })
 const findings = computed(() => visiblePlan.value?.findings ?? [])
+const inputFindings = computed(() => findings.value.filter((finding) =>
+  ['INPUT_PATH_UNVERIFIED', 'EXTERNAL_INPUT_REFERENCE', 'MISSING_DATA', 'MISSING_INPUT_FILE'].includes(finding.code),
+))
 const unresolvedModules = computed(() => {
   const modules: string[] = []
   for (const finding of findings.value) {
@@ -122,19 +131,12 @@ const effectiveRun = computed(
 const command = computed(() => (effectiveRun.value ? formatRunCommand(effectiveRun.value) : null))
 const runSpec = computed({ get: () => effectiveRun.value, set: (value) => wizard.setRunSpec(value) })
 
-function field<
-  K extends 'pythonVersion' | 'dataConfirmed' | 'inputDescription' | 'expectedOutput' | 'description',
->(key: K) {
+function field<K extends 'inputDescription' | 'expectedOutput' | 'description'>(key: K) {
   return computed({ get: () => wizard.decisions![key], set: (value) => wizard.update({ [key]: value }) })
 }
-const pythonVersion = field('pythonVersion')
-const dataConfirmed = field('dataConfirmed')
 const inputDescription = field('inputDescription')
 const expectedOutput = field('expectedOutput')
-const description = computed({
-  get: () => wizard.decisions?.description || visiblePlan.value?.description || '',
-  set: (value: string) => wizard.update({ description: value }),
-})
+const description = field('description')
 
 function errorCount(section: string) {
   return findings.value.filter(
@@ -143,9 +145,11 @@ function errorCount(section: string) {
 }
 
 async function focusSection(section: string, finding?: Finding) {
-  advancedOpen.value = true
+  if (section !== 'data') advancedOpen.value = true
   expanded.value[section] = true
   await nextTick()
+  if (section === 'data') dataDetails.value?.openAdditions()
+  if (section === 'run') runSettings.value?.edit()
   if (section === 'files' && finding?.path) explorer.value?.focusFile(finding.path)
   const element = document.getElementById(`section-${section}`)
   if (!element) return
@@ -309,10 +313,29 @@ function toggleAdvanced(event: Event) {
           </BaseButton>
         </BaseCard>
 
+        <SectionCard
+          id="section-data"
+          :title="$t('analysis.data.title')"
+          :subtitle="$t('analysis.review.dataHint')"
+        >
+          <DataConfirmation
+            ref="dataDetails"
+            v-model:input-description="inputDescription"
+            v-model:expected-output="expectedOutput"
+            v-model:description="description"
+            :data-files="dataFiles"
+            :input-findings="inputFindings"
+            :can-replace="wizard.canEdit"
+            :disabled="wizard.isBusy || !wizard.canEdit"
+            @replace-source="replaceSourceOpen = !replaceSourceOpen"
+          />
+          <ReplaceSourceForm v-if="replaceSourceOpen && wizard.canEdit" :disabled="wizard.isBusy" @replace="wizard.replaceSource" />
+        </SectionCard>
+
         <p v-if="!wizard.canEdit" class="analysis__optional">{{ $t('teams.readOnly') }}</p>
         <details class="analysis__advanced" :open="advancedOpen" @toggle="toggleAdvanced">
-          <summary>{{ $t('analysis.automatic.advancedTitle') }}</summary>
-          <p class="overview__hint">{{ $t('analysis.automatic.advancedHint') }}</p>
+          <summary>{{ $t('analysis.review.expertTitle') }}</summary>
+          <p class="overview__hint">{{ $t('analysis.review.expertHint') }}</p>
 
           <SectionCard
             id="section-dependencies"
@@ -323,6 +346,7 @@ function toggleAdvanced(event: Event) {
             :errors="errorCount('dependencies')"
           >
             <DependencyList
+              editor
               :dependencies="wizard.analysis.dependencies"
               :requirements="visiblePlan?.requirements"
               :unresolved-modules="unresolvedModules"
@@ -345,29 +369,12 @@ function toggleAdvanced(event: Event) {
             :errors="errorCount('run')"
           >
             <RunSettings
+              ref="runSettings"
               v-model:run-spec="runSpec"
-              v-model:python-version="pythonVersion"
               :has-run-override="!!wizard.decisions.runSpec"
               :entrypoints="wizard.analysis.entrypoints"
               :script-files="scriptFiles"
-              :python-requires="wizard.analysis.pythonRequires"
               :candidates="wizard.analysis.launchCandidates"
-              :disabled="wizard.isBusy || !wizard.canEdit"
-            />
-          </SectionCard>
-          <SectionCard
-            id="section-data"
-            v-model:open="expanded.data"
-            collapsible
-            :title="$t('analysis.data.title')"
-            :subtitle="$t('analysis.review.dataHint')"
-          >
-            <DataConfirmation
-              v-model:data-confirmed="dataConfirmed"
-              v-model:input-description="inputDescription"
-              v-model:expected-output="expectedOutput"
-              v-model:description="description"
-              :data-files="dataFiles"
               :disabled="wizard.isBusy || !wizard.canEdit"
             />
           </SectionCard>

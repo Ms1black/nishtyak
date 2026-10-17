@@ -307,6 +307,7 @@ def test_team_owner_immutable_admin_limits_and_owner_deletion(app):
 PROJECT_ROUTES = [
     ("GET", "analysis"),
     ("POST", "analysis"),
+    ("POST", "target"),
     ("GET", "files?path=main.py"),
     ("GET", "archive/files?path=README.md&archiveTag=" + "0" * 64),
     ("GET", "decisions"),

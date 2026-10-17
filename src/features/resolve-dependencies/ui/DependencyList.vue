@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import type { Dependency } from '@/entities/project'
 import { InlineCode } from '@/shared/ui'
 import { dependencySummaries, needsPackageMapping } from '../lib/dependencyDisplay'
@@ -13,6 +13,7 @@ const props = defineProps<{
   requirements?: string[]
   unresolvedModules?: string[]
   disabled?: boolean
+  editor?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -21,7 +22,6 @@ const emit = defineEmits<{
   toggle: [module: string]
 }>()
 
-const skippedModules = ref<string[]>([])
 const installable = computed(() =>
   props.dependencies.filter((d) => d.category === 'external' || d.category === 'unresolved'),
 )
@@ -31,8 +31,6 @@ const unresolved = computed(() =>
     needsPackageMapping(d, props.packages[d.module], false, props.unresolvedModules),
   ),
 )
-const questions = computed(() => unresolved.value.filter((d) => !skippedModules.value.includes(d.module)))
-const skipped = computed(() => unresolved.value.filter((d) => skippedModules.value.includes(d.module)))
 const summarized = computed(() =>
   dependencySummaries(
     included.value,
@@ -44,48 +42,22 @@ const summarized = computed(() =>
 )
 const excludedCount = computed(() => installable.value.length - included.value.length)
 
-function leaveUnknown(module: string) {
-  if (!skippedModules.value.includes(module)) skippedModules.value.push(module)
-}
-
-function clarify(module: string) {
-  skippedModules.value = skippedModules.value.filter((item) => item !== module)
-}
-
 const local = computed(() => props.dependencies.filter((d) => d.category === 'local').map((d) => d.module))
 const stdlib = computed(() => props.dependencies.filter((d) => d.category === 'stdlib').map((d) => d.module))
 </script>
 
 <template>
   <div class="deps">
-    <div v-if="questions.length" class="deps__questions">
-      <p class="deps__question-title">{{ $t('analysis.deps.unresolvedTitle') }}</p>
-      <DependencyRow
-        v-for="dep in questions"
-        :key="dep.id"
-        variant="mapping"
-        :dependency="dep"
-        :package-override="packages[dep.module]"
-        :excluded="false"
-        :disabled="disabled"
-        @set-package="(m, v) => emit('setPackage', m, v)"
-        @leave-unknown="leaveUnknown"
-      />
-    </div>
-
-    <ul v-if="summarized.length || skipped.length" class="deps__summary">
+    <ul v-if="!editor && (summarized.length || unresolved.length)" class="deps__summary">
       <li v-for="dep in summarized" :key="dep.id" class="deps__summary-row">
         <code>{{ dep.name }}</code>
         <span class="deps__version">
           {{ dep.spec || $t('analysis.deps.unknownVersion') }}
         </span>
       </li>
-      <li v-for="dep in skipped" :key="`unknown-${dep.id}`" class="deps__summary-row">
+      <li v-for="dep in unresolved" :key="`unknown-${dep.id}`" class="deps__summary-row">
         <InlineCode :code="`import ${dep.module}`" language="python" />
         <span class="deps__version">{{ $t('analysis.deps.unknownPackage') }}</span>
-        <button type="button" class="deps__clarify" :disabled="disabled" @click="clarify(dep.module)">
-          {{ $t('analysis.deps.clarify') }}
-        </button>
       </li>
     </ul>
 
@@ -112,8 +84,8 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
       </p>
     </details>
 
-    <details v-if="installable.length" class="deps__advanced">
-      <summary>{{ $t('analysis.deps.editOptional') }}</summary>
+    <div v-if="editor && installable.length" class="deps__advanced">
+      <p class="deps__editor-hint">{{ $t('analysis.deps.editorHint') }}</p>
       <div class="deps__head" aria-hidden="true">
         <span>{{ $t('analysis.deps.columnImport') }}</span>
         <span />
@@ -134,16 +106,11 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
         @set-version="(m, v) => emit('setVersion', m, v)"
         @toggle="emit('toggle', $event)"
       />
-    </details>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.deps__question-title {
-  font-size: 14px;
-  font-weight: 500;
-}
-
 .deps__summary {
   margin: 0;
   padding: 0;
@@ -172,12 +139,6 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
   overflow-wrap: anywhere;
 }
 
-.deps__clarify {
-  margin-left: auto;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-}
-
 .deps__advanced,
 .deps__automatic {
   margin-top: 16px;
@@ -185,14 +146,14 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
   font-size: 13px;
 }
 
-.deps__advanced > summary,
 .deps__automatic > summary {
   cursor: pointer;
   line-height: 1.6;
 }
 
-.deps__advanced[open] > summary {
+.deps__editor-hint {
   margin-bottom: 16px;
+  line-height: 1.6;
 }
 
 .deps__head {

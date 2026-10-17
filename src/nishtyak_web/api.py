@@ -63,6 +63,11 @@ class ResolveBody(StrictBody):
     decisions: dict | None = None
 
 
+class TargetEnvironmentBody(StrictBody):
+    target: TargetBody
+    expectedRevision: Annotated[int, Field(ge=0, le=2**53 - 1)]
+
+
 class AdviceBody(StrictBody):
     feature: Literal["explain", "readme", "packages", "entrypoint"] = "explain"
     description: Annotated[str, Field(max_length=8192)] = ""
@@ -348,6 +353,19 @@ def create_app(
     def reanalyze(request: Request, project_id: ProjectId, body: AnalysisBody):
         environment = body.authorEnvironment.model_dump() if body.authorEnvironment else None
         return browser.reanalyze(request.state.identity, project_id, body.options, environment)
+
+    @app.post("/api/projects/{project_id}/target", status_code=202)
+    def apply_target(request: Request, project_id: ProjectId, body: TargetEnvironmentBody):
+        target = ResolutionTargetDTO.model_validate(
+            {"python_version": body.target.pythonVersion, "platform": body.target.platform}
+        )
+        return browser.apply_target(
+            request.state.identity,
+            project_id,
+            target.python_version,
+            target.platform,
+            body.expectedRevision,
+        )
 
     @app.get("/api/projects/{project_id}/files")
     def file_content(request: Request, project_id: ProjectId, path: str):

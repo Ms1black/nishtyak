@@ -110,6 +110,7 @@ export interface ProjectAnalysis {
   findings: Finding[]
   suggestedRunSpec?: RunSpec | null
   options?: AnalysisOptions
+  targetEnvironment?: TargetEnvironment | null
   projectRoots?: string[]
   optionalGroups?: string[]
   launchCandidates?: LaunchCandidate[]
@@ -163,8 +164,14 @@ export interface ServiceCapabilities {
 
 export interface AnalysisOptions {
   pythonVersion: string
+  targetPlatform?: TargetPlatform | null
   projectRoot: string | null
   sourceRoots: string[]
+}
+
+export interface TargetEnvironment {
+  pythonVersion: string
+  platform: TargetPlatform
 }
 
 export interface LaunchCandidate {

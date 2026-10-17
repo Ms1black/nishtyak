@@ -211,7 +211,7 @@ def test_decision_bounds_and_active_operation_lease(repository):
     )
 
 
-def test_reanalysis_preserves_zip_quota_and_lifetime_and_invalidates_decisions(repository):
+def test_reanalysis_preserves_zip_quota_and_lifetime_and_refreshes_decisions(repository):
     record = submit(repository)
     report = complete(repository, record)
     repository.save_decisions(
@@ -229,9 +229,12 @@ def test_reanalysis_preserves_zip_quota_and_lifetime_and_invalidates_decisions(r
     assert_error("RESOURCE_NOT_FOUND", repository.get_job, "alice", record.job_id)
     assert_error("PROJECT_NOT_READY", repository.read_report, record)
     new_report = complete(repository, new)
-    cleared = repository.read_decisions("alice", new.project_id)
-    assert cleared["revision"] == 2 and cleared["decisions"] is None
-    assert cleared["analysis_id"] == new_report.analysis_id
+    revised = repository.read_decisions("alice", new.project_id)
+    assert revised["revision"] == 2
+    assert revised["analysis_id"] == new_report.analysis_id
+    assert revised["decisions"]["analysis_id"] == new_report.analysis_id
+    assert revised["decisions"]["python_version"] is None
+    assert revised["decisions"]["excluded_files"] == []
     assert_error(
         "ANALYSIS_STALE",
         repository.save_decisions,

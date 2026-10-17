@@ -13,7 +13,7 @@ import {
   type ProjectAnalysis,
   type ProjectAutomation,
   type RunSpec,
-  type TargetPlatform,
+  type TargetEnvironment,
 } from '@/entities/project'
 import { ApiError, integrationSession, sessionGeneration } from '@/shared/api'
 import { useTeamStore } from '@/entities/team'
@@ -42,7 +42,6 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const includeDockerfile = ref(false)
   const isLoading = ref(false)
   const isBuilding = ref(false)
-  const isResolving = ref(false)
   const isRefreshing = ref(false)
   const error = ref<string | null>(null)
   const saveState = ref<SaveState>('idle')
@@ -57,6 +56,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   let autoBuildRequested = false
   let syncing: { epoch: number; promise: Promise<boolean> } | null = null
   let submittedQuestionnaire: string | null = null
+  let carriedDockerfile = false
 
   const isAnalyzing = computed(() => analysis.value?.status === 'analyzing')
   const automation = computed(() => plan.value?.automation ?? lastAutomation.value ?? analysis.value?.automation ?? null)
@@ -70,9 +70,18 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   )
   const isBusy = computed(
     () =>
-      isBuilding.value || isResolving.value || isRefreshing.value ||
+      isBuilding.value || isRefreshing.value ||
       isLoading.value || isAnalyzing.value || isPreparingEnvironment.value || isAutomating.value,
   )
+  const targetEnvironment = computed<TargetEnvironment | null>(() => {
+    if (analysis.value?.targetEnvironment) return analysis.value.targetEnvironment
+    const options = analysis.value?.options
+    if (options?.targetPlatform) return { pythonVersion: options.pythonVersion, platform: options.targetPlatform }
+    const automaticTarget = plan.value?.automaticResolution?.target
+    if (automaticTarget) return automaticTarget
+    if (lock.value) return { pythonVersion: lock.value.target.python_version, platform: lock.value.target.platform }
+    return null
+  })
   const canBuild = computed(() =>
     canEdit.value && !!plan.value && !isPackageBlocked(plan.value) &&
     automation.value?.phase !== 'needs_input' && !isBusy.value,
@@ -80,6 +89,8 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const canIncludeDockerfile = computed(() => {
     const current = plan.value
     if (current?.state !== 'ready_to_verify' || !current.pythonVersion || !current.runSpec) return false
+    const platform = targetEnvironment.value?.platform
+    if (platform && !platform.startsWith('linux-')) return false
     if (!/^[A-Za-z0-9_./-]+$/.test(current.runSpec.workingDirectory)) return false
     if (current.requirements.some((requirement) => /\s@\s/.test(requirement))) return false
     return !analysis.value?.files.some((file) => /(^|\/)environment\.ya?ml$/.test(file.path))
@@ -91,8 +102,10 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     projectStore.upsert(project.value)
   }
 
-  async function openProject(next: Project, options: { autoBuild?: boolean } = {}) {
+  async function openProject(next: Project, options: { autoBuild?: boolean; includeDockerfile?: boolean } = {}) {
     reset()
+    carriedDockerfile = options.includeDockerfile === true && canEdit.value
+    includeDockerfile.value = carriedDockerfile
     autoBuildRequested = options.autoBuild === true && canEdit.value && next.archive.status !== 'ready'
     project.value = next
     step.value = next.archive.status === 'ready' ? 3 : 2
@@ -197,6 +210,10 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function continueAutomaticBuild() {
+    if (carriedDockerfile && plan.value && !isBusy.value && automation.value?.phase !== 'needs_input') {
+      includeDockerfile.value = canIncludeDockerfile.value
+      carriedDockerfile = false
+    }
     if (!autoBuildRequested || !plan.value) return
     if (isPackageBlocked(plan.value)) return
     if (automation.value?.phase === 'needs_input') return
@@ -414,6 +431,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   async function reanalyze(options: AnalysisOptions, authorEnvironment?: unknown) {
     if (!canEdit.value || !project.value || isBusy.value) return
     const requestEpoch = epoch
+    const keepDockerfile = includeDockerfile.value
     isLoading.value = true
     error.value = null
     scheduleSync.cancel()
@@ -423,7 +441,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       const updated = await projectApi.reanalyze(project.value.id, options, authorEnvironment)
       if (epoch !== requestEpoch) return
       projectStore.upsert(updated)
-      await openProject(updated)
+      await openProject(updated, { includeDockerfile: keepDockerfile })
     } catch (cause) {
       if (epoch === requestEpoch) error.value = message(cause, 'analysis.errors.load')
     } finally {
@@ -453,22 +471,35 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     }
   }
 
-  async function resolve(target: { pythonVersion: string; platform: TargetPlatform }) {
+  function targetRequestIsCurrent(requestEpoch: number) {
+    return epoch === requestEpoch && canEdit.value && automation.value?.phase !== 'needs_input' &&
+      !isAutomating.value && !isPreparingEnvironment.value
+  }
+
+  async function applyTarget(target: TargetEnvironment) {
     if (!canEdit.value || !project.value || !decisions.value || isBusy.value || automation.value?.phase === 'needs_input') return
     const requestEpoch = epoch
-    isResolving.value = true
+    const projectId = project.value.id
+    const keepDockerfile = includeDockerfile.value
+    isRefreshing.value = true
     error.value = null
     scheduleSync.cancel()
     try {
-      if (!(await sync()) || epoch !== requestEpoch) return
-      const result = await projectApi.resolve(project.value.id, target, snapshotDecisions())
+      if (syncing?.epoch === requestEpoch && !(await syncing.promise)) return
+      if (!targetRequestIsCurrent(requestEpoch)) return
+      if (
+        (savedVersion !== editVersion || saveState.value === 'error' || saveState.value === 'conflict') &&
+        !(await sync())
+      ) return
+      if (!targetRequestIsCurrent(requestEpoch)) return
+      const updated = await projectApi.applyTarget(projectId, target, revision.value)
       if (epoch !== requestEpoch) return
-      lock.value = result
-      invalidateArchive()
+      projectStore.upsert(updated)
+      await openProject(updated, { autoBuild: true, includeDockerfile: keepDockerfile })
     } catch (cause) {
-      if (epoch === requestEpoch) error.value = message(cause, 'workflow.resolveError')
+      if (epoch === requestEpoch) error.value = message(cause, 'workflow.targetError')
     } finally {
-      if (epoch === requestEpoch) isResolving.value = false
+      if (epoch === requestEpoch) isRefreshing.value = false
     }
   }
 
@@ -486,6 +517,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     scheduleSync.cancel()
     syncing = null
     submittedQuestionnaire = null
+    carriedDockerfile = false
     editVersion = 0
     savedVersion = -1
     autoBuildRequested = false
@@ -500,7 +532,6 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     includeDockerfile.value = false
     isLoading.value = false
     isBuilding.value = false
-    isResolving.value = false
     isRefreshing.value = false
     error.value = null
     saveState.value = 'idle'
@@ -529,7 +560,6 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     includeDockerfile,
     isLoading,
     isBuilding,
-    isResolving,
     isRefreshing,
     isAnalyzing,
     isPreparingEnvironment,
@@ -542,6 +572,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     advancedOpen,
     canBuild,
     canIncludeDockerfile,
+    targetEnvironment,
     openProject,
     loadAnalysis,
     reloadProject,
@@ -558,7 +589,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     build,
     reanalyze,
     replaceSource,
-    resolve,
+    applyTarget,
     backToAnalysis,
     reset,
   }

@@ -31,6 +31,13 @@ class StrictDTO(BaseModel):
 class AnalysisOptionsDTO(StrictDTO):
     python_version: PythonVersion = AnalysisOptions().python_version
     python_version_auto: bool = False
+    target_platform: (
+        Literal["linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64", "windows-x86_64"]
+        | None
+    ) = None
+    target_python_version: (
+        Annotated[str, StringConstraints(pattern=r"^3\.(8|9|1[0-4])(\.[0-9]{1,3})?$")] | None
+    ) = None
     source_roots: Annotated[list[PathText], Field(min_length=1, max_length=32)] = Field(
         default_factory=lambda: ["."]
     )
@@ -45,6 +52,8 @@ class AnalysisOptionsDTO(StrictDTO):
             max_source_bytes=self.max_source_bytes,
             max_files=self.max_files,
             project_root=self.project_root,
+            target_platform=self.target_platform,
+            target_python_version=self.target_python_version,
             python_version_auto=self.python_version_auto
             if {"python_version", "python_version_auto"} & self.model_fields_set
             else True,
@@ -169,6 +178,11 @@ class ResolutionTargetDTO(StrictDTO):
 class ResolveDTO(StrictDTO):
     target: ResolutionTargetDTO
     decisions: DecisionsDTO | None = None
+
+
+class TargetEnvironmentDTO(StrictDTO):
+    target: ResolutionTargetDTO
+    expected_revision: Annotated[int, Field(ge=0)]
 
 
 class AdviceDTO(StrictDTO):

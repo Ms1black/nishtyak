@@ -490,6 +490,74 @@ def test_extras_round_trip_and_package_plan(gateway):
     assert client.get(prefix + "/decisions").json()["decisions"]["selectedExtras"] == ["plot"]
 
 
+@pytest.mark.parametrize("target_python", ["3.12", "3.12.8"])
+def test_one_target_change_preserves_choices_and_reclassifies_imports(gateway, target_python):
+    client, _, _ = gateway
+    project = upload(
+        client,
+        {
+            "experiment.py": "import lab_stats\nfrom helpers import compute\nprint(compute())\n",
+            "helpers.py": "def compute():\n    return 42\n",
+            "unused.py": "import tomllib\n",
+        },
+    )
+    prefix = f"/api/projects/{project['id']}"
+    original = analyzed(client, project["id"])
+    value = {
+        **decisions(original),
+        "packages": {"lab_stats": "numpy"},
+        "versions": {"numpy": "1.26.4"},
+        "excludedFiles": ["unused.py"],
+        "runSpec": {
+            "kind": "script",
+            "target": "experiment.py",
+            "args": ["--scale", "2"],
+            "workingDirectory": ".",
+        },
+    }
+    assert (
+        client.put(
+            prefix + "/decisions",
+            json={
+                "expectedRevision": 0,
+                "decisions": value,
+            },
+        ).status_code
+        == 200
+    )
+    assert client.post(prefix + "/archive", json={}).status_code == 200
+    selected = {"pythonVersion": target_python, "platform": "windows-x86_64"}
+    stale = client.post(prefix + "/target", json={"expectedRevision": 0, "target": selected})
+    assert stale.status_code == 409
+    assert client.get(prefix + "/decisions").json()["revision"] == 1
+    assert client.get(prefix + "/archive").status_code == 200
+
+    changed = client.post(prefix + "/target", json={"expectedRevision": 1, "target": selected})
+    assert changed.status_code == 202, changed.text
+    assert changed.json()["id"] == project["id"]
+    updated = analyzed(client, project["id"])
+    assert updated["analysisId"] != original["analysisId"]
+    assert updated["targetEnvironment"] == selected
+    assert updated["options"]["pythonVersion"] == "3.12"
+    assert updated["options"]["targetPlatform"] == "windows-x86_64"
+    document = client.get(prefix + "/decisions").json()
+    assert document["revision"] == 2
+    assert document["decisions"] == {
+        **value,
+        "analysisId": updated["analysisId"],
+        "pythonVersion": target_python,
+    }
+    assert client.get(prefix).json()["project"]["archive"]["status"] != "ready"
+    bundle = client.post(prefix + "/archive", json={})
+    assert bundle.status_code == 200, bundle.text
+    with zipfile.ZipFile(io.BytesIO(client.get(prefix + "/archive").content)) as archive:
+        readme = archive.read("README.md").decode()
+        assert "windows-x86_64" in readme
+        assert target_python in readme and "'--scale' '2'" in readme
+        assert "project/helpers.py" in archive.namelist()
+        assert "project/unused.py" not in archive.namelist()
+
+
 def test_lock_and_explicit_ai_source_consent(gateway):
     client, service, _ = gateway
     project = upload(client)

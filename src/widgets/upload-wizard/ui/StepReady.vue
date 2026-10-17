@@ -63,7 +63,7 @@ function download() {
 }
 
 function openFile(path: string) {
-  if (!wizard.project?.archive.sha256 || !treeItems.value.includes(path)) return
+  if (!wizard.project?.archive.sha256 || (path !== 'README.md' && !treeItems.value.includes(path))) return
   selectedFile.value = path
   fileViewerOpen.value = true
 }
@@ -134,6 +134,7 @@ function toProjects() {
         :archive-tag="wizard.project.archive.sha256"
         :can-edit="wizard.canEdit"
         @refresh="wizard.reloadProject()"
+        @open-file="openFile"
       />
       <ArchiveFileViewer
         v-model:open="fileViewerOpen"

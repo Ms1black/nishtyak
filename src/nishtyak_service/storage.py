@@ -140,9 +140,16 @@ class SQLiteJobRepository:
         project_id: str,
         options: AnalysisOptions,
         author_environment: AuthorEnvironmentSnapshot | None = None,
+        *,
+        expected_revision: int | None = None,
+        selected_python: str | None = None,
     ) -> JobRecord:
         self._validate_owner(owner_id)
         self._validate_identifier(project_id)
+        if expected_revision is not None and (
+            type(expected_revision) is not int or expected_revision < 0
+        ):
+            raise ServiceError(422, "DECISIONS_INVALID", "Invalid decision revision")
         try:
             options = self._codec.decode_options(asdict(options))
             options_json = bounded_json(asdict(options), 64 * 1024).decode("ascii")
@@ -156,6 +163,25 @@ class SQLiteJobRepository:
                 (project_id, owner_id),
             ).fetchone()
             self._accessible(row)
+            previous = connection.execute(
+                "SELECT * FROM decision_documents WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            if (
+                expected_revision is not None
+                and (previous["revision"] if previous else 0) != expected_revision
+            ):
+                raise ServiceError(409, "DECISIONS_REVISION_CONFLICT", "Decisions changed")
+            if (
+                selected_python is not None
+                and connection.execute(
+                    "SELECT 1 FROM automation_flows "
+                    "WHERE project_id=? AND job_id=? AND phase='needs_input'",
+                    (project_id, row["job_id"]),
+                ).fetchone()
+            ):
+                raise ServiceError(
+                    409, "CLARIFICATION_REQUIRED", "Submit the current clarifications first"
+                )
             connection.execute("DELETE FROM leases WHERE expires_at <= ?", (now,))
             if (
                 row["worker_active"]
@@ -182,17 +208,11 @@ class SQLiteJobRepository:
                     project_id,
                 ),
             )
-            previous = connection.execute(
-                "SELECT decisions_json FROM decision_documents WHERE project_id = ?", (project_id,)
-            ).fetchone()
-            prose = {}
+            saved = {}
             if previous is not None and previous["decisions_json"]:
-                old_decisions = json.loads(previous["decisions_json"])
-                prose = {
-                    key: old_decisions[key]
-                    for key in ("description", "input_description", "expected_output")
-                    if old_decisions.get(key)
-                }
+                saved = SourceDecisionCarry.pending_choices(json.loads(previous["decisions_json"]))
+            if selected_python is not None:
+                saved["python_version"] = selected_python
             connection.execute(
                 """INSERT INTO decision_documents
                 (project_id, analysis_id, revision, decisions_json, updated_at)
@@ -200,7 +220,7 @@ class SQLiteJobRepository:
                 ON CONFLICT(project_id) DO UPDATE SET revision = revision + 1,
                 analysis_id = '', decisions_json = excluded.decisions_json,
                 updated_at = excluded.updated_at""",
-                (project_id, json.dumps(prose) if prose else None, now),
+                (project_id, json.dumps({"_analysis_carry": saved}) if saved else None, now),
             )
             (self._project_directory(project_id) / "dependency-lock.json").unlink(missing_ok=True)
             if self.settings.automatic_resolution:
@@ -278,6 +298,7 @@ class SQLiteJobRepository:
                     if document and document["decisions_json"]
                     else {}
                 )
+                saved = SourceDecisionCarry.pending_choices(saved, source_changed=True)
                 connection.execute(
                     """INSERT INTO decision_documents VALUES(?, '', ?, ?, ?)
                     ON CONFLICT(project_id) DO UPDATE SET analysis_id='',revision=excluded.revision,
@@ -694,6 +715,10 @@ class SQLiteJobRepository:
                             prose = SourceDecisionCarry().restore(
                                 result.report, prose["_source_carry"]
                             )
+                        elif "_analysis_carry" in prose:
+                            saved = prose["_analysis_carry"]
+                            prose = SourceDecisionCarry().restore(result.report, saved)
+                            prose["data_confirmed"] = saved.get("data_confirmed", False)
                         prose["analysis_id"] = result.report.analysis_id
                         connection.execute(
                             """UPDATE decision_documents SET analysis_id = ?, decisions_json = ?

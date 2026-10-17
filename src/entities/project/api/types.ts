@@ -11,6 +11,7 @@ import type {
   ProjectAnalysis,
   ServiceCapabilities,
   TargetPlatform,
+  TargetEnvironment,
   VerificationDocument,
   VerificationSubmission,
 } from '../model/types'
@@ -41,6 +42,7 @@ export interface ProjectApi {
   saveVerification(projectId: string, verification: VerificationSubmission): Promise<VerificationDocument>
   replaceSource(projectId: string, file: File, expectedRevision: number): Promise<Project>
   reanalyze(projectId: string, options: AnalysisOptions, authorEnvironment?: unknown): Promise<Project>
+  applyTarget(projectId: string, target: TargetEnvironment, expectedRevision: number): Promise<Project>
   resolve(
     projectId: string,
     target: { pythonVersion: string; platform: TargetPlatform },

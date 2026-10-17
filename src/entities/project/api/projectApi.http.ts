@@ -54,6 +54,9 @@ export const projectHttpApi: ProjectApi = {
       ...(authorEnvironment === undefined ? {} : { authorEnvironment }),
     }),
 
+  applyTarget: (projectId, target, expectedRevision) =>
+    apiClient.post(`/projects/${projectId}/target`, { expectedRevision, target }),
+
   resolve: (projectId, target, decisions) =>
     apiClient.post(`/projects/${projectId}/resolve`, { target, decisions }),
 

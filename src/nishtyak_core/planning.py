@@ -241,7 +241,11 @@ class PackagePlanner:
             findings.extend(run_findings)
             blocked = blocked or bool(run_findings)
 
-        python_version = decisions.python_version or report.author_python_version
+        python_version = (
+            decisions.python_version
+            or report.options.target_python_version
+            or report.author_python_version
+        )
         if python_version is None:
             if not any(finding.code == "PYTHON_VERSION_UNKNOWN" for finding in findings):
                 findings.append(
@@ -301,7 +305,7 @@ class PackagePlanner:
             decisions=decisions,
             run_spec_origin=run_spec_origin,
             python_version_origin="author"
-            if decisions.python_version
+            if decisions.python_version or report.options.target_python_version
             else "author_environment"
             if report.author_python_version
             else "unknown",

@@ -4,7 +4,7 @@ import os
 import sqlite3
 import stat
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from nishtyak_core import ArchiveReader, ReproducibilityService
@@ -85,6 +85,13 @@ class LogicService:
         author_environment: AuthorEnvironmentSnapshot | None = None,
     ) -> dict:
         self.repository.consume_rate(owner, "upload", 5)
+        current = self.repository.get_project(owner, project_id)
+        if (
+            options.target_python_version is None
+            and options.target_platform == current.options.target_platform
+            and options.python_version == current.options.python_version
+        ):
+            options = replace(options, target_python_version=current.options.target_python_version)
         return self._identity(
             self.repository.reanalyze(owner, project_id, options, author_environment)
         )
@@ -95,6 +102,28 @@ class LogicService:
         self.repository.consume_rate(owner, "upload", 5)
         return self._identity(
             self.repository.replace_source(owner, project_id, archive, expected_revision)
+        )
+
+    def apply_target(
+        self, owner: str, project_id: str, target: ResolutionTarget, expected_revision: int
+    ) -> dict:
+        self.repository.consume_rate(owner, "upload", 5)
+        current = self.repository.get_project(owner, project_id)
+        options = replace(
+            current.options,
+            python_version=".".join(target.python_version.split(".")[:2]),
+            python_version_auto=False,
+            target_platform=target.platform,
+            target_python_version=target.python_version,
+        )
+        return self._identity(
+            self.repository.reanalyze(
+                owner,
+                project_id,
+                options,
+                expected_revision=expected_revision,
+                selected_python=target.python_version,
+            )
         )
 
     def project_state(self, owner: str, project_id: str) -> dict:
