@@ -13,6 +13,11 @@ import { BaseCard } from '@/shared/ui'
       <a href="/examples/local-calibration.zip?raw=1" download>{{ $t('upload.example.local') }}</a>
     </div>
     <p class="example__note">{{ $t('upload.example.note') }}</p>
+    <div class="example__downloads">
+      <a href="/examples/scientific-measurements-with-data.zip" download>{{ $t('upload.example.scientificWithData') }}</a>
+      <a href="/examples/local-calibration-with-data.zip" download>{{ $t('upload.example.localWithData') }}</a>
+      <p class="example__data-note">{{ $t('upload.example.dataNote') }}</p>
+    </div>
   </BaseCard>
 </template>
 
@@ -58,5 +63,10 @@ import { BaseCard } from '@/shared/ui'
   color: var(--color-text);
   text-decoration: underline;
   text-underline-offset: 4px;
+}
+.example__data-note {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

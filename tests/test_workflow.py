@@ -21,6 +21,11 @@ def prepare_example(name):
     report = service.analyze(snapshot)
     decisions = UserDecisions(
         report.analysis_id,
+        packages={
+            item.module: item.module
+            for item in report.dependencies
+            if item.module in {"numpy", "pandas"}
+        },
         run_spec=RunSpec("main.py"),
         python_version=f"{sys.version_info.major}.{sys.version_info.minor}",
         input_description="data.csv contains the values 2, 4, 6.",

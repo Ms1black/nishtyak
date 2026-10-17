@@ -75,4 +75,18 @@ describe('one project questionnaire', () => {
     expect(html).toContain('<fieldset class="question__item" disabled')
     expect(html).toMatch(/type="submit"[^>]*disabled/)
   })
+
+  it('shows one compact field for repeated mappings while preserving separate source-file issues', async () => {
+    const html = await render([
+      { id: 'mapping-1', kind: 'package_mapping', aspect: 'dependencies', module: 'unknown' },
+      { id: 'mapping-2', kind: 'package_mapping', aspect: 'dependencies', module: 'unknown' },
+      { id: 'source-1', kind: 'text', aspect: 'environment', code: 'LOCAL_MODULE_MISSING', filePath: 'first.py', message: 'Missing helper' },
+      { id: 'source-2', kind: 'text', aspect: 'environment', code: 'LOCAL_MODULE_MISSING', filePath: 'second.py', message: 'Missing helper' },
+    ])
+    expect(html.match(/<input /g)).toHaveLength(1)
+    expect(html.match(/analysis.automation.openIssue/g)).toHaveLength(2)
+    expect(html).toContain('first.py')
+    expect(html).toContain('second.py')
+    expect(html.match(/analysis.automation.packageHint/g)).toHaveLength(1)
+  })
 })

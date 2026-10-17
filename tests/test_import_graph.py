@@ -173,7 +173,7 @@ def test_graph_reachability_covers_package_initializers_and_cycles_without_execu
         "lab/second.py",
         "main.py",
     )
-    assert {item.package for item in report.dependencies if item.category == "external"} == {
+    assert {item.package for item in report.dependencies if item.category == "unresolved"} == {
         "pandas",
         "scipy",
     }

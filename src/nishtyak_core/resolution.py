@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import posixpath
+import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -11,35 +12,7 @@ from packaging.utils import canonicalize_name
 from .import_graph import LocalModuleIndex
 from .models import DependencyCandidate, Finding, ImportObservation, ProjectSnapshot
 
-PACKAGE_NAMES = {
-    "numpy": "numpy",
-    "pandas": "pandas",
-    "scipy": "scipy",
-    "matplotlib": "matplotlib",
-    "seaborn": "seaborn",
-    "sympy": "sympy",
-    "requests": "requests",
-    "httpx": "httpx",
-    "yaml": "PyYAML",
-    "sklearn": "scikit-learn",
-    "PIL": "Pillow",
-    "cv2": "opencv-python",
-    "bs4": "beautifulsoup4",
-    "dotenv": "python-dotenv",
-    "dateutil": "python-dateutil",
-    "pytest": "pytest",
-    "torch": "torch",
-    "tensorflow": "tensorflow",
-    "pydantic": "pydantic",
-    "fastapi": "fastapi",
-    "flask": "Flask",
-    "streamlit": "streamlit",
-    "plotly": "plotly",
-    "tqdm": "tqdm",
-    "openpyxl": "openpyxl",
-    "packaging": "packaging",
-    "jinja2": "Jinja2",
-}
+_DISTRIBUTION_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?\Z")
 
 
 class StandardLibraryProfile:
@@ -138,7 +111,7 @@ class DependencyResolver:
                         )
                     )
                 if not observation.level and (
-                    self.stdlib.contains(module) or module in PACKAGE_NAMES
+                    self.stdlib.contains(module) or canonicalize_name(module) in self.declared
                 ):
                     findings.append(
                         Finding(
@@ -155,11 +128,13 @@ class DependencyResolver:
             elif self.stdlib.contains(module):
                 category = "stdlib"
             else:
-                package = PACKAGE_NAMES.get(module)
-                declared_name = canonicalize_name(package or module)
+                # A matching spelling is a search candidate, never proof that an
+                # installable distribution actually provides this import.
+                package = module if _DISTRIBUTION_NAME.fullmatch(module) else None
+                declared_name = canonicalize_name(module)
                 if declared_name in self.declared:
                     package = Requirement(self.declared[declared_name][0]).name
-                category = "external" if package else "unresolved"
+                category = "unresolved"
             groups[(module, category, observation.context, package)].append(observation)
 
         candidates: list[DependencyCandidate] = []
@@ -183,7 +158,8 @@ class DependencyResolver:
                 findings.append(
                     Finding(
                         "DEPENDENCY_UNRESOLVED",
-                        "Import could not be mapped to a local module or installable package.",
+                        "The distribution providing this import has not been verified. "
+                        "A matching package spelling is only a provisional search candidate.",
                         evidence[0].path,
                         evidence[0].line,
                         evidence_ids=tuple(item.id for item in evidence),
@@ -198,7 +174,11 @@ class DependencyResolver:
                         evidence_ids=tuple(item.id for item in evidence),
                     )
                 )
-            if category == "external" and not any(Requirement(value).specifier for value in values):
+            if (
+                category in {"external", "unresolved"}
+                and package
+                and not any(Requirement(value).specifier for value in values)
+            ):
                 findings.append(
                     Finding(
                         "VERSION_UNKNOWN",
@@ -209,10 +189,9 @@ class DependencyResolver:
             reason = {
                 "local": "Resolved against the configured project source roots.",
                 "stdlib": "Recognized by the selected Python standard-library profile.",
-                "external": "Matched declared metadata."
-                if values
-                else "Matched the curated import mapping.",
-                "unresolved": "Manual package or source-root clarification is required.",
+                "external": "Declared runtime dependency.",
+                "unresolved": "The declared or matching-name distribution is an unverified "
+                "provider hypothesis; published metadata or module contents need checking.",
             }[category]
             candidates.append(
                 DependencyCandidate(

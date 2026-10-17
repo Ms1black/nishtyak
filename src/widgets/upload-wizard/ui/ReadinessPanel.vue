@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import {
   AnalysisBadge,
   getProjectMeta,
+  isPackageBlocked,
   ProjectSourceIcon,
   type PackagePlan,
   type Project,
@@ -27,23 +28,26 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ build: []; reset: []; reload: []; refresh: [] }>()
-const needsInput = computed(() => props.plan?.automation?.phase === 'needs_input')
+const isBlocked = computed(() => isPackageBlocked(props.plan))
+const needsInput = computed(() => !isBlocked.value && props.plan?.automation?.phase === 'needs_input')
 const isWorking = computed(() =>
   props.isBuilding || props.isProcessing || props.isPreparingEnvironment || props.isRefreshing,
 )
 const planState = computed(() =>
-  props.plan?.automation?.phase === 'draft' ? 'draft' : props.plan?.state,
+  isBlocked.value ? 'blocked' : props.plan?.automation?.phase === 'draft' ? 'draft' : props.plan?.state,
 )
 const stateTone = computed(() =>
-  props.isRefreshing ? 'processing' : needsInput.value ? 'needs_input' : isWorking.value ? 'processing' : planState.value,
+  isBlocked.value ? 'blocked' : props.isRefreshing ? 'processing' : needsInput.value ? 'needs_input' : isWorking.value ? 'processing' : planState.value,
 )
 const stateIcon = computed(() => {
+  if (isBlocked.value) return 'alert'
   if (isWorking.value) return 'refresh'
   if (needsInput.value || planState.value === 'blocked') return 'alert'
   return planState.value === 'draft' ? 'circle-dashed' : 'check'
 })
 
 const state = computed(() => {
+  if (isBlocked.value) return { title: t('analysis.plan.blocked.title'), text: t('analysis.plan.blocked.text') }
   if (props.isRefreshing) {
     return { title: t('analysis.automation.validatingAnswer'), text: t('analysis.automation.phases.validating') }
   }
@@ -133,10 +137,10 @@ const saveText = computed(() => {
       >
         {{ $t('analysis.panel.refresh') }}
       </BaseButton>
-      <BaseButton block :disabled="!canBuild" :loading="isWorking" @click="emit('build')">
+      <BaseButton block :disabled="!canBuild || isBlocked" :loading="isWorking" @click="emit('build')">
         {{ buttonText }}
       </BaseButton>
-      <p v-if="!needsInput && !isWorking" class="panel__next">{{ $t('analysis.review.nextStep') }}</p>
+      <p v-if="!needsInput && !isWorking && !isBlocked" class="panel__next">{{ $t('analysis.review.nextStep') }}</p>
       <p v-if="saveState !== 'idle'" class="panel__save" :class="`panel__save--${saveState}`" aria-live="polite">
         {{ saveText }}
         <button v-if="saveState === 'conflict'" type="button" class="panel__link" @click="emit('reload')">

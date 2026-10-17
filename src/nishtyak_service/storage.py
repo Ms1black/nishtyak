@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from nishtyak_core.archives import ArchiveReader
 from nishtyak_core.environment import AuthorEnvironmentSnapshot
 from nishtyak_core.jobs import AnalysisJobResult
 from nishtyak_core.locking import DependencyLock
@@ -25,6 +26,7 @@ from nishtyak_core.report_codec import (
     bounded_json,
 )
 
+from .decision_carry import SourceDecisionCarry
 from .errors import ServiceError
 
 if TYPE_CHECKING:
@@ -38,7 +40,7 @@ class JobRecord:
     owner_id: str
     status: str
     created_at: float
-    expires_at: float
+    expires_at: float | None
     options: AnalysisOptions
     error_code: str | None = None
     deleted: bool = False
@@ -99,7 +101,6 @@ class SQLiteJobRepository:
         try:
             with self._transaction() as connection:
                 now = time.time()
-                self._revoke_expired(connection, now)
                 self._cleanup(connection, now)
                 self._check_admission(connection, owner_id, reservation, now)
                 self._ensure_private_directory(root)
@@ -116,7 +117,7 @@ class SQLiteJobRepository:
                         job_id,
                         owner_id,
                         now,
-                        now + self.settings.ttl_seconds,
+                        0,
                         options_json,
                         reservation,
                         environment_json,
@@ -164,7 +165,6 @@ class SQLiteJobRepository:
                 ).fetchone()
             ):
                 raise ServiceError(409, "PROJECT_BUSY", "A project operation is active")
-            self._revoke_expired(connection, now)
             self._cleanup(connection, now)
             self._check_admission(connection, owner_id, 0, now, project_id)
             job_id = uuid.uuid4().hex
@@ -225,15 +225,94 @@ class SQLiteJobRepository:
             ).fetchone()
             return self._decision_document(report.analysis_id, document)
 
+    def replace_source(
+        self, owner_id: str, project_id: str, archive: bytes, expected_revision: int
+    ) -> JobRecord:
+        self._validate_owner(owner_id)
+        self._validate_identifier(project_id)
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ServiceError(422, "DECISIONS_INVALID", "Invalid decision revision")
+        if (
+            not isinstance(archive, bytes)
+            or not 0 < len(archive) <= self.settings.max_archive_bytes
+        ):
+            raise ServiceError(413, "ARCHIVE_LIMIT", "Expected a ZIP within the upload limit")
+        ArchiveReader().from_bytes(archive)
+        new_file = self._project_directory(project_id) / ("source-" + uuid.uuid4().hex + ".zip")
+        try:
+            with self._transaction() as connection:
+                row = connection.execute(
+                    "SELECT * FROM projects WHERE project_id=? AND owner_id=?",
+                    (project_id, owner_id),
+                ).fetchone()
+                self._accessible(row)
+                now = time.time()
+                connection.execute("DELETE FROM leases WHERE expires_at<=?", (now,))
+                if (
+                    row["worker_active"]
+                    or row["status"] == "running"
+                    or connection.execute(
+                        "SELECT 1 FROM leases WHERE project_id=?", (project_id,)
+                    ).fetchone()
+                ):
+                    raise ServiceError(409, "PROJECT_BUSY", "A project operation is active")
+                document = connection.execute(
+                    "SELECT * FROM decision_documents WHERE project_id=?", (project_id,)
+                ).fetchone()
+                revision = document["revision"] if document else 0
+                if revision != expected_revision:
+                    raise ServiceError(409, "DECISIONS_REVISION_CONFLICT", "Decisions changed")
+                old_file = self._project_directory(project_id) / row["source_file"]
+                delta = len(archive) - old_file.stat().st_size
+                self._check_admission(connection, owner_id, delta, now, project_id)
+                self._write_file(new_file, archive)
+                job_id = uuid.uuid4().hex
+                connection.execute(
+                    """UPDATE projects SET job_id=?,status='queued',source_file=?,
+                    reserved_bytes=reserved_bytes+?,review_ready_at=NULL,error_code=NULL,
+                    automatic_review_eligible=? WHERE project_id=?""",
+                    (job_id, new_file.name, delta, self._review_eligible(), project_id),
+                )
+                saved = (
+                    json.loads(document["decisions_json"])
+                    if document and document["decisions_json"]
+                    else {}
+                )
+                connection.execute(
+                    """INSERT INTO decision_documents VALUES(?, '', ?, ?, ?)
+                    ON CONFLICT(project_id) DO UPDATE SET analysis_id='',revision=excluded.revision,
+                    decisions_json=excluded.decisions_json,updated_at=excluded.updated_at""",
+                    (project_id, revision + 1, json.dumps({"_source_carry": saved}), now),
+                )
+                if self.settings.automatic_resolution:
+                    self._queue_resolution(connection, project_id, job_id)
+                else:
+                    connection.execute(
+                        "DELETE FROM automation_flows WHERE project_id=?", (project_id,)
+                    )
+                    connection.execute(
+                        "DELETE FROM automatic_resolutions WHERE project_id=?", (project_id,)
+                    )
+                result = self._record(
+                    connection.execute(
+                        "SELECT * FROM projects WHERE project_id=?", (project_id,)
+                    ).fetchone()
+                )
+        except BaseException:
+            new_file.unlink(missing_ok=True)
+            raise
+        old_file.unlink(missing_ok=True)
+        (self._project_directory(project_id) / "dependency-lock.json").unlink(missing_ok=True)
+        return result
+
     def pending_reviews(self) -> list[JobRecord]:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT p.* FROM projects p LEFT JOIN automatic_reviews r
                 ON r.project_id = p.project_id WHERE p.status = 'succeeded'
-                AND p.deleted = 0 AND p.expires_at > ? AND p.automatic_review_eligible = 1
+                AND p.deleted = 0 AND p.automatic_review_eligible = 1
                 AND (r.job_id IS NULL OR r.job_id != p.job_id)
                 ORDER BY p.created_at LIMIT 8""",
-                (time.time(),),
             ).fetchall()
         return [self._record(row) for row in rows]
 
@@ -242,10 +321,10 @@ class SQLiteJobRepository:
             rows = connection.execute(
                 """SELECT p.* FROM projects p JOIN automatic_resolutions r
                 ON r.project_id = p.project_id AND r.job_id = p.job_id
-                WHERE p.status = 'succeeded' AND p.deleted = 0 AND p.expires_at > ?
+                WHERE p.status = 'succeeded' AND p.deleted = 0
                 AND (r.status = 'pending' OR (r.status = 'running' AND r.updated_at < ?))
                 ORDER BY p.created_at LIMIT 8""",
-                (time.time(), time.time() - 30),
+                (time.time() - 30,),
             ).fetchall()
         return [self._record(row) for row in rows]
 
@@ -254,10 +333,10 @@ class SQLiteJobRepository:
             rows = connection.execute(
                 """SELECT p.* FROM projects p JOIN automation_flows f
                 ON f.project_id = p.project_id AND f.job_id = p.job_id
-                WHERE p.status = 'succeeded' AND p.deleted = 0 AND p.expires_at > ?
+                WHERE p.status = 'succeeded' AND p.deleted = 0
                 AND (f.phase IN ('static', 'finalizing') OR (f.phase IN ('assisting', 'validating')
                 AND f.updated_at < ?)) ORDER BY p.created_at LIMIT 8""",
-                (time.time(), time.time() - 60),
+                (time.time() - 60,),
             ).fetchall()
         return [self._record(row) for row in rows]
 
@@ -548,14 +627,12 @@ class SQLiteJobRepository:
     def claim(self) -> JobRecord | None:
         with self._transaction() as connection:
             now = time.time()
-            self._revoke_expired(connection, now)
             self._cleanup(connection, now)
             if self._active_count(connection, now) >= self.settings.max_running:
                 return None
             row = connection.execute(
                 """SELECT * FROM projects WHERE status = 'queued' AND deleted = 0
-                AND expires_at > ? ORDER BY created_at, job_id LIMIT 1""",
-                (now,),
+                ORDER BY created_at, job_id LIMIT 1""",
             ).fetchone()
             if row is None:
                 return None
@@ -592,7 +669,7 @@ class SQLiteJobRepository:
             ).fetchone()
             if row is None or row["status"] != "running":
                 return False
-            if row["deleted"] or row["expires_at"] <= now:
+            if row["deleted"]:
                 connection.execute(
                     """UPDATE projects SET worker_active = 0, deleted = 1,
                     status = 'failed', error_code = 'JOB_REVOKED' WHERE job_id = ?""",
@@ -613,6 +690,10 @@ class SQLiteJobRepository:
                         and document["decisions_json"]
                     ):
                         prose = json.loads(document["decisions_json"])
+                        if "_source_carry" in prose:
+                            prose = SourceDecisionCarry().restore(
+                                result.report, prose["_source_carry"]
+                            )
                         prose["analysis_id"] = result.report.analysis_id
                         connection.execute(
                             """UPDATE decision_documents SET analysis_id = ?, decisions_json = ?
@@ -640,7 +721,6 @@ class SQLiteJobRepository:
                 WHERE job_id = ? AND status IN ('queued', 'running')""",
                 (status, code, job_id),
             )
-            self._revoke_expired(connection, now)
             self._cleanup(connection, now)
 
     def running_jobs(self) -> list[JobRecord]:
@@ -656,7 +736,7 @@ class SQLiteJobRepository:
             row = connection.execute(
                 "SELECT deleted, expires_at FROM projects WHERE job_id = ?", (job_id,)
             ).fetchone()
-        return row is None or bool(row["deleted"]) or row["expires_at"] <= time.time()
+        return row is None or bool(row["deleted"])
 
     def delete(self, owner_id: str, project_id: str) -> None:
         self._validate_owner(owner_id)
@@ -676,13 +756,11 @@ class SQLiteJobRepository:
     def sweep(self) -> None:
         with self._transaction() as connection:
             now = time.time()
-            self._revoke_expired(connection, now)
             self._cleanup(connection, now)
             connection.execute(
                 """DELETE FROM projects WHERE deleted = 1 AND reserved_bytes = 0
-                AND worker_active = 0 AND expires_at < ? AND NOT EXISTS
+                AND worker_active = 0 AND NOT EXISTS
                 (SELECT 1 FROM leases WHERE leases.project_id = projects.project_id)""",
-                (now - self.settings.ttl_seconds,),
             )
             known = {row[0] for row in connection.execute("SELECT project_id FROM projects")}
             for entry in self._projects_dir.iterdir():
@@ -691,7 +769,12 @@ class SQLiteJobRepository:
             connection.execute("DELETE FROM rate_limits WHERE expires_at <= ?", (now,))
 
     def archive_path(self, project_id: str) -> Path:
-        return self._project_directory(project_id) / "source.zip"
+        root = self._project_directory(project_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT source_file FROM projects WHERE project_id=?", (project_id,)
+            ).fetchone()
+        return root / (row[0] if row else "source.zip")
 
     def report_path(self, project_id: str) -> Path:
         return self._project_directory(project_id) / "report.json"
@@ -734,7 +817,12 @@ class SQLiteJobRepository:
 
     @contextmanager
     def operation(
-        self, owner_id: str, project_id: str, *, lease_seconds: int | None = None
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        lease_seconds: int | None = None,
+        require_ready: bool = True,
     ) -> Iterator[JobRecord]:
         self._validate_owner(owner_id)
         self._validate_identifier(project_id)
@@ -753,7 +841,7 @@ class SQLiteJobRepository:
                 (project_id, owner_id),
             ).fetchone()
             record = self._accessible(row)
-            if record.status != "succeeded":
+            if require_ready and record.status != "succeeded":
                 raise ServiceError(409, "PROJECT_NOT_READY", "Analysis has not succeeded")
             connection.execute("DELETE FROM leases WHERE expires_at <= ?", (now,))
             if connection.execute(
@@ -802,7 +890,6 @@ class SQLiteJobRepository:
                 if lease is None or lease[0] <= time.time():
                     lost.set()
                 connection.execute("DELETE FROM leases WHERE token = ?", (token,))
-                self._revoke_expired(connection, time.time())
                 self._cleanup(connection, time.time())
             if not failed and lost.is_set():
                 raise ServiceError(
@@ -956,6 +1043,12 @@ class SQLiteJobRepository:
                     )
                 if "review_ready_at" not in columns:
                     connection.execute("ALTER TABLE projects ADD COLUMN review_ready_at REAL")
+                if "source_file" not in columns:
+                    connection.execute(
+                        "ALTER TABLE projects ADD COLUMN source_file TEXT NOT NULL "
+                        "DEFAULT 'source.zip'"
+                    )
+                connection.execute("UPDATE projects SET expires_at=0 WHERE deleted=0")
                 connection.commit()
             except BaseException:
                 connection.rollback()
@@ -1011,9 +1104,9 @@ class SQLiteJobRepository:
             raise ServiceError(503, "QUEUE_FULL", "The analysis queue is full")
         active = connection.execute(
             """SELECT COUNT(*) FROM projects WHERE owner_id = ? AND deleted = 0
-            AND expires_at > ? AND status IN ('queued', 'running')
+            AND status IN ('queued', 'running')
             AND (? IS NULL OR project_id != ?)""",
-            (owner, now, exclude_project_id, exclude_project_id),
+            (owner, exclude_project_id, exclude_project_id),
         ).fetchone()[0]
         if active >= self.settings.max_owner_active:
             raise ServiceError(429, "OWNER_JOB_LIMIT", "Too many active owner jobs")
@@ -1037,10 +1130,6 @@ class SQLiteJobRepository:
             "SELECT COUNT(*) FROM leases WHERE expires_at > ?", (now,)
         ).fetchone()[0]
         return workers + leases
-
-    @staticmethod
-    def _revoke_expired(connection: sqlite3.Connection, now: float) -> None:
-        connection.execute("UPDATE projects SET deleted = 1 WHERE expires_at <= ?", (now,))
 
     def _cleanup(self, connection: sqlite3.Connection, now: float) -> None:
         connection.execute("DELETE FROM leases WHERE expires_at <= ?", (now,))
@@ -1147,7 +1236,7 @@ class SQLiteJobRepository:
             raise ServiceError(400, "OWNER_INVALID", "Invalid owner identity")
 
     def _accessible(self, row: sqlite3.Row | None) -> JobRecord:
-        if row is None or row["deleted"] or row["expires_at"] <= time.time():
+        if row is None or row["deleted"]:
             raise ServiceError(404, "RESOURCE_NOT_FOUND", "Resource not found")
         return self._record(row)
 
@@ -1158,7 +1247,7 @@ class SQLiteJobRepository:
             owner_id=row["owner_id"],
             status=row["status"],
             created_at=row["created_at"],
-            expires_at=row["expires_at"],
+            expires_at=None,
             options=self._codec.decode_options(json.loads(row["options_json"])),
             error_code=row["error_code"],
             deleted=bool(row["deleted"]),

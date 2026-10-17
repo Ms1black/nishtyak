@@ -8,6 +8,7 @@ vi.mock('@/shared/i18n', () => ({ t: (key: string) => key, intlLocale: { value: 
 vi.mock('@/entities/project', async () => {
   const { h } = await import('vue')
   return {
+    isPackageBlocked: (await import('@/entities/project/lib/packageState')).isPackageBlocked,
     AnalysisBadge: (props: { status: string }) => h('span', `static-analysis-${props.status}`),
     ProjectSourceIcon: () => h('span'),
     getProjectMeta: (project: Project) => [`${project.filesCount} source files`],
@@ -60,5 +61,19 @@ describe('package readiness status', () => {
     const html = await render({ ...plan, automation: { phase: 'needs_input' } }, { isRefreshing: true })
     expect(html).toContain('analysis.automation.validatingAnswer')
     expect(html).not.toContain('analysis.automation.awaitingAnswer')
+  })
+
+  it('keeps a hard blocker above a legacy draft label and never promises a draft ZIP', async () => {
+    const html = await render({ ...plan, state: 'blocked', automation: { phase: 'draft' } })
+    expect(html).toContain('analysis.plan.blocked.title')
+    expect(html).toContain('panel__state--blocked')
+    expect(html).not.toContain('analysis.plan.draft.title')
+    expect(html).not.toContain('analysis.review.nextStep')
+  })
+
+  it('treats an explicit server blocked phase as blocked even when the plan state is stale', async () => {
+    const html = await render({ ...plan, automation: { phase: 'blocked' } })
+    expect(html).toContain('analysis.plan.blocked.title')
+    expect(html).not.toContain('analysis.plan.ready_to_verify.title')
   })
 })

@@ -11,7 +11,7 @@ from .resolution import DependencyResolver, StandardLibraryProfile
 
 
 class ProjectAnalyzer:
-    RULE_VERSION = "3.0"
+    RULE_VERSION = "3.1"
 
     def analyze(
         self, snapshot: ProjectSnapshot, options: AnalysisOptions | None = None

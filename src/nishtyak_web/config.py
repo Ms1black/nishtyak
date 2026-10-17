@@ -23,13 +23,14 @@ class WebSettings:
         "http://localhost:8080",
         "http://127.0.0.1:8080",
     )
-    ttl_seconds: int = 3600
+    ttl_seconds: int = 0
     max_storage_bytes: int = 2 * 1024**3
     max_workspace_bytes: int = 256 * 1024**2
     max_workspace_projects: int = 100
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_dir", Path(self.data_dir).absolute())
+        object.__setattr__(self, "ttl_seconds", 0)
         if self.mode not in {"local", "proxy", "preview", "accounts"}:
             raise ValueError("Gateway mode must be local, proxy, preview or accounts")
         for name in ("service_token", "proxy_secret"):
@@ -85,7 +86,6 @@ class WebSettings:
         ):
             raise ValueError("Preview session lifetime must be between 60 and 86400 seconds")
         for name in (
-            "ttl_seconds",
             "max_storage_bytes",
             "max_workspace_bytes",
             "max_workspace_projects",

@@ -299,7 +299,7 @@ def test_delete_releases_private_environment_metadata_after_physical_cleanup(rep
     assert stored == (None, 0)
 
 
-def test_delete_and_expiry_remove_saved_decisions(repository, monkeypatch):
+def test_manual_delete_removes_decisions_but_project_age_does_not(repository, monkeypatch):
     record = submit(repository)
     report = complete(repository, record)
     repository.save_decisions(
@@ -314,8 +314,8 @@ def test_delete_and_expiry_remove_saved_decisions(repository, monkeypatch):
     repository.save_decisions(
         "alice", another.project_id, report.analysis_id, 0, {"analysis_id": report.analysis_id}
     )
-    monkeypatch.setattr("nishtyak_service.storage.time.time", lambda: another.expires_at + 1)
-    assert_error("RESOURCE_NOT_FOUND", repository.read_decisions, "alice", another.project_id)
+    monkeypatch.setattr("nishtyak_service.storage.time.time", lambda: another.created_at + 10**8)
+    assert repository.read_decisions("alice", another.project_id)["revision"] == 1
     repository.sweep()
     with sqlite3.connect(repository.database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM decision_documents").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM decision_documents").fetchone()[0] == 1

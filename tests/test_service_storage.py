@@ -61,7 +61,7 @@ def test_records_and_private_files_survive_repository_restart(settings):
     assert len(record.project_id) == len(record.job_id) == 32
     assert record.project_id != record.job_id
     assert record.status == "queued"
-    assert record.expires_at - record.created_at == settings.ttl_seconds
+    assert record.expires_at is None
     assert repository.archive_path(record.project_id).read_bytes() == b"source zip"
     assert stat.S_IMODE(settings.data_dir.stat().st_mode) == 0o770
     assert stat.S_IMODE(repository.archive_path(record.project_id).stat().st_mode) == 0o660
@@ -145,14 +145,14 @@ def test_running_tombstone_can_be_recovered_after_dispatcher_restart(settings):
     assert not restarted.archive_path(record.project_id).parent.exists()
 
 
-def test_expiry_revokes_access_and_sweep_reclaims_files(repository, monkeypatch):
+def test_time_does_not_revoke_access_or_remove_projects(repository, monkeypatch):
     record = submit(repository)
-    monkeypatch.setattr("nishtyak_service.storage.time.time", lambda: record.expires_at + 1)
-    assert_error("RESOURCE_NOT_FOUND", repository.get_project, "alice", record.project_id)
-    assert repository.is_revoked(record.job_id)
+    monkeypatch.setattr("nishtyak_service.storage.time.time", lambda: record.created_at + 10**8)
+    assert repository.get_project("alice", record.project_id).expires_at is None
+    assert not repository.is_revoked(record.job_id)
     repository.sweep()
-    assert not repository.archive_path(record.project_id).exists()
-    assert repository.claim() is None
+    assert repository.archive_path(record.project_id).exists()
+    assert repository.claim().job_id == record.job_id
 
 
 def test_deleted_running_project_still_consumes_storage_until_cleanup(settings):
@@ -339,22 +339,22 @@ def test_report_fifo_is_rejected_without_blocking(repository):
     assert_error("REPORT_UNAVAILABLE", repository.read_report, record)
 
 
-def test_expired_running_job_is_not_cleaned_before_worker_ack(repository, monkeypatch):
+def test_long_running_job_is_not_revoked_by_project_age(repository, monkeypatch):
     record = submit(repository)
     repository.claim()
-    monkeypatch.setattr("nishtyak_service.storage.time.time", lambda: record.expires_at + 1)
+    monkeypatch.setattr("nishtyak_service.storage.time.time", lambda: record.created_at + 10**8)
     repository.sweep()
     assert repository.archive_path(record.project_id).exists()
     snapshot = SnapshotBuilder().from_mapping({"main.py": b"print('ok')\n"})
     report = ReproducibilityService().analyze(snapshot, record.options)
-    assert not repository.finish(record.job_id, AnalysisJobResult("succeeded", report))
-    assert not repository.archive_path(record.project_id).exists()
+    assert repository.finish(record.job_id, AnalysisJobResult("succeeded", report))
+    assert repository.archive_path(record.project_id).exists()
 
 
 def test_cleaned_tombstone_expires_without_allowing_late_result(repository, monkeypatch):
     record = submit(repository)
     repository.delete("alice", record.project_id)
-    later = record.expires_at + repository.settings.ttl_seconds + 1
+    later = record.created_at + 10**8
     monkeypatch.setattr("nishtyak_service.storage.time.time", lambda: later)
     repository.sweep()
     with sqlite3.connect(repository.database_path) as connection:
@@ -434,3 +434,17 @@ def test_facade_rechecks_access_after_read_only_preparation(repository, monkeypa
         "alice",
         record.project_id,
     )
+
+
+def test_existing_live_projects_migrate_to_no_expiry(repository):
+    record = submit(repository)
+    with sqlite3.connect(repository.database_path) as connection:
+        connection.execute(
+            "UPDATE projects SET expires_at=1 WHERE project_id=?", (record.project_id,)
+        )
+    reopened = SQLiteJobRepository(repository.settings)
+    assert reopened.get_project("alice", record.project_id).expires_at is None
+    reopened.sweep()
+    assert reopened.archive_path(record.project_id).exists()
+    with sqlite3.connect(repository.database_path) as connection:
+        assert connection.execute("SELECT expires_at FROM projects").fetchone()[0] == 0

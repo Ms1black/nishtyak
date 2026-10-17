@@ -28,15 +28,15 @@ describe('human-readable analysis report', () => {
     expect(findings).toHaveLength(7)
   })
 
-  it('retains distinct input locations and every actionable error', () => {
-    expect(
-      summarizeFindings([
+  it('retains distinct input locations without repeating their explanation and keeps every actionable error', () => {
+    const summary = summarizeFindings([
         finding('INPUT_PATH_UNVERIFIED', { id: 'one', path: 'one.py', line: 1 }),
         finding('INPUT_PATH_UNVERIFIED', { id: 'two', path: 'two.py', line: 2 }),
         finding('SECRET_DETECTED', { id: 'secret-one', severity: 'error' }),
         finding('SECRET_DETECTED', { id: 'secret-two', severity: 'error' }),
-      ]),
-    ).toHaveLength(4)
+      ])
+    expect(summary).toHaveLength(3)
+    expect(summary[0]?.locations).toEqual(['one.py:1', 'two.py:2'])
   })
 
   it('shows one generic data limitation when no concrete missing input is known', () => {
@@ -45,6 +45,10 @@ describe('human-readable analysis report', () => {
         (item) => item.text,
       ),
     ).toEqual(['findings.DATA_UNVERIFIED'])
+  })
+
+  it('does not present the general static-analysis data boundary as an actionable project issue', () => {
+    expect(summarizeFindings([finding('DATA_DEPENDENCIES_UNVERIFIED')])).toEqual([])
   })
 
   it('does not ask to supply the README that has already been generated', () => {
@@ -79,5 +83,18 @@ describe('human-readable analysis report', () => {
         true,
       ).map((item) => item.text),
     ).toEqual(['findings.DEPENDENCIES_UNRESOLVED'])
+  })
+
+  it('retains every module and source file when collapsing version and unresolved explanations', () => {
+    const items = summarizeFindings([
+      finding('VERSION_UNKNOWN', { id: 'numpy', module: 'numpy', path: 'one.py', line: 3 }),
+      finding('VERSION_NOT_PINNED', { id: 'pandas', module: 'pandas', path: 'two.py', line: 8 }),
+      finding('VERSION_UNKNOWN', { id: 'duplicate', module: 'numpy', path: 'one.py', line: 3 }),
+      finding('DEPENDENCY_UNRESOLVED', { id: 'optics', module: 'optics', path: 'one.py', line: 4 }),
+      finding('DECLARATION_IMPORT_UNRESOLVED', { id: 'spectra', module: 'spectra', path: 'two.py', line: 9 }),
+    ], true)
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ locations: ['one.py:3', 'two.py:8'], modules: ['numpy', 'pandas'] })
+    expect(items[1]).toMatchObject({ locations: ['one.py:4', 'two.py:9'], modules: ['optics', 'spectra'] })
   })
 })

@@ -773,6 +773,313 @@ paths:
           description: Insufficient Storage
       security:
       - ServiceToken: []
+  /v1/projects/{project_id}/source:
+    post:
+      summary: Replace Source
+      operationId: replace_source_v1_projects__project_id__source_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmittedProjectDTO'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+    get:
+      summary: Source Content
+      operationId: source_content_v1_projects__project_id__source_get
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
+  /v1/projects/{project_id}/state:
+    get:
+      summary: Project State
+      operationId: project_state_v1_projects__project_id__state_get
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectStateDTO'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
   /v1/projects/{project_id}/clarifications:
     post:
       summary: Submit Clarifications
@@ -2597,8 +2904,10 @@ components:
           minimum: 0.0
           title: Created At
         expires_at:
-          type: number
-          minimum: 0.0
+          anyOf:
+          - type: number
+            minimum: 0.0
+          - type: 'null'
           title: Expires At
         analysis:
           anyOf:
@@ -2633,7 +2942,6 @@ components:
       - job_id
       - status
       - created_at
-      - expires_at
       title: JobDTO
     LaunchAssessment:
       properties:
@@ -2967,6 +3275,33 @@ components:
       - project_id
       - analysis
       title: ProjectReportDTO
+    ProjectStateDTO:
+      properties:
+        project_id:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+        job_id:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Job Id
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - resource_limited
+          title: Status
+      additionalProperties: false
+      type: object
+      required:
+      - project_id
+      - job_id
+      - status
+      title: ProjectStateDTO
     ReanalyzeDTO:
       properties:
         options:

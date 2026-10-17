@@ -233,7 +233,21 @@ class ManifestReader:
                 )
             )
         tool = data.get("tool", {})
-        if isinstance(tool, dict) and any(name in tool for name in ("poetry", "pdm", "uv")):
+        dependency_settings = {
+            "poetry": {"dependencies", "extras", "source"},
+            "pdm": {"source", "resolution"},
+            "uv": {
+                "sources",
+                "index",
+                "override-dependencies",
+                "constraint-dependencies",
+                "exclude-dependencies",
+            },
+        }
+        if isinstance(tool, dict) and any(
+            isinstance(tool.get(name), dict) and bool(set(tool[name]) & fields)
+            for name, fields in dependency_settings.items()
+        ):
             self.findings.append(
                 Finding(
                     "TOOL_METADATA_UNSUPPORTED",

@@ -209,7 +209,9 @@ def test_existing_useful_readme_skips_description_model(focused):
     )
     assert logic.automatic_review.needs_description(record, report, plan) is False
     enriched = logic.automatic_review.enrich(plan, record)
-    assert "arithmetic mean" in enriched.description
+    assert "Python-проект" in enriched.description
+    assert "arithmetic mean" not in enriched.description
+    assert enriched.description_origin == "inferred"
 
 
 def test_environment_diagnostics_do_not_silently_relax_constraints(focused, monkeypatch):

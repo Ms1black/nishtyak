@@ -34,6 +34,7 @@ from .dto import (
     PreparationDTO,
     ProjectAdviceDTO,
     ProjectReportDTO,
+    ProjectStateDTO,
     ReanalyzeDTO,
     ResolveDTO,
     SaveDecisionsDTO,
@@ -312,6 +313,46 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
     )
     async def get_decisions(request: Request, project_id: ProjectId) -> dict[str, Any]:
         return await run_in_threadpool(logic.get_decisions, request.state.owner_id, project_id)
+
+    @app.post(
+        "/v1/projects/{project_id}/source",
+        status_code=202,
+        response_model=SubmittedProjectDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def replace_source(request: Request, project_id: ProjectId):
+        async with request.form(max_files=1, max_fields=1, max_part_size=1024) as form:
+            if set(form) != {"file", "expected_revision"} or any(
+                len(form.getlist(name)) != 1 for name in form
+            ):
+                raise ServiceError(422, "INVALID_UPLOAD", "Expected ZIP and decision revision")
+            upload = form["file"]
+            raw = form["expected_revision"]
+            if (
+                not isinstance(upload, UploadFile)
+                or not isinstance(raw, str)
+                or not raw.isdecimal()
+            ):
+                raise ServiceError(422, "INVALID_UPLOAD", "Expected ZIP and decision revision")
+            content = await upload.read(settings.max_archive_bytes + 1)
+            return await run_in_threadpool(
+                logic.replace_source, request.state.owner_id, project_id, content, int(raw)
+            )
+
+    @app.get(
+        "/v1/projects/{project_id}/state",
+        response_model=ProjectStateDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def project_state(request: Request, project_id: ProjectId):
+        return await run_in_threadpool(logic.project_state, request.state.owner_id, project_id)
+
+    @app.get("/v1/projects/{project_id}/source", responses=ERROR_RESPONSES)
+    async def source_content(request: Request, project_id: ProjectId):
+        return Response(
+            await run_in_threadpool(logic.source, request.state.owner_id, project_id),
+            media_type="application/zip",
+        )
 
     @app.put(
         "/v1/projects/{project_id}/decisions",

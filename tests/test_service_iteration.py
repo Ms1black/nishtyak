@@ -61,7 +61,7 @@ def test_default_flow_needs_no_main_decision(project):
     assert bundle.status_code == 200
     with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
         readme = archive.read("README.md").decode()
-        assert "experiment.py" in readme and "inferred" in readme.lower()
+        assert "experiment.py" in readme and "определена по структуре" in readme.lower()
         assert "project/helpers.py" in archive.namelist()
 
 

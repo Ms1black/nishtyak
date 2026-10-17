@@ -31,10 +31,12 @@ class PreparationAutomation:
         repository: SQLiteJobRepository,
         resolution: AutomaticDependencyResolution,
         review: AutomaticProjectReview,
+        discovery=None,
     ):
         self.repository = repository
         self.resolution = resolution
         self.review = review
+        self.discovery = discovery
 
     def status(self, record: JobRecord) -> dict | None:
         state = self.repository.read_automation(record)
@@ -45,7 +47,10 @@ class PreparationAutomation:
         if stored is None:
             return plan
         state = self._state(record, stored, plan)
-        if state.get("input_id") not in {None, self._input_id(plan)}:
+        if plan.state == "blocked":
+            state = {**state, "phase": "blocked", "questions": [], "reason": "PLAN_BLOCKED"}
+            state.pop("question", None)
+        if plan.state != "blocked" and state.get("input_id") not in {None, self._input_id(plan)}:
             state = {**state, "phase": "needs_input", "reason": "DECISIONS_NOT_SAVED"}
         return replace(plan, automation=self._public(state))
 
@@ -68,6 +73,10 @@ class PreparationAutomation:
         if not isinstance(notes, str) or len(notes) > 6000:
             raise ServiceError(
                 422, "CLARIFICATIONS_INVALID", "Clarification notes exceed their limit"
+            )
+        if plan.state == "blocked":
+            raise ServiceError(
+                409, "PLAN_BLOCKED", "Resolve the blocking findings before preparing a package"
             )
         stored = self.repository.read_automation(record)
         state = self._state(record, stored or {}, plan)
@@ -115,6 +124,9 @@ class PreparationAutomation:
 
     def _prepare(self, record, prepare, report, decisions, state):
         plan = self._validate(record, prepare, report, decisions, state)
+        if plan.state == "blocked":
+            self._finish(record, plan, state)
+            return
         if state["stage"] == "pre_human":
             plan = self._prepare_before_questions(record, prepare, report, decisions, plan, state)
             questions = self._questions(plan)
@@ -196,6 +208,9 @@ class PreparationAutomation:
         plan = prepare(report, decisions, record)
         state["input_id"] = self._input_id(plan)
         self.repository.save_automation(record, state)
+        if self.discovery is not None and plan.state != "blocked":
+            self.discovery.ensure(record, plan)
+            plan = prepare(report, decisions, record)
         self.resolution.ensure(record, plan)
         return prepare(report, decisions, record)
 
@@ -209,10 +224,12 @@ class PreparationAutomation:
             and not unresolved
         )
         state.update(
-            phase="ready" if complete else "draft",
-            stage="complete",
+            phase="blocked" if plan.state == "blocked" else "ready" if complete else "draft",
+            stage=state["stage"] if plan.state == "blocked" else "complete",
             questions=[],
-            reason=resolution.get("reason") or state.get("reason"),
+            reason="PLAN_BLOCKED"
+            if plan.state == "blocked"
+            else resolution.get("reason") or state.get("reason"),
             unresolved=unresolved,
         )
         state.pop("question", None)

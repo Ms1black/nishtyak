@@ -294,7 +294,7 @@ def test_documents_are_deterministic_and_commands_quote_arguments(report, decisi
     assert "cd project\ncd 'nested folder'" in readme
     assert "python 'main file.py' '$(touch unwanted)' --label 'a b'" in readme
     assert "python -m pip install -r requirements.txt" in readme
-    assert "Successful reproduction has not been verified" in readme
+    assert "Код на сервере не выполнялся" in readme
     assert json.loads(generated.get("analysis-report.json"))["state"] == "ready_to_verify"
     assert generated.get("requirements.txt").decode().endswith("numpy\n")
 
@@ -309,10 +309,12 @@ def test_readme_consolidates_limits_but_json_retains_all_evidence():
     plan = PackagePlanner().prepare(report, UserDecisions(report.analysis_id))
     generated = DocumentRenderer().render(plan)
     readme = generated.get("README.md").decode()
-    review = readme.split("## Review before reproduction", 1)[1].split("## Package contents", 1)[0]
+    review = readme.split("## Оставшиеся ограничения", 1)[1].split("## Состав пакета", 1)[0]
     assert review.count("[VERSIONS_UNVERIFIED]") == 1
     assert "numpy, pandas" in review
-    assert "[INPUT_PATH_UNVERIFIED] (experiment.py:3)" in review
+    assert '"measurements.csv"' in readme
+    assert "(experiment.py:3)" in readme
+    assert "INPUT_PATH_UNVERIFIED" not in review
     assert "DATA_NOT_CONFIRMED" not in review
     assert "DATA_DEPENDENCIES_UNVERIFIED" not in review
     assert "README_MISSING" not in review
@@ -333,7 +335,7 @@ def test_generated_description_is_distinguished_from_author_confirmation(report,
         automatic_review={"status": "ready", "provider": "deepseek"},
     )
     generated = DocumentRenderer().render(automatic)
-    assert "not an author confirmation" in generated.get("README.md").decode()
+    assert "это не подтверждение автора" in generated.get("README.md").decode()
     document = json.loads(generated.get("analysis-report.json"))
     assert document["automatic_review"]["provider"] == "deepseek"
     assert document["decisions"]["description"] == decisions.description

@@ -40,7 +40,7 @@ def test_lone_scientific_script_needs_neither_main_guard_nor_manual_entry(tmp_pa
     with zipfile.ZipFile(artifact.path) as archive:
         readme = archive.read("README.md").decode()
         assert "cd project\npython experiment.py" in readme
-        assert "inferred" in readme and "has not been confirmed" in readme
+        assert "определена по структуре" in readme and "не подтверждена автором" in readme
         assert "Ask the author" not in readme
         assert "  experiment.py" in readme
         archive.extractall(tmp_path / "colleague")
@@ -103,7 +103,7 @@ def test_multiple_independent_scripts_remain_a_downloadable_draft_with_commands(
     with zipfile.ZipFile(artifact.path) as archive:
         readme = archive.read("README.md").decode()
     assert "python one.py" in readme and "python two.py" in readme
-    assert "dependency and source package remains available" in readme
+    assert "Ниже перечислены варианты" in readme
 
 
 @pytest.mark.parametrize(
@@ -222,7 +222,7 @@ def test_already_supplied_environment_python_and_data_choices_clear_obsolete_que
     assert "PYTHON_VERSION_UNKNOWN" not in codes
     assert "DATA_DEPENDENCIES_UNVERIFIED" not in codes
     assert (
-        "Observed author-environment Python version"
+        "Python из добровольного снимка среды автора"
         in service.render(confirmed).get("README.md").decode()
     )
 

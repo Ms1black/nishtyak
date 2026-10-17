@@ -34,6 +34,7 @@ const SECTION: Record<string, AnalysisSection> = {
   SECRET_FILE_EXCLUDED: 'files',
   NO_PROJECT_FILES: 'files',
   LOCAL_MODULE_EXCLUDED: 'files',
+  LOCAL_MODULE_MISSING: 'files',
   DEPENDENCY_UNRESOLVED: 'dependencies',
   DECLARATION_IMPORT_UNRESOLVED: 'dependencies',
   VERSION_UNKNOWN: 'dependencies',
@@ -89,6 +90,7 @@ const MODULE_MESSAGES = new Set([
 ])
 
 export function describeFinding(f: Finding): string {
+  if (f.code === 'INPUT_PATH_UNVERIFIED' || f.code === 'EXTERNAL_INPUT_REFERENCE') return f.message
   const code = ALIASES[f.code] ?? f.code
   const module = f.module?.trim()
   if (MODULE_MESSAGES.has(code) && !module) return f.message

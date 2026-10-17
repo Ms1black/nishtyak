@@ -1,5 +1,10 @@
 export type {
   Project,
+  ProjectLookup,
+  VerificationStatus,
+  ManualVerification,
+  VerificationDocument,
+  VerificationSubmission,
   ProjectSourceType,
   AnalysisStatus,
   ArchiveStatus,
@@ -35,6 +40,7 @@ export { projectApi } from './api'
 export { getProjectAction, type ProjectAction, type ProjectActionKind } from './lib/projectAction'
 export { getProjectMeta, getArchiveFileName, getSecretLabel } from './lib/projectMeta'
 export { createDefaultDecisions, formatRunCommand } from './lib/decisions'
+export { isPackageBlocked } from './lib/packageState'
 export {
   describeFinding,
   getFindingKind,

@@ -125,6 +125,12 @@ class LogicClient:
     def project(self, project_id: str) -> dict:
         return self._request("GET", self._project_path(project_id))
 
+    def project_state(self, project_id: str) -> dict:
+        return self._request("GET", self._project_path(project_id) + "/state")
+
+    def source(self, project_id: str) -> bytes:
+        return self._request("GET", self._project_path(project_id) + "/source", binary=True)
+
     def reanalyze(
         self, project_id: str, options: dict, author_environment: dict | None = None
     ) -> dict:
@@ -135,6 +141,29 @@ class LogicClient:
 
     def decisions(self, project_id: str) -> dict:
         return self._request("GET", self._project_path(project_id) + "/decisions")
+
+    def replace_source(self, project_id: str, archive: bytes, expected_revision: int) -> dict:
+        if not isinstance(archive, bytes) or not 0 < len(archive) <= 10 * 1024**2:
+            raise ValueError("Expected a ZIP of at most 10 MiB")
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("Invalid decision revision")
+        boundary = "nishtyak-" + uuid.uuid4().hex
+        body = (
+            (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="expected_revision"\r\n\r\n'
+                f"{expected_revision}\r\n--{boundary}\r\n"
+                'Content-Disposition: form-data; name="file"; '
+                'filename="project.zip"\r\nContent-Type: application/zip\r\n\r\n'
+            ).encode()
+            + archive
+            + f"\r\n--{boundary}--\r\n".encode()
+        )
+        return self._request(
+            "POST",
+            self._project_path(project_id) + "/source",
+            body,
+            f"multipart/form-data; boundary={boundary}",
+        )
 
     def save_decisions(self, project_id: str, decisions: dict, expected_revision: int) -> dict:
         body = {"decisions": decisions, "expected_revision": expected_revision}

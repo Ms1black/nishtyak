@@ -5,6 +5,20 @@ export interface ClarificationAnswers {
   notes: string
 }
 
+export function uniqueClarificationQuestions(questions: AutomationQuestion[]): AutomationQuestion[] {
+  const seen = new Set<string>()
+  return questions.filter((question) => {
+    const key = JSON.stringify([
+      question.kind, question.aspect, question.module ?? '', question.declarationId ?? '',
+      question.code ?? '', question.filePath ?? '', [...(question.candidateIds ?? [])].sort(),
+      question.kind === 'text' ? question.message?.trim().replace(/\s+/g, ' ') ?? '' : '',
+    ])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 export function collectClarificationChanges(
   questions: AutomationQuestion[],
   values: Record<string, string>,

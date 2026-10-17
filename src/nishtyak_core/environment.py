@@ -176,7 +176,11 @@ class AuthorEnvironmentInspector:
             ):
                 dependencies.append(candidate)
                 continue
-            package = canonicalize_name(candidate.package) if candidate.package else None
+            package = (
+                canonicalize_name(candidate.package)
+                if candidate.package and candidate.category != "unresolved"
+                else None
+            )
             mapped = by_module.get(candidate.module, set())
             if not package:
                 if len(mapped) != 1:

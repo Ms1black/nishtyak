@@ -6,6 +6,8 @@ export const projectHttpApi: ProjectApi = {
 
   list: (teamId) => apiClient.get(`/teams/${teamId}/projects`),
 
+  get: (projectId) => apiClient.get(`/projects/${projectId}`),
+
   upload: (teamId, file) => {
     const body = new FormData()
     body.append('file', file)
@@ -29,6 +31,19 @@ export const projectHttpApi: ProjectApi = {
   buildArchive: (projectId, options) => apiClient.post(`/projects/${projectId}/archive`, options),
 
   downloadArchive: (projectId) => apiClient.get(`/projects/${projectId}/archive`),
+
+  getReadme: (projectId) => apiClient.get(`/projects/${projectId}/readme`),
+
+  getVerification: (projectId) => apiClient.get(`/projects/${projectId}/verification`),
+
+  saveVerification: (projectId, verification) => apiClient.put(`/projects/${projectId}/verification`, verification),
+
+  replaceSource: (projectId, file, expectedRevision) => {
+    const body = new FormData()
+    body.append('file', file)
+    body.append('expectedRevision', String(expectedRevision))
+    return apiClient.post(`/projects/${projectId}/source`, body)
+  },
 
   reanalyze: (projectId, options, authorEnvironment) =>
     apiClient.post(`/projects/${projectId}/analysis`, {

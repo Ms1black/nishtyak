@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, toRaw, watch } from 'vue'
 import {
   createDefaultDecisions,
+  isPackageBlocked,
   projectApi,
   useProjectStore,
   type AnalysisDecisions,
@@ -14,10 +15,11 @@ import {
   type RunSpec,
   type TargetPlatform,
 } from '@/entities/project'
-import { ApiError, sessionGeneration } from '@/shared/api'
+import { ApiError, integrationSession, sessionGeneration } from '@/shared/api'
 import { useTeamStore } from '@/entities/team'
 import { debounce } from '@/shared/lib'
 import { mergeDecisionChanges, type ClarificationAnswers } from './clarifications'
+import { clarificationDraftStorage } from './clarificationDraft'
 
 export type WizardStep = 1 | 2 | 3
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
@@ -72,7 +74,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       isLoading.value || isAnalyzing.value || isPreparingEnvironment.value || isAutomating.value,
   )
   const canBuild = computed(() =>
-    canEdit.value && !!plan.value && plan.value.state !== 'blocked' &&
+    canEdit.value && !!plan.value && !isPackageBlocked(plan.value) &&
     automation.value?.phase !== 'needs_input' && !isBusy.value,
   )
   const canIncludeDockerfile = computed(() => {
@@ -150,6 +152,23 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     }
   }
 
+  async function reloadProject() {
+    if (!project.value || isBusy.value) return
+    const requestEpoch = epoch
+    isLoading.value = true
+    error.value = null
+    try {
+      const result = await projectApi.get(project.value.id)
+      if (epoch !== requestEpoch) return
+      projectStore.upsert(result.project)
+      await openProject(result.project)
+    } catch (cause) {
+      if (epoch === requestEpoch) error.value = message(cause, 'analysis.errors.load')
+    } finally {
+      if (epoch === requestEpoch) isLoading.value = false
+    }
+  }
+
   function scheduleResolutionPoll() {
     clearTimeout(resolutionTimer)
     if (isPreparingEnvironment.value || isAutomating.value) {
@@ -179,7 +198,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
 
   async function continueAutomaticBuild() {
     if (!autoBuildRequested || !plan.value) return
-    if (plan.value.state === 'blocked') return
+    if (isPackageBlocked(plan.value)) return
     if (automation.value?.phase === 'needs_input') return
     if (!automation.value && plan.value.automaticResolution?.status === 'needs_input') return
     if (isBusy.value || error.value) return
@@ -271,6 +290,10 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       })
       if (epoch !== requestEpoch) return
       submittedQuestionnaire = questionnaireId
+      const userId = integrationSession.value?.user.id
+      if (userId) clarificationDraftStorage.remove({
+        userId, projectId, analysisId: snapshot.analysisId, questionnaireId,
+      })
       decisions.value = doc.decisions ?? snapshot
       revision.value = doc.revision
       editVersion += 1
@@ -360,7 +383,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
         !(await sync())
       ) return
       if (epoch !== requestEpoch) return
-      if (!plan.value || plan.value.state === 'blocked' || plan.value.automation?.phase === 'needs_input') return
+      if (!plan.value || isPackageBlocked(plan.value) || plan.value.automation?.phase === 'needs_input') return
       if (isPreparingEnvironment.value || isAutomating.value) {
         autoBuildRequested = true
         return
@@ -405,6 +428,28 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       if (epoch === requestEpoch) error.value = message(cause, 'analysis.errors.load')
     } finally {
       if (epoch === requestEpoch) isLoading.value = false
+    }
+  }
+
+  async function replaceSource(file: File) {
+    if (!canEdit.value || !project.value || isBusy.value) return
+    const requestEpoch = epoch
+    isRefreshing.value = true
+    error.value = null
+    scheduleSync.cancel()
+    try {
+      if (syncing?.epoch === epoch) await syncing.promise
+      if (epoch !== requestEpoch) return
+      if (automation.value?.phase !== 'needs_input' && savedVersion !== editVersion && !(await sync())) return
+      if (epoch !== requestEpoch) return
+      const updated = await projectApi.replaceSource(project.value!.id, file, revision.value)
+      if (epoch !== requestEpoch) return
+      projectStore.upsert(updated)
+      await openProject(updated, { autoBuild: true })
+    } catch (cause) {
+      if (epoch === requestEpoch) error.value = message(cause, 'upload.replace.error')
+    } finally {
+      if (epoch === requestEpoch) isRefreshing.value = false
     }
   }
 
@@ -499,6 +544,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     canIncludeDockerfile,
     openProject,
     loadAnalysis,
+    reloadProject,
     update,
     answerQuestions,
     reloadDecisions,
@@ -511,6 +557,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     setRunSpec,
     build,
     reanalyze,
+    replaceSource,
     resolve,
     backToAnalysis,
     reset,

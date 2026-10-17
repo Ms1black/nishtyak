@@ -25,13 +25,14 @@ class Settings:
     max_options_bytes: int = 64 * 1024
     json_request_bytes: int = 256 * 1024
     max_http_requests: int = 8
-    ttl_seconds: int = 3600
+    ttl_seconds: int = 0
     operation_lease_seconds: int = 180
     automatic_review: bool = False
     automatic_resolution: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_dir", Path(self.data_dir).absolute())
+        object.__setattr__(self, "ttl_seconds", 0)
         if self.runner not in {"docker", "subprocess"}:
             raise ValueError("Runner must be docker or subprocess")
         if self.api_token and not re.fullmatch(r"[!-~]{32,512}", self.api_token):
@@ -43,7 +44,7 @@ class Settings:
                 if type(value) is not bool:
                     raise ValueError("Automatic review must be a boolean")
                 continue
-            if name in {"data_dir", "api_token", "runner", "analyzer_image"}:
+            if name in {"data_dir", "api_token", "runner", "analyzer_image", "ttl_seconds"}:
                 continue
             if type(value) is not int or value <= 0:
                 raise ValueError("Service limits must be positive integers")

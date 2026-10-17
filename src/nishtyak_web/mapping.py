@@ -149,6 +149,8 @@ def automation_to_web(value: dict | None) -> dict | None:
             "message": question.get("message"),
             "candidateIds": question.get("candidate_ids", []),
             "declarationId": question.get("declaration_id"),
+            "code": question.get("code"),
+            "filePath": question.get("file_path"),
         }
         for question in questions
     ]

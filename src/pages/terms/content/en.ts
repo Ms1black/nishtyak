@@ -2,7 +2,7 @@ import type { TermsContent } from './types'
 
 export const termsEn: TermsContent = {
   title: 'Terms of use',
-  updated: 'Version of October 16, 2026',
+  updated: 'Version of October 17, 2026',
   tocLabel: 'Contents',
   intro:
     'nishtyak is a service that prepares Python projects to be run again by someone else: it analyzes uploaded code, helps you clarify dependencies and builds an archive with a README and requirements.txt. The service was developed as part of the MISIS x BMSTU x Nishtyak project. By using nishtyak you agree to the terms below.',
@@ -12,7 +12,7 @@ export const termsEn: TermsContent = {
       title: '1. What the service does',
       paragraphs: [
         'nishtyak performs static analysis: it reads source files, imports and dependency manifests. Uploaded code, install commands and build scripts are never executed by the service.',
-        'The result is an archive to hand over to a colleague. The “Ready to verify” status means you have answered all analysis questions; it does not confirm that the project actually runs and produces the expected result. Only running it by the README can confirm that.',
+        'The result is an archive to hand over to a colleague. Package readiness does not confirm successful execution or the expected result. Unknown details remain in README. A person checks installation and execution in a separate environment and can record the result in the service.',
       ],
     },
     {
@@ -23,7 +23,7 @@ export const termsEn: TermsContent = {
         'Whoever creates a team becomes its owner. The owner and admins manage members, roles and invite links.',
         'Anyone with a valid invite link can join the team. Do not publish links publicly and delete them when they are no longer needed.',
         'Team members see all current and future team projects.',
-        'Deleting a team is irreversible: access to its projects and archives is revoked, and invite links stop working. Stored files are deleted when their retention period ends.',
+        'Deleting a team is irreversible: access to its projects and archives is revoked, and invite links stop working.',
       ],
     },
     {
@@ -49,7 +49,7 @@ export const termsEn: TermsContent = {
       id: 'storage',
       title: '5. Storage and deletion',
       paragraphs: [
-        'Uploaded archives, analysis results and saved answers are kept for a limited time set by the service operator and are then deleted automatically. Deleted data cannot be restored.',
+        'Uploaded projects, analysis results, saved answers and archives are not automatically deleted based on age. A project can be explicitly deleted; restoring deleted projects is not supported.',
         'Do not use nishtyak as the only place your project is stored — keep a copy yourself or in version control.',
       ],
     },
@@ -58,7 +58,7 @@ export const termsEn: TermsContent = {
       title: '6. Automatic project description',
       paragraphs: [
         'If the operator enables automatic descriptions, the service sends DeepSeek filtered source excerpts and static analysis results after upload. Files with detected secrets are excluded from the transmitted context.',
-        'The description is automatically included in README and can be edited before building. Model hypotheses do not confirm library versions, data availability or successful execution. If the model is unavailable, the service prepares a package from static analysis.',
+        'The description is automatically included in README. It can be edited and the archive rebuilt. Model hypotheses do not confirm library versions, data availability or successful execution. If the model is unavailable, the service prepares a package from static analysis.',
       ],
     },
     {

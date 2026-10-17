@@ -62,6 +62,8 @@ class ReleaseBuilder:
             "public/examples/manifest.json",
             "public/examples/scientific-measurements.zip",
             "public/examples/local-calibration.zip",
+            "public/examples/scientific-measurements-with-data.zip",
+            "public/examples/local-calibration-with-data.zip",
         }
     )
     EXCLUDED_PARTS = frozenset(

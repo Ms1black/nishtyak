@@ -8,6 +8,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 
 from .launches import LaunchCandidate, LaunchDetector
 from .layout import ProjectLauncher
+from .messages import RussianFindingFormatter
 from .models import Finding, GeneratedFile, GeneratedFiles, PackagePlan, RunSpec
 from .security import SecretScanner
 
@@ -20,7 +21,7 @@ class DocumentRenderer:
             raise ValueError("Resolve blocking findings before generating package files")
         scanner = SecretScanner()
         files = (
-            GeneratedFile("README.md", scanner.redact(self._readme(plan)).encode("utf-8")),
+            GeneratedFile("README.md", self.readme(plan).encode("utf-8")),
             GeneratedFile("requirements.txt", self._requirements(plan).encode("utf-8")),
             GeneratedFile(
                 "analysis-report.json",
@@ -42,111 +43,135 @@ class DocumentRenderer:
     @staticmethod
     def _requirements(plan: PackagePlan) -> str:
         lines = [
-            "# Generated from static analysis and author decisions.",
-            f"# Package state: {plan.state}. Installation and execution have not been verified.",
-            "# An unpinned dependency does not identify its tested version.",
+            "# Подготовлено по статическому анализу и сведениям автора.",
+            "# Установка и запуск требуют проверки в отдельной среде.",
+            "# Незафиксированная версия не восстанавливает исходную среду автора.",
             *plan.requirements,
         ]
         return "\n".join(lines) + "\n"
 
-    def _readme(self, plan: PackagePlan) -> str:
+    def readme(self, plan: PackagePlan, *, target: dict | None = None, locked: bool = False) -> str:
+        target = target or (plan.automatic_resolution or {}).get("target", {})
+        python_version = (
+            target.get("python_version")
+            or plan.python_version
+            or plan.report.options.python_version
+        )
+        platform = target.get("platform")
+        state = (plan.automation or {}).get("phase", plan.state)
+        state_label = "Черновик с ограничениями" if state == "draft" else "Пакет для проверки"
         lines = [
-            "# Project reproduction guide",
+            "# Как повторить эксперимент",
             "",
-            f"Package state: **{plan.state}**.",
+            f"**{state_label}.**",
             "",
-            "This guide records static analysis and any supplied author decisions. "
-            "The uploaded code was not executed. Successful reproduction has not been verified.",
+            "Инструкция подготовлена по статическому анализу и сведениям автора. "
+            "Код на сервере не выполнялся; результат нужно проверить в чистой среде.",
             "",
-            "## Experiment",
+            "## Что делает проект",
             "",
-            plan.description or "The author has not described the experiment.",
+            plan.description or "Назначение эксперимента не описано автором.",
         ]
         if plan.description_origin == "automatic":
             lines.extend(
                 [
                     "",
-                    "The project description was generated automatically from filtered source "
-                    "excerpts. It describes the code; it is not an author confirmation or "
-                    "an execution result.",
+                    "Описание составлено автоматически по отфильтрованным "
+                    "фрагментам исходников; это не подтверждение автора или "
+                    "результата запуска.",
                 ]
             )
-        lines.extend(["", "## Python", ""])
+        lines.extend(["", "## Целевая среда", ""])
         if plan.python_version:
             if plan.python_version_origin == "inferred":
                 lines.append(
-                    f"Automatically selected target Python: `{plan.python_version}`. "
-                    "This is a target for the new dependency set; the author's tested "
-                    "interpreter is unknown."
+                    f"Предложенная версия Python: `{plan.python_version}`. "
+                    "Это целевой профиль для нового набора зависимостей; исходная "
+                    "версия Python автора неизвестна."
                 )
             elif plan.decisions is not None and plan.decisions.python_version is None:
                 lines.append(
-                    f"Observed author-environment Python version: `{plan.python_version}`."
+                    f"Python из добровольного снимка среды автора: `{plan.python_version}`."
                 )
             else:
-                lines.append(f"Author-selected Python version: `{plan.python_version}`.")
+                lines.append(f"Python, указанный автором: `{plan.python_version}`.")
         else:
-            lines.append("The author has not supplied a tested Python version.")
+            lines.append("Проверенная версия Python автора неизвестна.")
         if plan.report.python_requires:
-            lines.append(f"Declared Python constraint: `{plan.report.python_requires}`.")
+            lines.append(
+                f"Ограничение Python в метаданных проекта: `{plan.report.python_requires}`."
+            )
         lines.extend(
             [
-                f"Imports were classified for Python `{plan.report.options.python_version}`.",
+                f"Импорты разобраны для Python `{plan.report.options.python_version}`.",
                 "",
-                "## Installation",
+                "## Установка",
                 "",
-                "From the extracted package root, create an environment and install requirements. "
-                "Commands below use a POSIX shell; on Windows activate `.venv\\Scripts\\activate`.",
+                "Откройте терминал в корне распакованного архива. "
+                "Используйте указанный Python; команда python в вашей системе "
+                "может означать другую версию.",
                 "",
-                "```sh",
-                "python -m venv .venv",
-                ". .venv/bin/activate",
-                "python -m pip install -r requirements.txt",
-                "```",
+                *self._installation_commands(python_version, platform, locked),
                 "",
-                "`requirements.txt` retains declared constraints and any supplied decisions. "
-                "Unpinned packages are installable suggestions; their original tested versions "
-                "cannot be recovered from imports alone.",
+                "В `requirements.txt` сохранены известные ограничения. "
+                "Незафиксированные версии — черновик; исходные проверенные версии "
+                "невозможно восстановить только по импортам.",
                 "",
-                "## Launch",
+                "## Запуск",
                 "",
             ]
         )
+        if locked:
+            environment = (
+                f"Цель: Python {python_version}, {platform}. "
+                "Точные версии и хеши записаны в requirements.lock.txt. "
+                "Этот совместимый набор рассчитан на указанную платформу; "
+                "он не восстанавливает историческую среду автора."
+            )
+            position = lines.index("## Установка")
+            lines[position:position] = [environment, ""]
         if plan.run_spec:
             run = plan.run_spec
             if plan.run_spec_origin == "automatic":
                 lines.extend(
                     [
-                        "The assistant selected the following command from existing static "
-                        "launch candidates after reading project evidence. It has not been "
-                        "confirmed by the author or executed; arguments may still be required.",
+                        "Команда выбрана моделью среди статически найденных "
+                        "вариантов запуска по исходникам. Она не была "
+                        "подтверждена автором или выполнена; могут потребоваться аргументы.",
                         "",
                     ]
                 )
             elif plan.run_spec_origin == "inferred":
                 lines.extend(
                     [
-                        "The following command was inferred from project structure and static "
-                        "facts. It has not been confirmed by the author or executed; "
-                        "arguments may still be required.",
+                        "Команда определена по структуре проекта и статическим "
+                        "фактам. Она не подтверждена автором и не выполнялась; "
+                        "могут потребоваться аргументы.",
                         "",
                     ]
                 )
             elif plan.run_spec_origin == "author":
-                lines.extend(["The author supplied this launch configuration.", ""])
+                lines.extend(["Конфигурация запуска указана автором.", ""])
             lines.extend(
                 [
-                    "From the extracted package root with the environment activated:",
+                    "Из корня распакованного архива с активированной .venv:",
                     "",
-                    "```sh",
+                    "```powershell" if platform and platform.startswith("windows") else "```sh",
                 ]
             )
             if ProjectLauncher.required(plan):
                 lines.append("python run_project.py")
             else:
-                lines.append("cd project")
+                windows = bool(platform and platform.startswith("windows"))
+                lines.append("Set-Location -LiteralPath 'project'" if windows else "cd project")
                 if run.working_directory != ".":
-                    lines.append("cd " + shlex.quote(run.working_directory))
+                    lines.append(
+                        "Set-Location -LiteralPath '"
+                        + run.working_directory.replace("'", "''")
+                        + "'"
+                        if windows
+                        else "cd " + shlex.quote(run.working_directory)
+                    )
                 command = ["python"]
                 if run.kind == "module":
                     command.append("-m")
@@ -154,14 +179,19 @@ class DocumentRenderer:
                 if run.kind == "script" and target.startswith("-"):
                     target = "./" + target
                 command.extend([target, *run.args])
-                lines.append(shlex.join(command))
+                lines.append(
+                    "python "
+                    + " ".join("'" + value.replace("'", "''") + "'" for value in command[1:])
+                    if windows
+                    else shlex.join(command)
+                )
             lines.extend(["```", ""])
             if ProjectLauncher.required(plan):
                 lines.extend(
                     [
-                        "`run_project.py` applies the recorded working directory, source roots, "
-                        "entry point and arguments. It uses the extracted files directly; "
-                        "no project build hooks are needed.",
+                        "`run_project.py` применяет выбранные папку, корни импортов, "
+                        "точку входа и аргументы. Исходники используются напрямую, "
+                        "без сборочных hooks проекта.",
                         "",
                     ]
                 )
@@ -169,97 +199,155 @@ class DocumentRenderer:
             assessment = LaunchDetector().detect(plan.report, plan.files)
             lines.extend(
                 [
-                    "A unique launch command could not be established statically. "
-                    "The dependency and source package remains available for review.",
+                    "Однозначная команда запуска не определена. "
+                    "Ниже перечислены варианты, требующие выбора автора.",
                     "",
                 ]
             )
             for candidate in assessment.candidates[:10]:
                 lines.extend(self._candidate_commands(plan, candidate))
             if len(assessment.candidates) > 10:
-                lines.extend(["Additional source files may have their own launch scenarios.", ""])
+                lines.extend(
+                    ["У других файлов проекта могут быть собственные сценарии запуска.", ""]
+                )
 
         lines.extend(
             [
-                "## Input data",
+                "## Входные данные",
                 "",
-                plan.input_description or "The author has not described the input data.",
+                plan.input_description or self._input_description(plan),
                 "",
-                "## Expected result",
+                "## Ожидаемый результат",
                 "",
-                plan.expected_output or "The author has not supplied an expected result.",
+                plan.expected_output
+                or "Эталонный результат не предоставлен. Сравните вывод с запуском у автора.",
                 "",
-                "## Review before reproduction",
+                "## Оставшиеся ограничения",
                 "",
             ]
         )
         review_findings = self._review_findings(plan)
+        review_findings = tuple(
+            item
+            for item in review_findings
+            if item.code
+            not in {
+                "INPUT_PATH_UNVERIFIED",
+                "EXTERNAL_INPUT_REFERENCE",
+                "MISSING_DATA",
+                "MISSING_INPUT_FILE",
+                "RUN_INFERRED",
+                "RUN_AUTOMATIC",
+                "PYTHON_VERSION_UNKNOWN",
+            }
+        )
         if review_findings:
             for finding in review_findings:
-                location = ""
-                if finding.path:
-                    location = f" ({finding.path}"
-                    if finding.line is not None:
-                        location += f":{finding.line}"
-                    location += ")"
-                message = " ".join(finding.message.splitlines())
-                lines.append(f"- [{finding.code}]{location} {message}")
+                message = RussianFindingFormatter().describe(finding, plan)
+                lines.append(f"- [{finding.code}] {message}")
         else:
             lines.append(
-                "No open static-analysis findings. A clean-environment run is still required."
+                "Нерешённых замечаний статического анализа нет. Выполните проверку в чистой среде."
             )
         lines.extend(
             [
                 "",
-                "## Package contents",
+                "## Состав пакета",
                 "",
-                "Original files and relative paths are retained under `project/`. "
-                "An existing project README remains there. "
-                "`analysis-report.json` records the analyzed facts and this package plan.",
+                "Исходники и относительные пути сохранены в `project/`. "
+                "Исходный README, если он был, остаётся там. "
+                "Полные факты анализа и происхождение решений записаны в `analysis-report.json`.",
                 "",
-                *self._file_tree(plan),
+                *self._file_tree(plan, locked=locked),
             ]
         )
         if plan.report.layout:
             layout = plan.report.layout
             lines.extend(
                 [
-                    f"Selected project root inside `project/`: `{layout.root}`.",
-                    "Import roots inside `project/`: "
+                    f"Корень проекта внутри `project/`: `{layout.root}`.",
+                    "Корни импортов внутри `project/`: "
                     + ", ".join(f"`{root}`" for root in layout.source_roots)
                     + ".",
                     "",
                 ]
             )
         if plan.excluded_files:
-            lines.extend(["Excluded files:", ""])
+            lines.extend(["Исключённые файлы:", ""])
             lines.extend(f"- {path}" for path in plan.excluded_files)
             lines.append("")
         lines.extend(
             [
-                "## Verification",
+                "## Проверка коллегой",
                 "",
-                "On a clean machine or environment, follow this guide, "
-                "provide the stated input data, "
-                "and compare the result with the author's expected result. "
-                "Report the actual Python and package versions used.",
+                "Создайте новое виртуальное окружение и выполните команды выше. "
+                "Подготовьте перечисленные входные данные, "
+                "сравните вывод с ожидаемым результатом автора. "
+                "Зафиксируйте в сервисе или рядом с архивом версии Python и пакетов, "
+                "ОС, команду, вывод и итог проверки.",
                 "",
             ]
         )
-        return "\n".join(lines)
+        return SecretScanner().redact("\n".join(lines))
+
+    @staticmethod
+    def _installation_commands(
+        python_version: str, platform: str | None, locked: bool
+    ) -> list[str]:
+        version = ".".join(python_version.split(".")[:2])
+        install = "python -m pip install " + (
+            "--only-binary=:all: --require-hashes -r requirements.lock.txt"
+            if locked
+            else "-r requirements.txt"
+        )
+        if platform and platform.startswith("windows"):
+            return [
+                "Windows, PowerShell:",
+                "",
+                "```powershell",
+                f"py -{version} --version",
+                f"py -{version} -m venv .venv",
+                ".\\.venv\\Scripts\\Activate.ps1",
+                install,
+                "```",
+            ]
+        commands = [
+            (
+                "Linux:"
+                if platform and platform.startswith("linux")
+                else "macOS:"
+                if platform and platform.startswith("macos")
+                else "Linux / macOS:"
+            ),
+            "",
+            "```sh",
+            f"python{version} --version",
+            f"python{version} -m venv .venv",
+            ". .venv/bin/activate",
+            install,
+            "```",
+        ]
+        if platform is None:
+            commands.extend(
+                [
+                    "",
+                    "Альтернатива для Windows, PowerShell:",
+                    "",
+                    "```powershell",
+                    f"py -{version} --version",
+                    f"py -{version} -m venv .venv",
+                    ".\\.venv\\Scripts\\Activate.ps1",
+                    install,
+                    "```",
+                ]
+            )
+        return commands
 
     @staticmethod
     def _review_findings(plan: PackagePlan) -> tuple[Finding, ...]:
         """Consolidate human-facing limits without discarding raw diagnostic evidence."""
         generic_data = {"DATA_DEPENDENCIES_UNVERIFIED", "DATA_NOT_CONFIRMED"}
-        detailed_data = {
-            "INPUT_PATH_UNVERIFIED",
-            "EXTERNAL_INPUT_REFERENCE",
-            "MISSING_DATA",
-            "MISSING_INPUT_FILE",
-        }
         versions = {"VERSION_UNKNOWN", "VERSION_NOT_PINNED"}
-        has_data_details = any(item.code in detailed_data for item in plan.findings)
         result: list[Finding] = []
         seen: set[object] = set()
         for finding in plan.findings:
@@ -267,12 +355,7 @@ class DocumentRenderer:
                 if finding.code in {"README_MISSING", "DATA_FILES_SUMMARY"}:
                     continue
                 if finding.code in generic_data:
-                    if has_data_details:
-                        continue
-                    finding = Finding(
-                        "DATA_UNVERIFIED",
-                        "Completeness of required input data and configuration is not confirmed.",
-                    )
+                    continue
                 elif finding.code in versions:
                     names = []
                     for raw in plan.requirements:
@@ -299,22 +382,54 @@ class DocumentRenderer:
         return tuple(result)
 
     @staticmethod
-    def _file_tree(plan: PackagePlan) -> list[str]:
+    def _file_tree(plan: PackagePlan, *, locked: bool = False) -> list[str]:
         lines = ["```text", "README.md", "requirements.txt", "analysis-report.json"]
+        if locked:
+            lines.extend(["requirements.lock.txt", "dependency-lock.json"])
         if ProjectLauncher.required(plan):
             lines.append("run_project.py")
         lines.append("project/")
         for file in plan.files[:80]:
             lines.append("  " + file.path.replace("`", "\\`"))
         if len(plan.files) > 80:
-            lines.append(f"  ... {len(plan.files) - 80} additional files")
+            lines.append(f"  ... {len(plan.files) - 80} других файлов")
         lines.extend(["```", ""])
         return lines
 
     @staticmethod
+    def _input_description(plan: PackagePlan) -> str:
+        findings = [
+            item
+            for item in plan.findings
+            if item.code
+            in {
+                "INPUT_PATH_UNVERIFIED",
+                "EXTERNAL_INPUT_REFERENCE",
+                "MISSING_DATA",
+                "MISSING_INPUT_FILE",
+            }
+        ]
+        if findings:
+            formatter = RussianFindingFormatter()
+            return "Перед запуском подготовьте данные:\n\n" + "\n".join(
+                "- " + formatter.describe(item, plan) for item in findings
+            )
+        data = [
+            file.path
+            for file in plan.files
+            if file.path.lower().endswith((".csv", ".tsv", ".parquet", ".xlsx", ".npy", ".npz"))
+        ]
+        if data:
+            return "В архив включены возможные файлы данных: " + ", ".join(data[:20]) + "."
+        return (
+            "Отдельные входные файлы не выявлены. "
+            "Внешние сервисы и вычисляемые пути не проверялись."
+        )
+
+    @staticmethod
     def _candidate_commands(plan: PackagePlan, candidate: LaunchCandidate) -> list[str]:
         run = candidate.run_spec
-        lines = [f"Candidate: {candidate.reason}", "", "```sh", "cd project"]
+        lines = [f"Возможный запуск: {candidate.run_spec.target}", "", "```sh", "cd project"]
         if run.working_directory != ".":
             lines.append("cd " + shlex.quote(run.working_directory))
         roots = (

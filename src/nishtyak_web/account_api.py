@@ -39,7 +39,7 @@ class InviteBody(AccountBody):
     token: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{43}$")]
 
 
-def account_router(accounts: AccountStore, settings: WebSettings) -> APIRouter:
+def account_router(accounts: AccountStore, settings: WebSettings, browser=None) -> APIRouter:
     router = APIRouter(prefix="/api")
 
     def signed_in(user: dict, token: str, status: int = 200):
@@ -114,7 +114,15 @@ def account_router(accounts: AccountStore, settings: WebSettings) -> APIRouter:
 
     @router.delete("/teams/{team_id}", status_code=204)
     def delete_team(request: Request, team_id: AccountId):
-        accounts.delete_team(request.state.identity.user, team_id)
+        if browser is None:
+            accounts.delete_team(request.state.identity.user, team_id)
+        else:
+            with browser.workspace_mutation(request.state.identity):
+                accounts.delete_team(
+                    request.state.identity.user,
+                    team_id,
+                    lambda: browser.delete_workspace(request.state.identity),
+                )
         return Response(status_code=204)
 
     @router.get("/teams/{team_id}/members")

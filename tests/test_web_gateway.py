@@ -197,8 +197,8 @@ def test_single_python_upload_and_draft_export(gateway):
     with zipfile.ZipFile(io.BytesIO(archive.content)) as package:
         assert b"numpy" in package.read("requirements.txt").splitlines()
         readme = package.read("README.md").decode()
-        assert "ready_to_verify" in readme
-        assert "Successful reproduction has not been verified" in readme
+        assert "Черновик" in readme
+        assert "Код на сервере не выполнялся" in readme
 
 
 @pytest.mark.parametrize(
@@ -258,7 +258,7 @@ def test_raw_upload_examples_export_without_manual_answers(
         assert report["decisions"]["run_spec"] is None
         assert report["decisions"]["python_version"] is None
         assert report["decisions"]["data_confirmed"] is False
-        assert "not been verified" in package.read("README.md").decode()
+        assert "не выполнял" in package.read("README.md").decode()
     document = client.get(prefix + "/decisions").json()
     assert document["revision"] == 0
     assert document["decisions"] is None
@@ -270,12 +270,16 @@ def test_dependency_findings_keep_import_module_in_analysis_and_plan(gateway):
     analysis = analyzed(client, project["id"])
     unknown = next(f for f in analysis["findings"] if f["code"] == "DEPENDENCY_UNRESOLVED")
     assert unknown["module"] == "unmapped_scientific_library"
-    version = next(f for f in analysis["findings"] if f["code"] == "VERSION_UNKNOWN")
+    version = next(
+        f for f in analysis["findings"] if f["code"] == "VERSION_UNKNOWN" and f["module"] == "numpy"
+    )
     assert version["module"] == "numpy"
     response = client.post(f"/api/projects/{project['id']}/plan")
     assert response.status_code == 200, response.text
     unresolved = next(
-        f for f in response.json()["findings"] if f["code"] == "DEPENDENCY_UNRESOLVED"
+        f
+        for f in response.json()["findings"]
+        if f["code"] == "DEPENDENCY_UNRESOLVED" and f["module"] == "unmapped_scientific_library"
     )
     assert unresolved["module"] == "unmapped_scientific_library"
     assert response.json()["state"] == "draft"
@@ -443,23 +447,18 @@ def test_unknown_mutation_ids_do_not_accumulate_locks(gateway):
     assert service.store._locks == {}
 
 
-def test_ttl_hides_and_removes_source_and_artifact(gateway):
+def test_project_age_does_not_remove_source_or_artifact(gateway):
     client, service, _ = gateway
     project = upload(client)
     analyzed(client, project["id"])
     assert client.post(f"/api/projects/{project['id']}/archive").status_code == 200
-    directory = service.store.root / project["id"]
-    assert (directory / "source.zip").is_file()
-    assert (directory / "bundle.zip").is_file()
     with service.store.connection() as db:
         db.execute("UPDATE projects SET expires_at=? WHERE id=?", (time.time() - 1, project["id"]))
-    # An active operation delays physical cleanup, but expired projects are already inaccessible.
-    with service.store.locked(project["id"]):
-        assert client.get("/api/teams/local/projects").json() == []
-        assert directory.exists()
-        assert client.get(f"/api/projects/{project['id']}/analysis").status_code == 404
     service.store.cleanup()
-    assert not directory.exists()
+    assert client.get(f"/api/projects/{project['id']}").status_code == 200
+    assert client.get(f"/api/projects/{project['id']}/archive").status_code == 200
+    assert client.delete(f"/api/projects/{project['id']}").status_code == 204
+    assert not (service.store.root / project["id"]).exists()
 
 
 def test_extras_round_trip_and_package_plan(gateway):
@@ -539,7 +538,9 @@ def test_preview_checks_retained_source_fingerprint(gateway):
     assert response.json()["code"] == "SNAPSHOT_CHANGED"
 
 
-def test_upload_automatically_prepares_python_and_pins_without_author_answers(gateway, monkeypatch):
+def test_upload_automatically_prepares_python_and_pins_without_author_answers(
+    gateway, monkeypatch, verified_identity_discovery
+):
     import hashlib
 
     from nishtyak_core.locking import DependencyLock, resolution_input_id
@@ -674,3 +675,145 @@ def test_one_clarification_batch_crosses_gateway_and_finishes_once(gateway, monk
         logic.review_pending()
         assert client.post(prefix + "/plan").json()["automation"]["phase"] == "draft"
     assert [call[0] for call in calls] == ["prepare", "prepare", "finalize"]
+
+
+def test_project_lookup_and_readme_preview_use_the_ready_archive(gateway, monkeypatch):
+    client, service, _ = gateway
+    project = upload(client)
+    identifier = project["id"]
+    lookup = client.get(f"/api/projects/{identifier}")
+    assert lookup.status_code == 200 and lookup.json()["teamId"] == "local"
+    assert lookup.json()["project"]["id"] == identifier
+    assert client.get(f"/api/projects/{identifier}/readme").status_code == 409
+    analyzed(client, identifier)
+    built = client.post(f"/api/projects/{identifier}/archive").json()
+    downloaded = client.get(f"/api/projects/{identifier}/archive").content
+    monkeypatch.setattr(service, "build", lambda *args: pytest.fail("README preview rebuilt ZIP"))
+    preview = client.get(f"/api/projects/{identifier}/readme")
+    assert preview.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(downloaded)) as archive:
+        assert preview.json()["content"] == archive.read("README.md").decode()
+    import hashlib
+
+    assert built["archive"]["sha256"] == hashlib.sha256(downloaded).hexdigest()
+
+
+def test_manual_verification_is_revisioned_redacted_and_bound_to_archive(gateway):
+    client, _, _ = gateway
+    project = upload(client)
+    identifier = project["id"]
+    analyzed(client, identifier)
+    archive = client.post(f"/api/projects/{identifier}/archive").json()
+    current = client.get(f"/api/projects/{identifier}/verification").json()
+    assert current["verification"] is None and current["revision"] == 0
+    assert current["archiveTag"] == archive["archive"]["sha256"]
+    body = {
+        "expectedRevision": 0,
+        "analysisId": current["analysisId"],
+        "archiveTag": current["archiveTag"],
+        "status": "passed",
+        "pythonVersion": "3.11.1",
+        "command": "python main.py",
+        "output": "api_key=private-output-secret\n4\n",
+    }
+    saved = client.put(f"/api/projects/{identifier}/verification", json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision"] == 1 and not saved.json()["stale"]
+    assert saved.json()["verification"]["checkedBy"]["id"] == "local"
+    assert "private-output-secret" not in saved.text
+    assert client.put(f"/api/projects/{identifier}/verification", json=body).status_code == 409
+    changed = {**body, "expectedRevision": 1, "archiveTag": "0" * 64}
+    assert client.put(f"/api/projects/{identifier}/verification", json=changed).status_code == 409
+    assert (
+        client.post(f"/api/projects/{identifier}/analysis", json={"options": {}}).status_code == 202
+    )
+    stale = client.get(f"/api/projects/{identifier}/verification").json()
+    assert stale["stale"] and stale["verification"]["status"] == "passed"
+    assert stale["archiveTag"] is None
+
+
+def test_source_replacement_keeps_identity_and_compatible_author_choices(gateway):
+    client, _, _ = gateway
+    project = upload(client, {"main.py": "print(4)\n", "obsolete.txt": "old data"})
+    identifier = project["id"]
+    analyzed(client, identifier)
+    decisions = client.get(f"/api/projects/{identifier}/decisions").json()
+    analysis = client.get(f"/api/projects/{identifier}/analysis").json()
+    body = {
+        "analysisId": analysis["analysisId"],
+        "description": "Author description",
+        "runSpec": {"kind": "script", "target": "main.py", "workingDirectory": ".", "args": []},
+        "excludedFiles": ["obsolete.txt"],
+    }
+    saved = client.put(
+        f"/api/projects/{identifier}/decisions",
+        json={
+            "expectedRevision": decisions["revision"],
+            "decisions": body,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    content = source_zip({"main.py": "import csv\nprint(5)\n", "measurements.csv": "value\n5\n"})
+    replaced = client.post(
+        f"/api/projects/{identifier}/source",
+        files={"file": ("new.zip", content)},
+        data={"expectedRevision": str(saved.json()["revision"])},
+    )
+    assert replaced.status_code == 202, replaced.text
+    assert replaced.json()["id"] == identifier
+    assert replaced.json()["archive"]["status"] == "unavailable"
+    analyzed(client, identifier)
+    carried = client.get(f"/api/projects/{identifier}/decisions").json()
+    assert carried["revision"] == saved.json()["revision"] + 1
+    assert carried["decisions"]["description"] == "Author description"
+    assert carried["decisions"]["runSpec"]["target"] == "main.py"
+    assert carried["decisions"]["excludedFiles"] == []
+    assert (
+        client.get(f"/api/projects/{identifier}/files", params={"path": "measurements.csv"}).json()[
+            "content"
+        ]
+        == "value\n5\n"
+    )
+    stale = client.post(
+        f"/api/projects/{identifier}/source",
+        files={"file": ("new.zip", content)},
+        data={"expectedRevision": "0"},
+    )
+    assert stale.status_code == 409
+    assert client.get(f"/api/projects/{identifier}").json()["teamId"] == "local"
+
+
+def test_gateway_recovers_replacement_committed_before_transport_failure(gateway):
+    client, service, _ = gateway
+    project = upload(client)
+    identifier = project["id"]
+    analyzed(client, identifier)
+    source = source_zip({"main.py": "print(8)\n", "input.csv": "value\n8\n"})
+    identity = WorkspaceIdentity("local", "local", "local")
+    core = service.client_factory(identity.scope)
+    replacement = core.replace_source(identifier, source, 0)
+    assert replacement["job_id"] != service.store.get(identity.scope, identifier)["job_id"]
+    lookup = client.get(f"/api/projects/{identifier}")
+    assert lookup.status_code == 200, lookup.text
+    assert lookup.json()["project"]["id"] == identifier
+    analyzed(client, identifier)
+    preview = client.get(f"/api/projects/{identifier}/files", params={"path": "input.csv"})
+    assert preview.status_code == 200 and preview.json()["content"] == "value\n8\n"
+
+
+def test_source_replacement_accepts_bounded_zip_larger_than_json_request_limit(gateway):
+    import random
+
+    client, _, _ = gateway
+    project = upload(client)
+    analyzed(client, project["id"])
+    content = source_zip(
+        {"main.py": "print(8)\n", "input.bin": random.Random(42).randbytes(300000)}
+    )
+    assert len(content) > 262144
+    result = client.post(
+        f"/api/projects/{project['id']}/source",
+        files={"file": ("new.zip", content)},
+        data={"expectedRevision": "0"},
+    )
+    assert result.status_code == 202, result.text

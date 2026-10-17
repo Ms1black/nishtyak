@@ -12,9 +12,13 @@ vi.mock('@/shared/i18n', () => ({ t: (key: string) => key, intlLocale: { value: 
 vi.mock('@/features/archive-actions', () => ({
   useArchiveActions: () => ({ error: { value: null }, isPending: () => false }),
 }))
+vi.mock('./ArchiveReview.vue', () => ({ default: () => null }))
 vi.mock('@/entities/project', async () => {
   const { h } = await import('vue')
-  return { ArchiveTree: () => h('div'), FindingList: () => h('div'), getArchiveFileName: () => 'experiment.zip' }
+  return {
+    ArchiveTree: () => h('div'), FindingList: () => h('div'), getArchiveFileName: () => 'experiment.zip',
+    isPackageBlocked: (await import('@/entities/project/lib/packageState')).isPackageBlocked,
+  }
 })
 
 async function renderHtml(plan: PackagePlan | null, lockedPackages?: string[], extra: Record<string, unknown> = {}) {
@@ -91,5 +95,22 @@ describe('ready archive requirement count', () => {
     })
     expect(html).toMatch(/>ready.title<\/h2>/)
     expect(html).not.toContain('ready.titleDraft')
+  })
+
+  it('does not call a blocked project a ready draft or offer its stale archive', async () => {
+    const html = await renderHtml({ state: 'blocked', requirements: [], findings: [], automation: { phase: 'draft' } })
+    expect(html).toContain('analysis.plan.blocked.title')
+    expect(html).not.toContain('ready.titleDraft')
+    expect(html).not.toContain('ready.download')
+  })
+
+  it('shows the actual target OS alongside Python', async () => {
+    const html = await renderHtml({
+      state: 'draft', requirements: [], findings: [],
+      automaticResolution: { status: 'ready', target: { pythonVersion: '3.12', platform: 'macos-arm64' } },
+    })
+    expect(html).toContain('ready.summary.platform')
+    expect(html).toContain('macos-arm64')
+    expect(html).toContain('3.12')
   })
 })

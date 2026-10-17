@@ -327,7 +327,7 @@ class AccountStore:
         with self.connection(write=True) as db:
             return self._team(db, user_id, self._create_team(db, user_id, name))
 
-    def delete_team(self, user_id: str, team_id: str) -> None:
+    def delete_team(self, user_id: str, team_id: str, before_delete=None) -> None:
         with self.connection(write=True) as db:
             team = self._team(db, user_id, team_id)
             if team["myRole"] != "owner":
@@ -336,6 +336,8 @@ class AccountStore:
                 raise LogicClientError(
                     409, "PERSONAL_WORKSPACE_REQUIRED", "The personal workspace cannot be deleted"
                 )
+            if before_delete is not None:
+                before_delete()
             db.execute("DELETE FROM teams WHERE id=?", (team_id,))
 
     def members(self, user_id: str, team_id: str) -> list[dict]:

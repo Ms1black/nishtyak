@@ -7,6 +7,7 @@ import { useUploadWizardStore } from './uploadWizardStore'
 const { api, projects, team } = vi.hoisted(() => ({
   team: { canEditProjects: true },
   api: {
+    get: vi.fn(),
     getAnalysis: vi.fn(),
     getDecisions: vi.fn(),
     saveDecisions: vi.fn(),
@@ -15,6 +16,7 @@ const { api, projects, team } = vi.hoisted(() => ({
     getLock: vi.fn(),
     buildArchive: vi.fn(),
     reanalyze: vi.fn(),
+    replaceSource: vi.fn(),
     resolve: vi.fn(),
   },
   projects: { upsert: vi.fn(), patch: vi.fn() },
@@ -22,6 +24,7 @@ const { api, projects, team } = vi.hoisted(() => ({
 
 vi.mock('@/entities/project', async () => ({
   createDefaultDecisions: (await import('@/entities/project/lib/decisions')).createDefaultDecisions,
+  isPackageBlocked: (await import('@/entities/project/lib/packageState')).isPackageBlocked,
   projectApi: api,
   useProjectStore: () => projects,
 }))
@@ -96,6 +99,8 @@ describe('upload wizard request coordination', () => {
     team.canEditProjects = true
     setActivePinia(createPinia())
     api.getAnalysis.mockImplementation(async (id: string) => analysis(id))
+    api.get.mockImplementation(async (id: string) => ({ project: project(id), teamId: 'workspace' }))
+    api.replaceSource.mockImplementation(async (id: string) => project(id))
     api.getDecisions.mockResolvedValue({ revision: 0, decisions: null, updatedAt: null })
     api.getLock.mockRejectedValue(new ApiError(404, 'No lock'))
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => plan(decisions))
@@ -648,6 +653,56 @@ describe('upload wizard request coordination', () => {
     await store.openProject(project('blocked'), { autoBuild: true })
     expect(store.canBuild).toBe(false)
     expect(store.step).toBe(2)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('does not build when an explicit server blocked phase accompanies a stale nonblocked plan', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: { phase: 'blocked', stage: 'complete', humanRound: 1 },
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('blocked-phase'), { autoBuild: true })
+    expect(store.canBuild).toBe(false)
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('replaces the full source ZIP with optimistic revision and reads the migrated author choices', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('source'))
+    const file = new File(['zip'], 'corrected.zip', { type: 'application/zip' })
+    const replacement = { ...analysis('source'), analysisId: 'analysis-replacement' }
+    api.getAnalysis.mockResolvedValueOnce(replacement)
+    api.getDecisions.mockResolvedValueOnce({
+      revision: 3, decisions: { ...store.decisions!, analysisId: replacement.analysisId, description: 'Author description' }, updatedAt: null,
+    })
+    await store.replaceSource(file)
+    expect(api.replaceSource).toHaveBeenCalledExactlyOnceWith('source', file, 1)
+    expect(store.project?.id).toBe('source')
+    expect(store.analysis?.analysisId).toBe('analysis-replacement')
+    expect(store.decisions?.description).toBe('Author description')
+    expect(store.step).toBe(3)
+  })
+
+  it('keeps the original source readable after replacement fails', async () => {
+    const store = useUploadWizardStore()
+    await store.openProject(project('source'))
+    api.replaceSource.mockRejectedValueOnce(new ApiError(503, 'Source temporarily unavailable'))
+    await store.replaceSource(new File(['zip'], 'corrected.zip'))
+    expect(store.project?.id).toBe('source')
+    expect(store.analysis?.analysisId).toBe('analysis-source')
+    expect(store.error).toBe('Source temporarily unavailable')
+    expect(store.isRefreshing).toBe(false)
+  })
+
+  it('refreshes current archive metadata before restoring its plan after a verification conflict', async () => {
+    const store = useUploadWizardStore()
+    const archived = { ...project('source'), archive: { status: 'ready' as const, sha256: 'sha-old' } }
+    await store.openProject(archived)
+    api.get.mockResolvedValueOnce({ project: { ...archived, archive: { status: 'ready', sha256: 'sha-new' } }, teamId: 'workspace' })
+    await store.reloadProject()
+    expect(store.project?.archive.sha256).toBe('sha-new')
+    expect(store.plan).not.toBeNull()
+    expect(store.step).toBe(3)
     expect(api.buildArchive).not.toHaveBeenCalled()
   })
 

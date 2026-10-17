@@ -7,14 +7,18 @@ import type {
   FileContent,
   PackagePlan,
   Project,
+  ProjectLookup,
   ProjectAnalysis,
   ServiceCapabilities,
   TargetPlatform,
+  VerificationDocument,
+  VerificationSubmission,
 } from '../model/types'
 
 export interface ProjectApi {
   capabilities(): Promise<ServiceCapabilities>
   list(teamId: string): Promise<Project[]>
+  get(projectId: string): Promise<ProjectLookup>
   upload(teamId: string, file: File): Promise<Project>
   getAnalysis(projectId: string): Promise<ProjectAnalysis>
   getFileContent(projectId: string, path: string): Promise<FileContent>
@@ -31,6 +35,10 @@ export interface ProjectApi {
     options?: { includeDockerfile?: boolean; lockId?: string },
   ): Promise<Project>
   downloadArchive(projectId: string): Promise<Blob>
+  getReadme(projectId: string): Promise<{ content: string }>
+  getVerification(projectId: string): Promise<VerificationDocument>
+  saveVerification(projectId: string, verification: VerificationSubmission): Promise<VerificationDocument>
+  replaceSource(projectId: string, file: File, expectedRevision: number): Promise<Project>
   reanalyze(projectId: string, options: AnalysisOptions, authorEnvironment?: unknown): Promise<Project>
   resolve(
     projectId: string,

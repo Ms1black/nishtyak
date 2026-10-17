@@ -16,7 +16,7 @@ from nishtyak_service.service import LogicService
 
 
 @pytest.fixture
-def workflow(tmp_path, monkeypatch):
+def workflow(tmp_path, monkeypatch, verified_identity_discovery):
     logic = LogicService(Settings(data_dir=tmp_path, automatic_resolution=True))
     calls = []
 
@@ -187,12 +187,16 @@ def test_source_safety_cannot_be_skipped_by_submitting_empty_answers(workflow):
         {"experiment.py": "API_KEY = 'sk-" + "x" * 48 + "'\nprint('ok')\n"},
     )
     logic.review_pending()
-    assert state(logic, record)["phase"] == "needs_input"
+    assert state(logic, record)["phase"] == "blocked"
     assert state(logic, record)["attempt"] == 0
     assert calls == []
-    answer(logic, record, report)
-    logic.review_pending()
-    assert state(logic, record)["phase"] == "draft"
+    assert state(logic, record)["questions"] == []
+    with pytest.raises(ServiceError) as rejected:
+        logic.automation.submission_state(
+            record, logic._prepare(report, UserDecisions(report.analysis_id), record), "old"
+        )
+    assert rejected.value.code == "PLAN_BLOCKED"
+    assert state(logic, record)["phase"] == "blocked"
     with pytest.raises(ServiceError, match="Resolve the blocking findings") as error:
         logic.bundle("alice", record.project_id)
     assert error.value.code == "PLAN_BLOCKED"
@@ -396,3 +400,32 @@ def test_missing_local_module_is_reported_as_draft_after_the_only_human_round(wo
     current = state(logic, record)
     assert current["phase"] == "draft" and current["questions"] == []
     assert any(item.get("code") == "LOCAL_MODULE_MISSING" for item in current["unresolved"])
+
+
+def test_fixing_a_blocker_resumes_the_unused_preparation_budget(workflow):
+    logic, calls = workflow
+    record, report = submit(
+        logic,
+        {
+            "experiment.py": "import unknown_first\nprint(1)\n",
+            "credentials.py": "API_KEY = 'sk-" + "x" * 48 + "'\n",
+        },
+    )
+    logic.review_pending()
+    assert state(logic, record)["phase"] == "blocked"
+    assert state(logic, record)["human_round"] == 0
+    assert calls == []
+    logic.save_decisions(
+        "alice",
+        record.project_id,
+        UserDecisions(
+            report.analysis_id,
+            excluded_files=("credentials.py",),
+        ),
+        0,
+    )
+    logic.review_pending()
+    assert state(logic, record)["phase"] == "needs_input"
+    assert state(logic, record)["human_round"] == 0
+    assert len(calls) == 2
+    assert {q.get("module") for q in state(logic, record)["questions"]} == {"unknown_first"}

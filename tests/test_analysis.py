@@ -33,7 +33,8 @@ def test_imports_resolve_without_loading_any_project_source(tmp_path):
     assert deps["pandas"].package == "pandas"
     assert len(deps["pandas"].evidence_ids) == 2
     assert deps["research_unknown"].category == "unresolved"
-    assert deps["research_unknown"].package is None
+    assert deps["research_unknown"].package == "research_unknown"
+    assert deps["pandas"].category == "unresolved"
     assert len(report.files) == 3
     assert not marker.exists()
     assert {"VERSION_UNKNOWN", "PYTHON_VERSION_UNKNOWN", "DATA_DEPENDENCIES_UNVERIFIED"} <= {
@@ -71,7 +72,8 @@ def test_local_collision_is_explicit_and_does_not_install_shadowed_package():
     )
     assert all(item.category == "local" for item in report.dependencies)
     assert all(item.package is None for item in report.dependencies)
-    assert sum(f.code == "LOCAL_NAME_COLLISION" for f in report.findings) == 2
+    # Only stdlib or explicitly declared distributions provide collision evidence.
+    assert sum(f.code == "LOCAL_NAME_COLLISION" for f in report.findings) == 1
 
 
 def test_contexts_dynamic_aliases_and_multiline_imports():
@@ -102,8 +104,8 @@ __import__(module_name)
     assert observations["yaml"].context == "optional"
     assert observations["numpy.linalg"].kind == "dynamic"
     deps = {item.module: item for item in report.dependencies}
-    assert deps["yaml"].package == "PyYAML"
-    assert deps["PIL"].package == "Pillow"
+    assert deps["yaml"].package == "yaml" and deps["yaml"].category == "unresolved"
+    assert deps["PIL"].package == "PIL" and deps["PIL"].category == "unresolved"
     assert sum(f.code == "DYNAMIC_IMPORT" for f in report.findings) == 3
 
 
@@ -192,7 +194,7 @@ def test_unsupported_python_profile_is_partial_and_never_claims_host_modules_are
     assert report.status == "partial"
     assert {d.module: d.category for d in report.dependencies} == {
         "os": "unresolved",
-        "pandas": "external",
+        "pandas": "unresolved",
     }
     assert any(f.code == "PYTHON_PROFILE_UNSUPPORTED" for f in report.findings)
 

@@ -57,6 +57,7 @@ describe('analysis finding guidance', () => {
 
   it.each([
     ['LOCAL_MODULE_EXCLUDED', 'files'],
+    ['LOCAL_MODULE_MISSING', 'files'],
     ['SYNTAX_ERROR', 'files'],
     ['RUN_WORKING_DIRECTORY_MISSING', 'run'],
     ['INPUT_PATH_UNVERIFIED', 'data'],
@@ -95,4 +96,11 @@ describe('analysis finding guidance', () => {
       'Dynamic import in experiment.py:12',
     )
   })
+
+  it.each(['INPUT_PATH_UNVERIFIED', 'EXTERNAL_INPUT_REFERENCE'])(
+    'preserves the concrete input filename in %s instead of replacing it with generic copy', (code) => {
+      const diagnostic = finding(code, { path: 'experiment.py', line: 5, message: 'В experiment.py:5 требуется measurements.csv; файл не найден.' })
+      expect(describeFinding(diagnostic)).toBe(diagnostic.message)
+    },
+  )
 })

@@ -10,12 +10,11 @@ const props = defineProps<{
   disabled?: boolean
 }>()
 
-const emit = defineEmits<{ select: [file: File | null] }>()
+const emit = defineEmits<{ select: [files: File[] | null] }>()
 
 const input = ref<HTMLInputElement | null>(null)
 const dragDepth = ref(0)
 const isDragging = computed(() => dragDepth.value > 0)
-const isZip = computed(() => props.file?.name.toLowerCase().endsWith('.zip') ?? false)
 
 function openPicker() {
   if (!props.disabled) input.value?.click()
@@ -23,7 +22,7 @@ function openPicker() {
 
 function onInputChange(event: Event) {
   const target = event.target as HTMLInputElement
-  emit('select', target.files?.[0] ?? null)
+  if (!props.disabled && target.files?.length) emit('select', Array.from(target.files))
   target.value = ''
 }
 
@@ -38,8 +37,8 @@ function onDragLeave() {
 function onDrop(event: DragEvent) {
   dragDepth.value = 0
   if (props.disabled) return
-  const dropped = event.dataTransfer?.files?.[0]
-  if (dropped) emit('select', dropped)
+  const dropped = Array.from(event.dataTransfer?.files ?? [])
+  if (dropped.length) emit('select', dropped)
 }
 </script>
 
@@ -64,6 +63,7 @@ function onDrop(event: DragEvent) {
       type="file"
       class="visually-hidden"
       :accept="ACCEPTED_EXTENSIONS.join(',')"
+      :disabled="disabled"
       tabindex="-1"
       @change="onInputChange"
     />
@@ -75,12 +75,12 @@ function onDrop(event: DragEvent) {
           fill="currentColor"
         />
       </svg>
-      <BaseIcon v-else :name="isZip ? 'archive' : 'file-code'" :size="34" />
+      <BaseIcon v-else name="archive" :size="34" />
     </span>
 
     <template v-if="file">
       <p class="dropzone__title">{{ file.name }}</p>
-      <p class="dropzone__subtitle">{{ isZip ? $t('upload.zip') : $t('upload.pyFile') }} · {{ formatBytes(file.size) }}</p>
+      <p class="dropzone__subtitle">{{ $t('upload.zip') }} · {{ formatBytes(file.size) }}</p>
       <div class="dropzone__file-actions">
         <button type="button" class="dropzone__link" :disabled="disabled" @click.stop="openPicker">
           {{ $t('upload.chooseOther') }}

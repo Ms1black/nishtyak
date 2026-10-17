@@ -6,6 +6,8 @@ import {
   formatRunCommand,
   getFindingKind,
   getFindingSection,
+  isPackageBlocked,
+  type AutomationQuestion,
   type Finding,
   type PackagePlan,
 } from '@/entities/project'
@@ -20,6 +22,7 @@ import ReadinessPanel from './ReadinessPanel.vue'
 import SectionCard from './SectionCard.vue'
 import ProjectToolsPanel from './ProjectToolsPanel.vue'
 import AutomationQuestions from './AutomationQuestions.vue'
+import ReplaceSourceForm from './ReplaceSourceForm.vue'
 
 const wizard = useUploadWizardStore()
 const explorer = ref<InstanceType<typeof ProjectFileExplorer> | null>(null)
@@ -81,7 +84,7 @@ const unresolvedModules = computed(() => {
 const resolution = computed(() => visiblePlan.value?.automaticResolution)
 const automationQuestions = computed(() => {
   const automation = wizard.automation
-  if (automation?.phase !== 'needs_input') return []
+  if (automation?.phase !== 'needs_input' || isPackageBlocked(visiblePlan.value)) return []
   return automation.questions ?? (automation.question ? [automation.question] : [])
 })
 const progressText = computed(() => {
@@ -154,9 +157,16 @@ function focusFinding(finding: Finding) {
   return focusSection(getFindingSection(finding), finding)
 }
 
-function focusQuestion() {
+function focusQuestion(selected?: AutomationQuestion) {
   const sections = { dependencies: 'dependencies', entrypoint: 'run', description: 'data', environment: 'tools' }
-  const question = automationQuestions.value.find((item) => item.kind === 'text') ?? automationQuestions.value[0]
+  const question = selected ?? automationQuestions.value.find((item) => item.kind === 'text') ?? automationQuestions.value[0]
+  if (question?.code || question?.filePath) {
+    const finding = findings.value.find((item) => item.code === question.code && (!question.filePath || item.path === question.filePath))
+    if (finding) return focusFinding(finding)
+    if (question.filePath) return focusSection('files', {
+      id: question.id, code: question.code ?? '', path: question.filePath, severity: 'warning', message: question.message ?? '',
+    })
+  }
   return focusSection(sections[question?.aspect ?? 'dependencies'])
 }
 
@@ -181,7 +191,7 @@ function toggleAdvanced(event: Event) {
     <BaseCard
       v-else-if="
         wizard.analysis?.status === 'failed' ||
-        (wizard.error && (!wizard.analysis || wizard.isAnalyzing || !wizard.decisions))
+        (wizard.error && (!wizard.analysis || wizard.isAnalyzing || !wizard.decisions || (!wizard.plan && wizard.saveState === 'idle')))
       "
       padding="lg"
       class="analysis__state"
@@ -279,10 +289,12 @@ function toggleAdvanced(event: Event) {
           </div>
         </BaseCard>
 
-        <BaseCard v-if="wizard.automation?.phase === 'needs_input'" padding="lg" class="questions">
+        <BaseCard v-if="automationQuestions.length" padding="lg" class="questions">
           <AutomationQuestions
             :questions="automationQuestions"
-            :questionnaire-id="wizard.automation.questionnaireId"
+            :questionnaire-id="wizard.automation?.questionnaireId"
+            :project-id="wizard.project.id"
+            :analysis-id="wizard.analysis.analysisId"
             :candidates="wizard.analysis.launchCandidates ?? []"
             :disabled="wizard.isBusy || !wizard.canEdit"
             @answer="wizard.answerQuestions"
@@ -377,6 +389,7 @@ function toggleAdvanced(event: Event) {
               :disabled="wizard.isBusy || !wizard.canEdit"
               @toggle="wizard.toggleFile"
             />
+            <ReplaceSourceForm v-if="wizard.canEdit" :disabled="wizard.isBusy" @replace="wizard.replaceSource" />
           </SectionCard>
           <SectionCard
             v-if="wizard.canEdit"
@@ -396,7 +409,7 @@ function toggleAdvanced(event: Event) {
             :title="$t('analysis.review.reportTitle')"
             :subtitle="$t('analysis.review.reportHint')"
           >
-            <FindingList :findings="findings" />
+            <FindingList :findings="findings" actionable @select="focusFinding" />
           </SectionCard>
         </details>
       </div>

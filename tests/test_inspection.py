@@ -45,9 +45,9 @@ def test_unmatched_input_is_unverified_with_source_location_not_claimed_missing(
     findings = inspect({"src/main.py": "import pandas as pd\npd.read_csv('data.csv')\n"})
     finding = next(item for item in findings if item.code == "INPUT_PATH_UNVERIFIED")
     assert (finding.path, finding.line) == ("src/main.py", 2)
-    assert "working directory" in finding.message
+    assert "папки запуска" in finding.message
     assert "missing" not in finding.message.lower()
-    assert "data.csv" not in repr(asdict(finding))
+    assert '"data.csv"' in finding.message
 
 
 @pytest.mark.parametrize("mode", ["w", "wb", "w+", "a", "a+", "x"])

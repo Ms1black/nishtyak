@@ -8,6 +8,45 @@ export interface ProjectArchive {
   status: ArchiveStatus
   sizeBytes?: number
   files?: string[]
+  sha256?: string
+}
+
+export interface ProjectLookup {
+  project: Project
+  teamId: string
+}
+
+export type VerificationStatus = 'not_checked' | 'passed' | 'failed' | 'unable'
+
+export interface ManualVerification {
+  status: VerificationStatus
+  pythonVersion: string
+  platform: string
+  command: string
+  output: string
+  notes: string
+  checkedAt: string
+  checkedBy: { id: string; name: string }
+}
+
+export interface VerificationDocument {
+  revision: number
+  analysisId: string | null
+  archiveTag: string | null
+  stale: boolean
+  verification: ManualVerification | null
+}
+
+export interface VerificationSubmission {
+  expectedRevision: number
+  analysisId: string
+  archiveTag: string
+  status: VerificationStatus
+  pythonVersion?: string
+  platform?: string
+  command?: string
+  output?: string
+  notes?: string
 }
 
 export interface Project {
@@ -89,10 +128,12 @@ export interface AutomationQuestion {
   message?: string
   candidateIds?: string[]
   declarationId?: string
+  code?: string
+  filePath?: string | null
 }
 
 export interface ProjectAutomation {
-  phase: 'static' | 'assisting' | 'validating' | 'finalizing' | 'needs_input' | 'ready' | 'draft'
+  phase: 'static' | 'assisting' | 'validating' | 'finalizing' | 'needs_input' | 'ready' | 'draft' | 'blocked'
   stage?: 'pre_human' | 'post_human' | 'complete'
   humanRound?: 0 | 1
   finalAttempt?: 0 | 1

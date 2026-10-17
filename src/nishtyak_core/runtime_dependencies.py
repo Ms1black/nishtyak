@@ -17,7 +17,6 @@ from .models import (
     RunSpec,
     SourceFile,
 )
-from .resolution import PACKAGE_NAMES
 
 
 @dataclass(frozen=True)
@@ -58,6 +57,7 @@ class RuntimeDependencySelector:
         *,
         included_files: tuple[FileInfo, ...] | None = None,
         run_spec: RunSpec | None = None,
+        package_mappings: dict[str, str] | None = None,
     ) -> RuntimeDependencySelection:
         files = report.files if included_files is None else included_files
         available = {file.path for file in files}
@@ -92,7 +92,7 @@ class RuntimeDependencySelector:
         )
         return RuntimeDependencySelection(
             dependencies,
-            self._automatic_extras(report, dependencies, runtime),
+            self._automatic_extras(report, dependencies, runtime, package_mappings or {}),
             frozenset(import_ids - active),
         )
 
@@ -124,6 +124,7 @@ class RuntimeDependencySelector:
         report: AnalysisReport,
         dependencies: tuple[DependencyCandidate, ...],
         runtime: set[str],
+        package_mappings: dict[str, str],
     ) -> tuple[str, ...]:
         groups: dict[str, set[str]] = defaultdict(set)
         base = set()
@@ -140,7 +141,7 @@ class RuntimeDependencySelector:
             if not set(candidate.evidence_ids) & runtime:
                 continue
             name = canonicalize_name(
-                candidate.package or PACKAGE_NAMES.get(candidate.module) or candidate.module
+                package_mappings.get(candidate.module) or candidate.package or candidate.module
             )
             matches = groups.get(name, set())
             if name not in base and len(matches) == 1:

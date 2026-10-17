@@ -47,7 +47,7 @@ def create_project(logic, files=None, options=None, environment=None):
 
 
 @pytest.fixture
-def automatic(tmp_path, monkeypatch):
+def automatic(tmp_path, monkeypatch, verified_identity_discovery):
     logic = LogicService(
         Settings(data_dir=tmp_path, runner="subprocess", automatic_resolution=True)
     )
@@ -86,14 +86,19 @@ def test_resolves_without_questions_and_automatically_exports_hashed_set(automat
     plan = logic.preparation("alice", record.project_id)["plan"]
     assert plan["automatic_resolution"]["status"] == "ready"
     assert plan["automatic_resolution"]["packages"] == ["numpy==2.2.0"]
+    discovery = plan["automatic_review"]["provider_discovery"]
+    assert discovery["source"] == "published_index"
+    assert discovery["packages"]["numpy"]["artifact_hash_verified"] is False
+    assert discovery["packages"]["numpy"]["execution_verified"] is False
+    assert plan["automatic_review"]["applied"] is False
     assert calls[0][2] == 20
     assert calls[0][1].platform == "linux-x86_64"
     with zipfile.ZipFile(io.BytesIO(logic.bundle("alice", record.project_id))) as archive:
         assert "requirements.lock.txt" in archive.namelist()
         assert "numpy==2.2.0" in archive.read("requirements.lock.txt").decode()
         readme = archive.read("README.md").decode()
-        assert "Automatically selected target Python: `3.11`" in readme
-        assert "Observed author-environment Python" not in readme
+        assert "Предложенная версия Python: `3.11`" in readme
+        assert "Python из добровольного снимка среды автора" not in readme
         assert "--require-hashes -r requirements.lock.txt" in readme
         metadata = json.loads(archive.read("analysis-report.json"))
         assert metadata["decisions"]["python_version"] is None
@@ -233,12 +238,12 @@ def test_excluding_secret_file_requeues_even_when_requirements_do_not_change(aut
     logic.review_pending()
     assert logic.plan("alice", record.project_id)["automatic_resolution"]["status"] == "needs_input"
     assert calls == []
-    logic.submit_clarifications(
+    assert logic.plan("alice", record.project_id)["automation"]["phase"] == "blocked"
+    logic.save_decisions(
         "alice",
         record.project_id,
         UserDecisions(report.analysis_id, excluded_files=("credentials.txt",)),
         0,
-        logic.plan("alice", record.project_id)["automation"]["questionnaire_id"],
     )
     logic.review_pending()
     assert len(calls) == 1
@@ -324,7 +329,7 @@ def test_runtime_import_selects_extra_without_persisting_author_checkbox(automat
     plan = logic.plan("alice", record.project_id)
     assert plan["requirements"] == ("numpy>=1",)
     assert plan["decisions"]["selected_extras"] == ()
-    assert "DEPENDENCY_UNRESOLVED" not in {finding["code"] for finding in plan["findings"]}
+    assert "DEPENDENCY_UNRESOLVED" in {finding["code"] for finding in plan["findings"]}
     assert "EXTRAS_AUTOMATIC" in {finding["code"] for finding in plan["findings"]}
     logic.review_pending()
     assert len(calls) == 1

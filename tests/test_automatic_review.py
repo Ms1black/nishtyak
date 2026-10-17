@@ -27,7 +27,7 @@ from nishtyak_service.storage import SQLiteJobRepository
 
 TOKEN = "automatic-review-test-" + "x" * 32
 HEADERS = {"Authorization": "Bearer " + TOKEN, "X-Owner-ID": "alice"}
-DESCRIPTION = "experiment.py prints the result returned by helpers.compute()."
+DESCRIPTION = "experiment.py выводит результат, возвращаемый функцией helpers.compute()."
 
 
 def create_project(repository, owner="alice", files=None):
@@ -95,7 +95,7 @@ def test_background_review_is_cached_and_preserves_decisions_and_requirements(re
     assert calls[0][1] == "review" and 0 < calls[0][2] <= 15
     with zipfile.ZipFile(io.BytesIO(logic.bundle("alice", record.project_id))) as archive:
         readme = archive.read("README.md").decode()
-        assert DESCRIPTION in readme and "generated automatically" in readme
+        assert DESCRIPTION in readme and "Описание составлено автоматически" in readme
         metadata = json.loads(archive.read("analysis-report.json"))
         assert metadata["automatic_review"]["evidence_ids"]
         assert metadata["decisions"]["description"] == ""
@@ -312,6 +312,21 @@ def test_whitespace_author_description_allows_automatic_fallback(reviewed):
     assert plan["description"] == DESCRIPTION and plan["description_origin"] == "automatic"
 
 
+def test_cached_english_auto_description_uses_russian_static_fallback_without_more_ai(reviewed):
+    logic, record, report, calls = reviewed
+    logic.review_pending()
+    cached = logic.repository.read_review(record, report.analysis_id)
+    cached["paragraphs"][0]["text"] = "The experiment prints the calculated result."
+    logic.repository.save_review(record, report.analysis_id, cached)
+    count = len(calls)
+    plan = logic.plan("alice", record.project_id)
+    assert "Python-проект" in plan["description"]
+    assert "The experiment" not in plan["description"]
+    assert plan["description_origin"] == "inferred"
+    assert plan["automatic_review"]["applied"] is False
+    assert len(calls) == count
+
+
 def test_hidden_file_citation_cannot_support_automatic_prose(reviewed):
     logic, _, _, calls = reviewed
     logic.review_pending()
@@ -437,7 +452,7 @@ def test_model_choice_precedes_static_recommendation_and_replans_local_findings(
         assert "python run_project.py" in readme
         assert '"target": "workflow/experiment.py"' in archive.read("run_project.py").decode()
         assert "python utility.py" not in readme
-        assert "assistant selected" in readme
+        assert "Команда выбрана моделью" in readme
         assert "LOCAL_IMPORT_CONTEXT_REQUIRED" not in readme
     project_calls = [call for call in calls if call[0].analysis_id == report.analysis_id]
     assert len(project_calls) == 1 and project_calls[0][1] == "review"

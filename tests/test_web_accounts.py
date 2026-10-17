@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
@@ -313,6 +316,11 @@ PROJECT_ROUTES = [
     ("POST", "resolve"),
     ("GET", "lock"),
     ("POST", "advice"),
+    ("GET", ""),
+    ("GET", "readme"),
+    ("GET", "verification"),
+    ("PUT", "verification"),
+    ("POST", "source"),
     ("GET", "archive"),
     ("POST", "archive"),
     ("DELETE", ""),
@@ -482,3 +490,96 @@ def test_sessions_per_user_are_bounded_and_auth_database_permissions(app):
     assert accounts.authenticate(f"{SESSION_COOKIE}={first}") is None
     assert accounts.authenticate(f"{SESSION_COOKIE}={tokens[-1]}") == user["id"]
     assert accounts.path.stat().st_mode & 0o777 == 0o600
+
+
+def test_explicit_team_delete_removes_projects_before_revoking_workspace(app, monkeypatch):
+    calls = []
+
+    class Core:
+        def delete(self, project_id):
+            calls.append(project_id)
+
+    monkeypatch.setattr(app.state.browser, "client_factory", lambda scope: Core())
+    with client_for(app) as owner:
+        user = register(owner)
+        team = team_for(owner)
+        project_id = add_project(app, WorkspaceIdentity(user["id"], team["id"], "accounts"))
+        assert (app.state.browser.store.root / project_id).is_dir()
+        result = owner.delete(f"/api/teams/{team['id']}")
+        assert result.status_code == 204, result.text
+        assert calls == [project_id]
+        assert not (app.state.browser.store.root / project_id).exists()
+        assert owner.get(f"/api/projects/{project_id}").status_code == 404
+
+
+def test_team_delete_failure_keeps_workspace_available_for_retry(app, monkeypatch):
+    class Core:
+        failing = True
+
+        def delete(self, project_id):
+            if self.failing:
+                raise LogicClientError(503, "CORE_UNAVAILABLE", "Try deleting again")
+
+    core = Core()
+    monkeypatch.setattr(app.state.browser, "client_factory", lambda scope: core)
+    with client_for(app) as owner:
+        user = register(owner)
+        team = team_for(owner)
+        project_id = add_project(app, WorkspaceIdentity(user["id"], team["id"], "accounts"))
+        result = owner.delete(f"/api/teams/{team['id']}")
+        assert result.status_code == 503
+        assert any(item["id"] == team["id"] for item in owner.get("/api/teams").json())
+        assert (app.state.browser.store.root / project_id).exists()
+        core.failing = False
+        assert owner.delete(f"/api/teams/{team['id']}").status_code == 204
+        assert not (app.state.browser.store.root / project_id).exists()
+
+
+def test_upload_authorized_before_team_deletion_cannot_create_orphan(app, monkeypatch):
+    deleting = Event()
+    release_delete = Event()
+    upload_waiting = Event()
+    submissions = []
+    browser = app.state.browser
+    locked = browser.store.workspace_locked
+
+    class Core:
+        def delete(self, project_id):
+            deleting.set()
+            assert release_delete.wait(5)
+
+        def submit(self, content, options):
+            submissions.append(content)
+            return {"project_id": "c" * 32, "job_id": "d" * 32, "status": "queued"}
+
+    @contextmanager
+    def observed_lock(scope):
+        if deleting.is_set():
+            upload_waiting.set()
+        with locked(scope):
+            yield
+
+    monkeypatch.setattr(browser, "client_factory", lambda scope: Core())
+    monkeypatch.setattr(browser.store, "workspace_locked", observed_lock)
+    with client_for(app) as owner, ThreadPoolExecutor(max_workers=2) as pool:
+        user = register(owner)
+        team = team_for(owner)
+        identity = WorkspaceIdentity(user["id"], team["id"], "accounts")
+        project_id = add_project(app, identity)
+        deletion = pool.submit(owner.delete, f"/api/teams/{team['id']}")
+        try:
+            assert deleting.wait(5)
+            # The request already passed middleware authorization while the team existed.
+            upload = pool.submit(browser.upload, identity, team["id"], "new.py", b"print(1)\n")
+            assert upload_waiting.wait(5)
+            assert not upload.done()
+        finally:
+            release_delete.set()
+        assert deletion.result(timeout=5).status_code == 204
+        with pytest.raises(LogicClientError) as caught:
+            upload.result(timeout=5)
+        assert caught.value.status == 404
+        assert not submissions
+        assert browser.store.list(identity.scope) == []
+        assert not (browser.store.root / project_id).exists()
+        assert all(item["id"] != team["id"] for item in owner.get("/api/teams").json())

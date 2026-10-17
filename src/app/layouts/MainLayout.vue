@@ -10,7 +10,7 @@ import { isStandaloneWorkspace } from '@/shared/api'
 const route = useRoute()
 const teamStore = useTeamStore()
 
-onMounted(() => teamStore.init())
+onMounted(() => { void teamStore.init().catch(() => {}) })
 </script>
 
 <template>

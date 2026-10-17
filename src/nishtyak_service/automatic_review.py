@@ -222,6 +222,11 @@ class AutomaticProjectReview:
             module: value["package"]
             for module, value in cached.get("packages", {}).items()
             if value.get("verification", {}).get("method") == "published_wheel_contents"
+            or (
+                value.get("origin") == "provider_discovery"
+                and value.get("verification", {}).get("method")
+                in {"published_core_metadata", "published_wheel_directory"}
+            )
         }
 
     def needs_description(
@@ -791,7 +796,7 @@ class AutomaticProjectReview:
         try:
             context = self._context(record, plan.report, plan)
             readme = self._readme_prose(context)
-            if readme:
+            if re.search(r"[А-Яа-яЁё]", readme):
                 return readme
             reads = {
                 value
@@ -828,22 +833,64 @@ class AutomaticProjectReview:
                 description=self._static_description(plan, record),
                 description_origin="inferred",
             )
-        if not record.automatic_review_eligible:
-            return plan
         cached = self._cached(record, plan.analysis_id)
         if cached is None:
             return plan
+        discovery = cached.get("provider_discovery")
+        discovery_summary = None
+        if discovery:
+            discovery_summary = {
+                "source": "published_index",
+                "status": discovery["status"],
+                "elapsed_ms": discovery.get("elapsed_ms", 0),
+                "packages": {
+                    module: value["verification"]
+                    for module, value in cached.get("packages", {}).items()
+                    if module in plan.automatic_packages
+                    and value.get("origin") == "provider_discovery"
+                },
+                "unresolved": discovery.get("unresolved", {}),
+            }
+        if not record.automatic_review_eligible:
+            return (
+                replace(
+                    plan,
+                    automatic_review={
+                        "status": "disabled",
+                        "provider": "deepseek",
+                        "applied": False,
+                        "provider_discovery": discovery_summary,
+                    },
+                )
+                if discovery_summary
+                else plan
+            )
         retained = {file.path for file in plan.files}
         source_files = {file.path for file in plan.report.files if file.path.endswith(".py")}
         paragraphs = [
             item
             for item in cached.get("paragraphs", [])
-            if item["source_paths"] and set(item["source_paths"]).issubset(retained)
+            if item["source_paths"]
+            and set(item["source_paths"]).issubset(retained)
+            and re.search(r"[А-Яа-яЁё]", item.get("text", ""))
         ]
         if not source_files.issubset(retained):
             # Citations support prose but cannot prove all semantic dependencies.
             paragraphs = []
         authored = bool(plan.decisions and plan.decisions.description.strip())
+        if (
+            not authored
+            and not paragraphs
+            and any(
+                not re.search(r"[А-Яа-яЁё]", item.get("text", ""))
+                for item in cached.get("paragraphs", [])
+            )
+        ):
+            plan = replace(
+                plan,
+                description=self._static_description(plan, record),
+                description_origin="inferred",
+            )
         applied = not authored and bool(paragraphs)
         entrypoint = cached.get("entrypoint") or {}
         entrypoint_applied = plan.run_spec_origin == "automatic"
@@ -879,6 +926,8 @@ class AutomaticProjectReview:
             "tool_calls": cached.get("tool_calls", 0),
             "usage": cached.get("usage"),
         }
+        if discovery_summary:
+            metadata["provider_discovery"] = discovery_summary
         return replace(
             plan,
             description="\n\n".join(item["text"] for item in paragraphs)

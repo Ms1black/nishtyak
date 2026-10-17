@@ -18,6 +18,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from .models import GeneratedFile, GeneratedFiles, PackagePlan
+from .rendering import DocumentRenderer
 from .report_codec import bounded_json
 from .resolver_proxy import RestrictedIndexProxy
 
@@ -441,24 +442,11 @@ class LockExporter:
             )
         _validate_target(plan, lock.target)
         _validate_coverage(_validated_requirements(plan.requirements), lock.packages, lock.target)
-        note = (
-            "\n## Resolved dependency set\n\n"
-            f"Target: Python {lock.target.python_version}, {lock.target.platform}. "
-            "This is a newly resolved wheel-only set, not proof of the author's environment "
-            "or a successful run. "
-            "Use it only on the stated target.\n\n"
-            "```sh\npython -m pip install --only-binary=:all: --require-hashes "
-            "-r requirements.lock.txt\n```\n"
-        )
         files = []
         for file in generated.files:
             if file.path == "README.md":
-                text = file.content.decode("utf-8").replace(
-                    "python -m pip install -r requirements.txt",
-                    "python -m pip install --only-binary=:all: --require-hashes "
-                    "-r requirements.lock.txt",
-                )
-                files.append(GeneratedFile(file.path, text.encode() + note.encode()))
+                text = DocumentRenderer().readme(plan, target=asdict(lock.target), locked=True)
+                files.append(GeneratedFile(file.path, text.encode()))
             elif file.path == "Dockerfile":
                 platform = {"linux-x86_64": "linux/amd64", "linux-aarch64": "linux/arm64"}.get(
                     lock.target.platform

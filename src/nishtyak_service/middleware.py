@@ -63,7 +63,11 @@ class RequestBoundaryMiddleware:
         try:
             limit = (
                 self._upload_limit
-                if scope["method"] == "POST" and scope["path"] == "/v1/projects"
+                if scope["method"] == "POST"
+                and (
+                    scope["path"] == "/v1/projects"
+                    or re.fullmatch(r"/v1/projects/[a-f0-9]{32}/source", scope["path"])
+                )
                 else self._json_limit
             )
             lengths = headers.get(b"content-length", [])

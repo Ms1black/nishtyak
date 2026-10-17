@@ -8,7 +8,7 @@ import { useUploadWizardStore } from '../model/uploadWizardStore'
 import SourceExampleCard from './SourceExampleCard.vue'
 
 const wizard = useUploadWizardStore()
-const { file, error, isUploading, select, upload } = useUploadProject()
+const { file, error, isUploading, canUpload, workspaceStatus, workspaceError, loadWorkspace, select, upload } = useUploadProject()
 const automaticReviewEnabled = ref<boolean | null>(null)
 
 onMounted(async () => {
@@ -34,6 +34,10 @@ async function analyze() {
     <ProjectDropzone :file="file" :error="error && $t(error)" :disabled="isUploading" @select="select" />
     <SourceExampleCard />
 
+    <div v-if="workspaceStatus !== 'ready'" class="upload-workspace" :role="workspaceError ? 'alert' : 'status'">
+      <p>{{ $t(workspaceError ?? 'upload.workspace.loading') }}</p>
+      <BaseButton v-if="workspaceError" variant="tonal" @click="loadWorkspace">{{ $t('upload.workspace.retry') }}</BaseButton>
+    </div>
     <p v-if="automaticReviewEnabled !== false" class="upload-disclosure">
       {{
         $t(automaticReviewEnabled ? 'upload.automaticReviewDisclosure' : 'upload.automaticReviewConditional')
@@ -41,7 +45,7 @@ async function analyze() {
     </p>
     <div class="step-actions">
       <p class="step-actions__hint" :class="{ 'is-error': !!error }" aria-live="polite">{{ hint }}</p>
-      <BaseButton :disabled="!file" :loading="isUploading" @click="analyze">{{
+      <BaseButton :disabled="!canUpload" :loading="isUploading" @click="analyze">{{
         $t('upload.analyze')
       }}</BaseButton>
     </div>
@@ -50,10 +54,17 @@ async function analyze() {
 
 <style scoped src="./step.css"></style>
 <style scoped>
-.upload-disclosure {
+.upload-disclosure,
+.upload-workspace {
   grid-column: 1 / -1;
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.5;
+}
+.upload-workspace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
 }
 </style>

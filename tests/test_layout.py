@@ -37,7 +37,7 @@ def test_wrapper_root_resolves_manifests_local_imports_and_documents():
     assert report.declared_requirements == ("numpy==2.2.0",)
     assert {item.module: item.category for item in report.dependencies} == {
         "helpers": "local",
-        "numpy": "external",
+        "numpy": "unresolved",
     }
     assert report.entrypoints == ("research-main/main.py",)
     findings = ProjectInspector().inspect(snapshot, report.layout.root)

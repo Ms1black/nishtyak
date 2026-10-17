@@ -4,10 +4,13 @@ import hashlib
 import io
 import json
 import re
+import time
 import zipfile
 from collections.abc import Callable
+from contextlib import contextmanager
 
 from nishtyak_client import LogicClient, LogicClientError
+from nishtyak_core.advisors.project_context import ProjectTextFilter
 from nishtyak_core.archives import ArchiveReader
 from nishtyak_core.redaction import TextRedactor
 from nishtyak_core.snapshot import SnapshotBuilder
@@ -32,6 +35,7 @@ class BrowserService:
     ):
         self.settings = settings
         self.store = ProjectStore(settings)
+        self.workspace_role: Callable[[WorkspaceIdentity], str] | None = None
         self.client_factory = client_factory or (
             lambda scope: LogicClient(settings.logic_url, settings.service_token, scope, timeout=60)
         )
@@ -54,7 +58,113 @@ class BrowserService:
                         raise
         return result
 
+    def project(self, identity: WorkspaceIdentity, project_id: str) -> dict:
+        record = self._refresh(identity, self.store.get(identity.scope, project_id))
+        return {"project": self._project(record), "teamId": identity.workspace}
+
+    def readme(self, identity: WorkspaceIdentity, project_id: str) -> dict:
+        content = self.download(identity, project_id)
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            entries = [item for item in archive.infolist() if item.filename == "README.md"]
+            if len(entries) != 1 or entries[0].file_size > 1024 * 1024:
+                raise LogicClientError(
+                    409, "README_UNAVAILABLE", "The archive has no usable README"
+                )
+            with archive.open(entries[0]) as stream:
+                text = stream.read(1024 * 1024 + 1)
+            if len(text) > 1024 * 1024:
+                raise LogicClientError(
+                    409, "README_UNAVAILABLE", "README exceeds the preview limit"
+                )
+        return {"content": TextRedactor().redact(text.decode("utf-8"))}
+
+    def verification(self, identity: WorkspaceIdentity, project_id: str) -> dict:
+        with self.store.locked(project_id):
+            record = self._refresh(identity, self.store.get(identity.scope, project_id))
+            job = json.loads(record["job"])
+            analysis_id = (job.get("analysis") or {}).get("analysis_id")
+            archive_hash = None
+            if record["archive_tag"] is not None:
+                try:
+                    archive_hash = hashlib.sha256(self.download(identity, project_id)).hexdigest()
+                except LogicClientError as error:
+                    if error.status != 409:
+                        raise
+            saved = self.store.verification(identity.scope, project_id)
+            return {
+                "revision": saved["revision"] if saved else 0,
+                "analysisId": analysis_id,
+                "archiveTag": archive_hash,
+                "stale": bool(
+                    saved
+                    and (
+                        saved["analysis_id"] != analysis_id or saved["archive_hash"] != archive_hash
+                    )
+                ),
+                "verification": json.loads(saved["document"]) if saved else None,
+            }
+
+    def save_verification(self, identity, project_id, body, actor):
+        if identity.role == "viewer":
+            raise LogicClientError(403, "ROLE_FORBIDDEN", "Viewers cannot change verification")
+        limits = {
+            "pythonVersion": 100,
+            "platform": 100,
+            "command": 2000,
+            "output": 12000,
+            "notes": 6000,
+        }
+        if (
+            not isinstance(body, dict)
+            or type(body.get("expectedRevision")) is not int
+            or body["expectedRevision"] < 0
+        ):
+            raise LogicClientError(422, "VERIFICATION_INVALID", "Invalid verification revision")
+        if body.get("status") not in {"not_checked", "passed", "failed", "unable"} or any(
+            not isinstance(body.get(key, ""), str) or len(body.get(key, "")) > maximum
+            for key, maximum in limits.items()
+        ):
+            raise LogicClientError(422, "VERIFICATION_INVALID", "Invalid verification fields")
+        with self.store.locked(project_id):
+            current = self.verification(identity, project_id)
+            if (
+                not current["archiveTag"]
+                or current["archiveTag"] != body.get("archiveTag")
+                or current["analysisId"] != body.get("analysisId")
+            ):
+                raise LogicClientError(409, "ARCHIVE_STALE", "Verify the current prepared archive")
+            redactor = ProjectTextFilter()
+            document = {
+                "status": body["status"],
+                **{key: redactor.redact(body.get(key, "")) for key in limits},
+                "checkedAt": timestamp(time.time()),
+                "checkedBy": {"id": identity.user, "name": redactor.redact(actor)},
+            }
+            self.store.save_verification(
+                identity.scope,
+                project_id,
+                body["expectedRevision"],
+                body["analysisId"],
+                body["archiveTag"],
+                document,
+            )
+            return self.verification(identity, project_id)
+
     def upload(
+        self, identity: WorkspaceIdentity, team_id: str, filename: str, content: bytes
+    ) -> dict:
+        with self.workspace_mutation(identity):
+            return self._upload(identity, team_id, filename, content)
+
+    @contextmanager
+    def workspace_mutation(self, identity: WorkspaceIdentity):
+        with self.store.workspace_locked(identity.scope):
+            role = self.workspace_role(identity) if self.workspace_role else identity.role
+            if role == "viewer":
+                raise LogicClientError(403, "ROLE_FORBIDDEN", "Viewers cannot change projects")
+            yield
+
+    def _upload(
         self, identity: WorkspaceIdentity, team_id: str, filename: str, content: bytes
     ) -> dict:
         self._team(identity, team_id)
@@ -244,6 +354,22 @@ class BrowserService:
             self.store.invalidate(identity.scope, project_id)
             return self._project(self.store.update_job(identity.scope, project_id, value))
 
+    def replace_source(self, identity, project_id, content, expected_revision):
+        if identity.role == "viewer":
+            raise LogicClientError(403, "ROLE_FORBIDDEN", "Viewers cannot replace project source")
+        if not 0 < len(content) <= 10 * 1024**2:
+            raise LogicClientError(413, "UPLOAD_LIMIT", "Upload must contain at most 10 MiB")
+        ArchiveReader().from_bytes(content)
+        with self.store.locked(project_id):
+            self.store.get(identity.scope, project_id)
+            with self.store.source_change(identity.scope, project_id, content):
+                value = self.client_factory(identity.scope).replace_source(
+                    project_id, content, expected_revision
+                )
+                return self._project(
+                    self.store.replace_source(identity.scope, project_id, content, value)
+                )
+
     def resolve(
         self,
         identity: WorkspaceIdentity,
@@ -342,11 +468,28 @@ class BrowserService:
     def delete(self, identity: WorkspaceIdentity, project_id: str) -> None:
         with self.store.locked(project_id):
             self.store.get(identity.scope, project_id)
-            self.client_factory(identity.scope).delete(project_id)
+            try:
+                self.client_factory(identity.scope).delete(project_id)
+            except LogicClientError as error:
+                if error.status != 404:
+                    raise
             self.store.delete(identity.scope, project_id)
 
+    def delete_workspace(self, identity: WorkspaceIdentity) -> None:
+        for record in self.store.list(identity.scope):
+            self.delete(identity, record["id"])
+
     def _refresh(self, identity: WorkspaceIdentity, record: dict) -> dict:
-        job = self.client_factory(identity.scope).job(record["job_id"])
+        client = self.client_factory(identity.scope)
+        try:
+            job = client.job(record["job_id"])
+        except LogicClientError as error:
+            if error.status != 404:
+                raise
+            current = client.project_state(record["id"])
+            source = client.source(record["id"])
+            job = client.job(current["job_id"])
+            self.store.replace_source(identity.scope, record["id"], source, job)
         return self.store.update_job(identity.scope, record["id"], job)
 
     @staticmethod
@@ -368,8 +511,13 @@ class BrowserService:
         status = analysis_status(report, job["status"])
         archive = {"status": "unavailable" if status in {"analyzing", "failed"} else "not_built"}
         if record["archive_tag"] is not None:
-            archive = {"status": "ready", "sizeBytes": record["archive_size"]}
-            files = json.loads(record["archive_tag"]).get("files")
+            tag = json.loads(record["archive_tag"])
+            archive = {
+                "status": "ready",
+                "sizeBytes": record["archive_size"],
+                "sha256": tag.get("sha256"),
+            }
+            files = tag.get("files")
             if files is not None:
                 archive["files"] = TextRedactor().redact_value(files)
         return {

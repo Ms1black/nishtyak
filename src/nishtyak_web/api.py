@@ -69,12 +69,28 @@ class AdviceBody(StrictBody):
     shareSource: Literal[True]
 
 
+class VerificationBody(StrictBody):
+    expectedRevision: Annotated[int, Field(ge=0, le=2**53 - 1)]
+    analysisId: Annotated[str, Field(pattern=r"^[a-f0-9]{20}$")]
+    archiveTag: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    status: Literal["not_checked", "passed", "failed", "unable"]
+    pythonVersion: Annotated[str, Field(max_length=100)] = ""
+    platform: Annotated[str, Field(max_length=100)] = ""
+    command: Annotated[str, Field(max_length=2000)] = ""
+    output: Annotated[str, Field(max_length=12000)] = ""
+    notes: Annotated[str, Field(max_length=6000)] = ""
+
+
 def create_app(
     settings: WebSettings, service: BrowserService | None = None, static_dir: FilePath | None = None
 ) -> FastAPI:
     browser = service or BrowserService(settings)
     preview = PreviewAccess(settings) if settings.mode == "preview" else None
     accounts = AccountStore(settings) if settings.mode == "accounts" else None
+    if accounts is not None:
+        browser.workspace_role = lambda identity: accounts.workspace(
+            identity.user, identity.workspace
+        )["role"]
     workspace_started = datetime.now(UTC).isoformat()
 
     @asynccontextmanager
@@ -112,7 +128,7 @@ def create_app(
         projects=browser.store,
     )
     if accounts is not None:
-        app.include_router(account_router(accounts, settings))
+        app.include_router(account_router(accounts, settings, browser))
 
     @app.exception_handler(LogicClientError)
     async def client_error(request: Request, error: LogicClientError):
@@ -310,6 +326,24 @@ def create_app(
     def analysis(request: Request, project_id: ProjectId):
         return browser.analysis(request.state.identity, project_id)
 
+    @app.get("/api/projects/{project_id}")
+    def project(request: Request, project_id: ProjectId):
+        return browser.project(request.state.identity, project_id)
+
+    @app.get("/api/projects/{project_id}/readme")
+    def readme(request: Request, project_id: ProjectId):
+        return browser.readme(request.state.identity, project_id)
+
+    @app.get("/api/projects/{project_id}/verification")
+    def verification(request: Request, project_id: ProjectId):
+        return browser.verification(request.state.identity, project_id)
+
+    @app.put("/api/projects/{project_id}/verification")
+    def save_verification(request: Request, project_id: ProjectId, body: VerificationBody):
+        identity = request.state.identity
+        actor = accounts.user(identity.user)["name"] if accounts else identity.user
+        return browser.save_verification(identity, project_id, body.model_dump(), actor)
+
     @app.post("/api/projects/{project_id}/analysis", status_code=202)
     def reanalyze(request: Request, project_id: ProjectId, body: AnalysisBody):
         environment = body.authorEnvironment.model_dump() if body.authorEnvironment else None
@@ -318,6 +352,28 @@ def create_app(
     @app.get("/api/projects/{project_id}/files")
     def file_content(request: Request, project_id: ProjectId, path: str):
         return browser.file(request.state.identity, project_id, path)
+
+    @app.post("/api/projects/{project_id}/source", status_code=202)
+    async def replace_source(request: Request, project_id: ProjectId):
+        async with request.form(max_files=1, max_fields=1, max_part_size=1024) as form:
+            if set(form) != {"file", "expectedRevision"} or any(
+                len(form.getlist(name)) != 1 for name in form
+            ):
+                raise LogicClientError(422, "INVALID_UPLOAD", "Expected ZIP and decision revision")
+            file = form["file"]
+            revision = form["expectedRevision"]
+            if (
+                not isinstance(file, UploadFile)
+                or not isinstance(revision, str)
+                or not revision.isdecimal()
+            ):
+                raise LogicClientError(422, "INVALID_UPLOAD", "Expected ZIP and decision revision")
+            if not (file.filename or "").lower().endswith(".zip"):
+                raise LogicClientError(422, "UPLOAD_TYPE", "Source replacement requires ZIP")
+            content = await file.read(10 * 1024**2 + 1)
+            return await run_in_threadpool(
+                browser.replace_source, request.state.identity, project_id, content, int(revision)
+            )
 
     @app.get("/api/projects/{project_id}/decisions")
     def decisions(request: Request, project_id: ProjectId):

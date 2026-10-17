@@ -1,4 +1,4 @@
-export const ACCEPTED_EXTENSIONS = ['.zip', '.py'] as const
+export const ACCEPTED_EXTENSIONS = ['.zip'] as const
 export const MAX_FILE_SIZE = 10 * 1024 * 1024
 
 export function validateProjectFile(file: File): string | null {

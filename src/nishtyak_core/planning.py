@@ -127,7 +127,10 @@ class PackagePlanner:
             run_spec = launch.recommended.run_spec
             run_spec_origin = "inferred"
         runtime = RuntimeDependencySelector().select(
-            report, included_files=included, run_spec=run_spec
+            report,
+            included_files=included,
+            run_spec=run_spec,
+            package_mappings=effective_decisions.packages,
         )
         ignored_evidence = runtime.ignored_evidence_ids | {
             candidate.id
@@ -494,6 +497,20 @@ class PackagePlanner:
                 )
                 continue
             override = decisions.packages.get(candidate.module)
+            if (
+                candidate.category == "unresolved"
+                and not override
+                and (candidate.requirement or candidate.package)
+            ):
+                unresolved = True
+                findings.append(
+                    Finding(
+                        "DEPENDENCY_UNRESOLVED",
+                        f"The distribution providing import {candidate.module} is unverified. "
+                        "A matching name in requirements is only a draft hypothesis.",
+                        evidence_ids=candidate.evidence_ids,
+                    )
+                )
             raw_requirement = override or candidate.requirement or candidate.package
             mapped_name = canonicalize_name(candidate.package or candidate.module)
             if not override and mapped_name in removed_names and mapped_name not in declared_names:
@@ -535,7 +552,15 @@ class PackagePlanner:
                 )
                 continue
             name = canonicalize_name(requirement.name)
-            if not override and name in declared_names:
+            if name in declared_names and (
+                not override
+                or not (
+                    requirement.specifier
+                    or requirement.marker
+                    or requirement.extras
+                    or requirement.url
+                )
+            ):
                 changed = False
                 for declared in requirements.values():
                     if canonicalize_name(declared.name) == name:

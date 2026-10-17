@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArchiveTree, FindingList, getArchiveFileName } from '@/entities/project'
+import { ArchiveTree, FindingList, getArchiveFileName, isPackageBlocked } from '@/entities/project'
 import { useArchiveActions } from '@/features/archive-actions'
 import { RouteName } from '@/shared/config'
 import { t } from '@/shared/i18n'
 import { formatBytes } from '@/shared/lib'
 import { BaseButton, BaseCard, BaseIcon } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
+import ArchiveReview from './ArchiveReview.vue'
 
 const wizard = useUploadWizardStore()
 const router = useRouter()
 const archive = useArchiveActions()
 
 const automaticResolution = computed(() => wizard.plan?.automaticResolution)
+const isBlocked = computed(() => isPackageBlocked(wizard.plan))
 const isDraft = computed(() => wizard.plan?.automation
   ? wizard.plan.automation.phase === 'draft'
   : wizard.plan?.state === 'draft' && automaticResolution.value?.status !== 'ready',
@@ -38,6 +40,10 @@ const summary = computed(() => [
     value: wizard.lock?.target.python_version ?? automaticResolution.value?.target?.pythonVersion ??
       wizard.plan?.pythonVersion ?? t('ready.pythonUnknown'),
   },
+  {
+    label: t('ready.summary.platform'),
+    value: wizard.lock?.target.platform ?? automaticResolution.value?.target?.platform ?? t('ready.platformUnknown'),
+  },
   { label: t('ready.summary.excluded'), value: String(wizard.decisions?.excludedFiles.length ?? 0) },
   {
     label: t('ready.summary.size'),
@@ -56,13 +62,19 @@ function toProjects() {
 
 <template>
   <div v-if="wizard.project" class="step-grid">
-    <BaseCard v-if="wizard.isLoading || !wizard.plan" padding="lg" class="ready ready__restore" :role="wizard.error ? 'alert' : 'status'">
+    <BaseCard v-if="wizard.isLoading || !wizard.plan || wizard.error" padding="lg" class="ready ready__restore" :role="wizard.error ? 'alert' : 'status'">
       <h2 class="step-title">{{ $t(wizard.isLoading ? 'ready.loadingDetails' : 'ready.detailsUnavailable') }}</h2>
       <p class="step-muted">{{ wizard.error ? $t(wizard.error) : $t('ready.detailsHint') }}</p>
-      <BaseButton v-if="!wizard.isLoading" variant="tonal" icon="refresh" @click="wizard.loadAnalysis()">
+      <BaseButton v-if="!wizard.isLoading" variant="tonal" icon="refresh" @click="wizard.reloadProject()">
         {{ $t('common.retry') }}
       </BaseButton>
       <BaseButton variant="tonal" @click="toProjects">{{ $t('ready.toProjects') }}</BaseButton>
+    </BaseCard>
+    <BaseCard v-else-if="isBlocked" padding="lg" class="ready ready__restore" role="alert">
+      <h2 class="step-title">{{ $t('analysis.plan.blocked.title') }}</h2>
+      <p class="step-muted">{{ $t('analysis.plan.blocked.text') }}</p>
+      <FindingList :findings="wizard.plan.findings" />
+      <BaseButton variant="tonal" @click="wizard.backToAnalysis()">{{ $t('ready.edit') }}</BaseButton>
     </BaseCard>
     <template v-else>
       <BaseCard padding="lg" class="ready">
@@ -95,6 +107,13 @@ function toProjects() {
           {{ $t('analysis.automatic.provenance') }}
         </p>
       </BaseCard>
+
+      <ArchiveReview
+        :project-id="wizard.project.id"
+        :archive-tag="wizard.project.archive.sha256"
+        :can-edit="wizard.canEdit"
+        @refresh="wizard.reloadProject()"
+      />
 
       <div class="step-actions">
         <p v-if="archive.error.value" role="alert" class="step-actions__hint is-error">

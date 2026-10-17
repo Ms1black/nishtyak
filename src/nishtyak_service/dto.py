@@ -189,6 +189,10 @@ class SubmittedProjectDTO(StrictDTO):
     status: Literal["queued", "running"]
 
 
+class ProjectStateDTO(SubmittedProjectDTO):
+    status: Literal["queued", "running", "succeeded", "failed", "timed_out", "resource_limited"]
+
+
 class ErrorDTO(StrictDTO):
     code: str
     message: str
@@ -227,7 +231,7 @@ class JobDTO(BaseModel):
     job_id: ObjectId
     status: Literal["queued", "running", "succeeded", "failed", "timed_out", "resource_limited"]
     created_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
-    expires_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    expires_at: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
     analysis: AnalysisReport | None = None
     error: ErrorDTO | None = None
     automatic_review: dict | None = None

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import ast
+import json
 import posixpath
 import re
 from pathlib import PurePosixPath, PureWindowsPath
 
 from .layout import LayoutDetector
 from .models import Finding, ProjectSnapshot
+from .redaction import TextRedactor
 
 
 class ProjectInspector:
@@ -121,16 +123,18 @@ class ProjectInspector:
         if external:
             return Finding(
                 "EXTERNAL_INPUT_REFERENCE",
-                "A literal input reference points outside the project or to a network resource; "
-                "confirm access and document how to provide it.",
+                "Код обращается к данным вне проекта. "
+                "Опишите доступный источник или добавьте пример данных в ZIP.",
                 path=source,
                 line=line,
             )
         if LayoutDetector.join(project_root, normalized) not in paths:
             return Finding(
                 "INPUT_PATH_UNVERIFIED",
-                "A literal input path was not matched from the project root; "
-                "confirm the working directory and required data.",
+                "В коде указан входной путь "
+                + TextRedactor().redact(json.dumps(normalized[:200], ensure_ascii=False))
+                + "; его доступность из папки запуска не подтверждена. "
+                "Добавьте пример данных в ZIP или уточните папку запуска.",
                 path=source,
                 line=line,
             )

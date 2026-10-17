@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -22,6 +23,7 @@ from .automatic_review import AutomaticProjectReview
 from .automation import PreparationAutomation
 from .config import Settings
 from .errors import ServiceError
+from .provider_discovery import AutomaticProviderDiscovery
 from .storage import JobRecord, SQLiteJobRepository
 
 
@@ -38,8 +40,12 @@ class LogicService:
         self.advisor = advisor
         self.automatic_review = AutomaticProjectReview(self.repository)
         self.automatic_resolution = AutomaticDependencyResolution(self.repository)
+        self.provider_discovery = AutomaticProviderDiscovery(self.repository)
         self.automation = PreparationAutomation(
-            self.repository, self.automatic_resolution, self.automatic_review
+            self.repository,
+            self.automatic_resolution,
+            self.automatic_review,
+            discovery=self.provider_discovery,
         )
 
     def capabilities(self) -> dict:
@@ -82,6 +88,38 @@ class LogicService:
         return self._identity(
             self.repository.reanalyze(owner, project_id, options, author_environment)
         )
+
+    def replace_source(
+        self, owner: str, project_id: str, archive: bytes, expected_revision: int
+    ) -> dict:
+        self.repository.consume_rate(owner, "upload", 5)
+        return self._identity(
+            self.repository.replace_source(owner, project_id, archive, expected_revision)
+        )
+
+    def project_state(self, owner: str, project_id: str) -> dict:
+        self.repository.consume_rate(owner, "read", 120)
+        return self._identity(self.repository.get_project(owner, project_id))
+
+    def source(self, owner: str, project_id: str) -> bytes:
+        self.repository.consume_rate(owner, "read", 120)
+        with self.repository.operation(owner, project_id, require_ready=False):
+            try:
+                descriptor = os.open(
+                    self.repository.archive_path(project_id),
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+                )
+                with os.fdopen(descriptor, "rb") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise ValueError("Invalid source file")
+                    content = stream.read(self.settings.max_archive_bytes + 1)
+                if len(content) > self.settings.max_archive_bytes:
+                    raise ValueError("Invalid source size")
+                return content
+            except (OSError, ValueError):
+                raise ServiceError(
+                    409, "SOURCE_UNAVAILABLE", "Project source is unavailable"
+                ) from None
 
     def get_decisions(self, owner: str, project_id: str) -> dict:
         self.repository.consume_rate(owner, "read", 120)
