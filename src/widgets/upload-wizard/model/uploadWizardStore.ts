@@ -102,7 +102,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     clearTimeout(pollTimer)
     const requestEpoch = epoch
     const projectId = project.value.id
-    isLoading.value = !analysis.value
+    isLoading.value = true
     error.value = null
     try {
       const result = await projectApi.getAnalysis(projectId)

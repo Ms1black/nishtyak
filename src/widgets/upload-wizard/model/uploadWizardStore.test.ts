@@ -121,6 +121,57 @@ describe('upload wizard request coordination', () => {
     vi.useRealTimers()
   })
 
+  it('restores a saved archive only after loading its complete plan and decisions', async () => {
+    const stored = project('saved-archive')
+    stored.archive = { status: 'ready', files: ['README.md', 'requirements.txt'], sizeBytes: 500 }
+    const pending = deferred<PackagePlan>()
+    api.plan.mockReturnValueOnce(pending.promise)
+    const store = useUploadWizardStore()
+    const opening = store.openProject(stored)
+    await vi.waitFor(() => expect(api.plan).toHaveBeenCalledOnce())
+    expect(store.isLoading).toBe(true)
+    expect(store.plan).toBeNull()
+    pending.resolve({
+      ...plan(store.decisions!), requirements: ['numpy'], pythonVersion: '3.11',
+      automation: { phase: 'draft', stage: 'complete', humanRound: 1 },
+    })
+    await opening
+    expect(store.plan?.requirements).toEqual(['numpy'])
+    expect(store.plan?.runSpec?.target).toBe('experiment.py')
+    expect(store.plan?.pythonVersion).toBe('3.11')
+    expect(store.plan?.automation?.phase).toBe('draft')
+    expect(store.isLoading).toBe(false)
+    expect(store.step).toBe(3)
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.submitClarifications).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
+  it('recovers from a 503 while restoring archive metadata without editing or rebuilding the archive', async () => {
+    const stored = project('retry-saved-archive')
+    stored.archive = { status: 'ready', sizeBytes: 500 }
+    api.plan.mockRejectedValueOnce(new ApiError(503, 'Plan temporarily unavailable'))
+    const store = useUploadWizardStore()
+    await store.openProject(stored)
+    expect(store.error).toBe('Plan temporarily unavailable')
+    expect(store.plan).toBeNull()
+    const pending = deferred<PackagePlan>()
+    api.plan.mockReturnValueOnce(pending.promise)
+    const retrying = store.loadAnalysis()
+    await vi.waitFor(() => expect(api.plan).toHaveBeenCalledTimes(2))
+    expect(store.isLoading).toBe(true)
+    expect(store.error).toBeNull()
+    pending.resolve({ ...plan(store.decisions!), requirements: ['numpy'] })
+    await retrying
+    expect(store.error).toBeNull()
+    expect(store.isLoading).toBe(false)
+    expect(store.plan?.requirements).toEqual(['numpy'])
+    expect(store.project?.archive.status).toBe('ready')
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.submitClarifications).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+  })
+
   it('ignores a previous project document arriving after switching projects', async () => {
     const oldDocument = deferred<{ revision: number; decisions: null; updatedAt: null }>()
     api.getDecisions.mockImplementation((id: string) =>

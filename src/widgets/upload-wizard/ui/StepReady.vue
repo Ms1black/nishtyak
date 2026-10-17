@@ -14,7 +14,10 @@ const router = useRouter()
 const archive = useArchiveActions()
 
 const automaticResolution = computed(() => wizard.plan?.automaticResolution)
-const isDraft = computed(() => wizard.plan?.state === 'draft' && automaticResolution.value?.status !== 'ready')
+const isDraft = computed(() => wizard.plan?.automation
+  ? wizard.plan.automation.phase === 'draft'
+  : wizard.plan?.state === 'draft' && automaticResolution.value?.status !== 'ready',
+)
 
 const treeItems = computed(() => {
   if (wizard.project?.archive.files) return wizard.project.archive.files
@@ -53,50 +56,60 @@ function toProjects() {
 
 <template>
   <div v-if="wizard.project" class="step-grid">
-    <BaseCard padding="lg" class="ready">
-      <div class="ready__status">
-        <span class="ready__check"><BaseIcon name="check" :size="22" :stroke-width="2.5" /></span>
-        <div>
-          <h2 class="step-title">{{ isDraft ? $t('ready.titleDraft') : $t('ready.title') }}</h2>
-          <p class="step-muted">
-            {{ isDraft ? $t('ready.textDraft') : $t('ready.text', { name: wizard.project.name }) }}
-          </p>
-        </div>
-      </div>
-      <ArchiveTree :root-name="getArchiveFileName(wizard.project)" :items="treeItems" />
-      <details v-if="wizard.plan?.findings.length" class="ready__report">
-        <summary>{{ $t('ready.limitationsTitle') }}</summary>
-        <p class="step-muted">{{ $t('ready.reportHint') }}</p>
-        <FindingList :findings="wizard.plan.findings" residual-only />
-      </details>
-    </BaseCard>
-
-    <BaseCard tag="aside" class="summary">
-      <h2 class="step-title">{{ $t('ready.summaryTitle') }}</h2>
-      <dl class="summary__list">
-        <div v-for="row in summary" :key="row.label" class="summary__row">
-          <dt>{{ row.label }}</dt>
-          <dd>{{ row.value }}</dd>
-        </div>
-      </dl>
-      <p v-if="automaticResolution?.status === 'ready'" class="summary__provenance">
-        {{ $t('analysis.automatic.provenance') }}
-      </p>
-    </BaseCard>
-
-    <div class="step-actions">
-      <p v-if="archive.error.value" role="alert" class="step-actions__hint is-error">
-        {{ archive.error.value }}
-      </p>
-      <BaseButton variant="tonal" icon="arrow-left" @click="wizard.backToAnalysis()">{{
-        $t('ready.edit')
-      }}</BaseButton>
-      <span class="step-actions__spacer" />
-      <BaseButton variant="tonal" @click="toProjects">{{ $t('ready.toProjects') }}</BaseButton>
-      <BaseButton icon="download" :loading="archive.isPending(wizard.project.id)" @click="download">
-        {{ $t('ready.download') }}
+    <BaseCard v-if="wizard.isLoading || !wizard.plan" padding="lg" class="ready ready__restore" :role="wizard.error ? 'alert' : 'status'">
+      <h2 class="step-title">{{ $t(wizard.isLoading ? 'ready.loadingDetails' : 'ready.detailsUnavailable') }}</h2>
+      <p class="step-muted">{{ wizard.error ? $t(wizard.error) : $t('ready.detailsHint') }}</p>
+      <BaseButton v-if="!wizard.isLoading" variant="tonal" icon="refresh" @click="wizard.loadAnalysis()">
+        {{ $t('common.retry') }}
       </BaseButton>
-    </div>
+      <BaseButton variant="tonal" @click="toProjects">{{ $t('ready.toProjects') }}</BaseButton>
+    </BaseCard>
+    <template v-else>
+      <BaseCard padding="lg" class="ready">
+        <div class="ready__status">
+          <span class="ready__check"><BaseIcon name="check" :size="22" :stroke-width="2.5" /></span>
+          <div>
+            <h2 class="step-title">{{ isDraft ? $t('ready.titleDraft') : $t('ready.title') }}</h2>
+            <p class="step-muted">
+              {{ isDraft ? $t('ready.textDraft') : $t('ready.text', { name: wizard.project.name }) }}
+            </p>
+          </div>
+        </div>
+        <ArchiveTree :root-name="getArchiveFileName(wizard.project)" :items="treeItems" />
+        <details v-if="wizard.plan?.findings.length" class="ready__report">
+          <summary>{{ $t('ready.limitationsTitle') }}</summary>
+          <p class="step-muted">{{ $t('ready.reportHint') }}</p>
+          <FindingList :findings="wizard.plan.findings" residual-only />
+        </details>
+      </BaseCard>
+
+      <BaseCard tag="aside" class="summary">
+        <h2 class="step-title">{{ $t('ready.summaryTitle') }}</h2>
+        <dl class="summary__list">
+          <div v-for="row in summary" :key="row.label" class="summary__row">
+            <dt>{{ row.label }}</dt>
+            <dd>{{ row.value }}</dd>
+          </div>
+        </dl>
+        <p v-if="automaticResolution?.status === 'ready'" class="summary__provenance">
+          {{ $t('analysis.automatic.provenance') }}
+        </p>
+      </BaseCard>
+
+      <div class="step-actions">
+        <p v-if="archive.error.value" role="alert" class="step-actions__hint is-error">
+          {{ archive.error.value }}
+        </p>
+        <BaseButton variant="tonal" icon="arrow-left" @click="wizard.backToAnalysis()">{{
+          $t('ready.edit')
+        }}</BaseButton>
+        <span class="step-actions__spacer" />
+        <BaseButton variant="tonal" @click="toProjects">{{ $t('ready.toProjects') }}</BaseButton>
+        <BaseButton icon="download" :loading="archive.isPending(wizard.project.id)" @click="download">
+          {{ $t('ready.download') }}
+        </BaseButton>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -106,6 +119,10 @@ function toProjects() {
   display: flex;
   flex-direction: column;
   gap: 28px;
+}
+
+.ready__restore {
+  grid-column: 1 / -1;
 }
 
 .ready__status {

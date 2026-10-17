@@ -524,6 +524,9 @@ export const en: MessageSchema = {
       'Code at {at} references data outside the project or on the network; accessibility has not been checked',
   },
   ready: {
+    loadingDetails: 'Loading archive details…',
+    detailsUnavailable: 'Could not load archive details',
+    detailsHint: 'Package status, requirements and the launch command will appear after the report loads.',
     limitationsTitle: 'Package limitations',
     reportHint:
       'These limitations are already recorded in README and the report inside the ZIP. No additional answers are needed to download it.',
