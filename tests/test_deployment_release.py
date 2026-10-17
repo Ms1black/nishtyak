@@ -86,10 +86,27 @@ def test_release_is_deterministic_and_has_only_runtime_files(release_source, tmp
         )
         for member, item in zip(members, proof["files"], strict=True):
             assert member.name == "nishtyak/" + item["path"]
-            assert member.mtime == member.uid == member.gid == 0
+            assert member.uid == member.gid == 0
+            assert 315_532_800 <= member.mtime < 1_389_274_624
             assert member.mode == 0o644
             assert member.isfile()
             assert hashlib.sha256(bundle.extractfile(member).read()).hexdigest() == item["sha256"]
+
+
+def test_equal_size_source_edits_change_docker_context_metadata(release_source, tmp_path):
+    source = release_source / "src/app.py"
+    source.write_text('VERSION = "3.0"\n')
+    first, _ = ReleaseBuilder(release_source).build(tmp_path / "before")
+    with tarfile.open(first) as bundle:
+        before = bundle.getmember("nishtyak/src/app.py")
+    source.write_text('VERSION = "3.1"\n')
+    second, _ = ReleaseBuilder(release_source).build(tmp_path / "after")
+    with tarfile.open(second) as bundle:
+        after = bundle.getmember("nishtyak/src/app.py")
+    assert before.size == after.size
+    assert before.mode == after.mode
+    assert before.mtime != after.mtime
+    assert first.read_bytes() != second.read_bytes()
 
 
 @pytest.mark.parametrize("relative", ["src/link.py", "deploy/Dockerfile"])

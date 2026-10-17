@@ -25,6 +25,12 @@ class ReleaseFile:
     def checksum(self) -> str:
         return hashlib.sha256(self.content).hexdigest()
 
+    @property
+    def timestamp(self) -> int:
+        # Docker's local context sync compares file stats before reading bytes.
+        # Content-based dates (1980–2014) preserve deterministic, cache-safe archives.
+        return 315_532_800 + (int(self.checksum[:8], 16) >> 2)
+
 
 class ReleaseBuilder:
     ROOT_FILES = frozenset(
@@ -171,7 +177,7 @@ class ReleaseBuilder:
                             entry = tarfile.TarInfo(f"nishtyak/{item.path}")
                             entry.mode = 0o644
                             entry.size = len(item.content)
-                            entry.mtime = 0
+                            entry.mtime = item.timestamp
                             bundle.addfile(entry, io.BytesIO(item.content))
                 destination.flush()
                 os.fsync(destination.fileno())
