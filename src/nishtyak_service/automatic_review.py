@@ -14,6 +14,7 @@ from nishtyak_core.advisors import (
     ProjectAdvisoryService,
     SafeProjectContext,
 )
+from nishtyak_core.advisors.client import InvalidAdvisorResponse
 from nishtyak_core.advisors.package_verification import (
     PackageVerificationError,
     PublishedPackageVerifier,
@@ -783,7 +784,7 @@ class AutomaticProjectReview:
                     continue
                 try:
                     ProjectAdvisoryService._validate_readme_prose(text)
-                except ValueError:
+                except (ValueError, InvalidAdvisorResponse):
                     continue
                 paragraphs.append(text[:1000])
                 if len(paragraphs) == 2:

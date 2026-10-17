@@ -214,6 +214,36 @@ def test_existing_useful_readme_skips_description_model(focused):
     assert enriched.description_origin == "inferred"
 
 
+@pytest.mark.parametrize(
+    "readme",
+    [
+        "Этот проект обрабатывает лабораторные измерения. "
+        "Подробнее смотрите [описание](https://example.test/docs).",
+        "<div>Этот проект обрабатывает лабораторные измерения и выводит их сводку.</div>",
+        "```bash\npython -m pip install --require-hashes -r requirements.lock.txt\n```",
+    ],
+)
+def test_rich_author_readme_does_not_interrupt_static_preparation(focused, monkeypatch, readme):
+    logic, record, _, _ = focused({"experiment.py": "print(4)\n", "README.md": readme})
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "nishtyak_service.automatic_review.ProjectAdviceJobRunner.run",
+        lambda *args, **kwargs: pytest.fail("Static README fallback called the model"),
+    )
+    logic.review_pending()
+    state = logic.repository.read_automation(record)
+    assert state["phase"] in {"ready", "draft"}
+    plan = logic.plan("alice", record.project_id)
+    assert plan["description"].startswith("Python-проект")
+    assert plan["description_origin"] == "inferred"
+    assert plan["decisions"]["description"] == ""
+    assert state["attempt"] == 0 and state["final_attempt"] == 0
+    with zipfile.ZipFile(io.BytesIO(logic.bundle("alice", record.project_id))) as archive:
+        assert archive.read("project/experiment.py") == b"print(4)\n"
+        assert archive.read("project/README.md").decode() == readme
+        assert "Python-проект" in archive.read("README.md").decode()
+
+
 def test_environment_diagnostics_do_not_silently_relax_constraints(focused, monkeypatch):
     logic, record, report, plan = focused(
         {"experiment.py": "import numpy\n", "requirements.txt": "numpy<2\nnumpy>=2\n"}
