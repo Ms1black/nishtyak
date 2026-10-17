@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 from pathlib import PurePosixPath
 
@@ -224,7 +225,7 @@ class AutomaticProjectReview:
             for module, value in cached.get("packages", {}).items()
             if value.get("verification", {}).get("method") == "published_wheel_contents"
             or (
-                value.get("origin") == "provider_discovery"
+                value.get("origin") in {"provider_discovery", "model_verification"}
                 and value.get("verification", {}).get("method")
                 in {"published_core_metadata", "published_wheel_directory"}
             )
@@ -709,6 +710,7 @@ class AutomaticProjectReview:
             if entrypoint:
                 result["entrypoint"] = entrypoint
                 result["aspects"]["entrypoint"].update(status="resolved", reason=None)
+        candidates = []
         for key in pending:
             if not key.startswith("package:"):
                 continue
@@ -721,25 +723,38 @@ class AutomaticProjectReview:
             names = {item.get("package") for item in suggestions}
             if len(names) != 1:
                 continue
-            remaining = (
-                self.budget_seconds - result["budget_used_ms"] / 1000 - (time.monotonic() - started)
-            )
-            if remaining <= 0.1:
-                result["aspects"][key]["reason"] = "review_deadline"
-                continue
-            try:
-                verification = PublishedPackageVerifier().verify(
-                    module, next(iter(names)), timeout=min(4, remaining)
-                )
-            except PackageVerificationError as error:
-                result["aspects"][key]["reason"] = str(error)
-                continue
-            result["packages"][module] = {
-                "package": verification["package"],
-                "verification": verification,
-                "evidence_ids": suggestions[0]["evidence_ids"],
-            }
-            result["aspects"][key].update(status="resolved", reason=None)
+            candidates.append((key, module, next(iter(names)), suggestions[0]["evidence_ids"]))
+        if not candidates:
+            return
+        deadline = started + self.budget_seconds - result["budget_used_ms"] / 1000
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="package-evidence") as pool:
+            futures = [
+                (key, module, ids, pool.submit(self._verify_package, module, name, deadline))
+                for key, module, name, ids in candidates
+            ]
+            for key, module, ids, future in futures:
+                try:
+                    verification = future.result()
+                except PackageVerificationError as error:
+                    result["aspects"][key]["reason"] = str(error)
+                    continue
+                result["packages"][module] = {
+                    "package": verification["package"],
+                    "origin": "model_verification",
+                    "verification": verification,
+                    "evidence_ids": ids,
+                }
+                result["aspects"][key].update(status="resolved", reason=None)
+
+    @staticmethod
+    def _verify_package(module, name, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.1:
+            raise PackageVerificationError("review_deadline")
+        verification = PublishedPackageVerifier().verify(module, name, timeout=min(4, remaining))
+        if time.monotonic() > deadline:
+            raise PackageVerificationError("review_deadline")
+        return verification
 
     def _context(self, record, report, plan):
         from nishtyak_core.launches import LaunchDetector

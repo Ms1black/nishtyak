@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import stat
 import time
 import zipfile
 from dataclasses import asdict
@@ -24,16 +25,30 @@ from nishtyak_service.provider_discovery import AutomaticProviderDiscovery
 
 
 class PublishedWheelTransport:
-    def __init__(self, *, package="example", module="example", padding=0, metadata=None):
+    def __init__(
+        self,
+        *,
+        package="example",
+        module="example",
+        padding=0,
+        metadata=None,
+        files=None,
+        metadata_directory=None,
+    ):
         self.package = package
         self.padding = padding
         self.metadata = metadata
         self.calls = []
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, "w") as archive:
-            archive.writestr(module + "/__init__.py", "raise RuntimeError('never execute')")
+            for path, content in (
+                files
+                if files is not None
+                else {module + "/__init__.py": "raise RuntimeError('never execute')"}
+            ).items():
+                archive.writestr(path, content)
             archive.writestr(
-                f"{package}-1.0.dist-info/METADATA",
+                f"{metadata_directory or package + '-1.0.dist-info'}/METADATA",
                 f"Metadata-Version: 2.5\nName: {package}\nVersion: 1.0\n",
             )
         self.wheel = stream.getvalue()
@@ -94,6 +109,106 @@ def test_large_published_wheel_directory_is_bounded_and_not_whole_hash_verified(
     assert not evidence.provides("opencv_python")
 
 
+def test_giant_wheel_only_proves_runtime_files_and_never_fetches_the_whole_artifact():
+    transport = PublishedWheelTransport(
+        package="example",
+        padding=1536 * 1024**2,
+        files={
+            "actual/__init__.py": "raise RuntimeError('do not execute')",
+            "forged/other-1.0.dist-info/pretend.py": "",
+            "unrelated-1.0.data/purelib/forged_data/__init__.py": "",
+            "example-1.0.data/scripts/forged_script.py": "",
+        },
+    )
+    result = inspect(transport)
+    assert result.modules == ("actual",)
+    assert not result.provides("example")
+    assert not result.provides("forged")
+    assert not result.provides("forged_data")
+    assert not result.artifact_hash_verified
+    ranges = [(limit, start) for _, limit, start in transport.calls if start is not None]
+    assert ranges and sum(limit for limit, _ in ranges) < 100_000
+    assert all(limit <= 1024**2 for limit, _ in ranges)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "binary.cpython-311-x86_64-linux-gnu.so",
+        "binary.cpython-313t-x86_64-linux-gnu.so",
+        "binary.cpython-311-darwin.so",
+        "binary.abi3.so",
+        "binary.so",
+        "binary.cp311-win_amd64.pyd",
+        "binary.pyd",
+        "binary.py",
+    ],
+)
+def test_supported_native_and_source_modules_are_detected(filename):
+    transport = PublishedWheelTransport(files={filename: b"not executed"})
+    assert inspect(transport).modules == ("binary",)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "fake.metadata.py",
+        "fake.random.so",
+        "fake.random.pyd",
+        "fake.cp311-win_amd64.so",
+        "fake.cpython-311-x86_64-linux-gnu.pyd",
+        "fake/README.txt",
+        "fake/py.typed",
+        "fake/__pycache__/module.pyc",
+        "fake/other-1.0.dist-info/module.py",
+        "fake/other-1.0.data/purelib/module.py",
+        "other-1.0.data/purelib/fake/__init__.py",
+        "example-1.0.data/scripts/fake.py",
+        "example-1.0.data/headers/fake.py",
+        "example-1.0.data/purelib/fake.dist-info/module.py",
+        "./fake.py",
+        "fake//module.py",
+        "fake/../module.py",
+        "fake\\module.py",
+    ],
+)
+def test_nonruntime_and_forged_distribution_paths_do_not_prove_modules(path):
+    assert inspect(PublishedWheelTransport(files={path: "not executed"})).modules == ()
+
+
+@pytest.mark.parametrize("directory", ["purelib", "platlib"])
+def test_matching_distribution_data_runtime_directories_are_supported(directory):
+    result = inspect(
+        PublishedWheelTransport(
+            files={
+                f"example-1.0.data/{directory}/relocated/__init__.py": "",
+            }
+        )
+    )
+    assert result.modules == ("relocated",)
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        "other-1.0.dist-info",
+        "example-2.0.dist-info",
+        "nested/example-1.0.dist-info",
+        "./example-1.0.dist-info",
+    ],
+)
+def test_wheel_metadata_directory_must_match_distribution_identity(directory):
+    with pytest.raises(ProviderLookupError, match="identity_mismatch"):
+        inspect(PublishedWheelTransport(metadata_directory=directory))
+
+
+def test_symlink_named_like_a_runtime_module_is_not_provider_evidence():
+    link = zipfile.ZipInfo("fake.py")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    assert inspect(PublishedWheelTransport(files={link: "somewhere/else"})).modules == ()
+
+
 def test_hashed_core_metadata_import_names_preserve_shared_namespaces():
     metadata = (
         b"Metadata-Version: 2.5\nName: example\nVersion: 1.0\n"
@@ -107,6 +222,28 @@ def test_hashed_core_metadata_import_names_preserve_shared_namespaces():
     assert evidence.provides("shared")
     assert evidence.metadata_sha256
     assert not any(start is not None for _, _, start in transport.calls)
+
+
+def test_legacy_hyphenated_metadata_hash_key_is_supported():
+    transport = PublishedWheelTransport(
+        metadata=(b"Metadata-Version: 2.5\nName: example\nVersion: 1.0\nImport-Name: actual\n")
+    )
+    transport.artifact["dist-info-metadata"] = transport.artifact.pop("core-metadata")
+    assert inspect(transport).modules == ("actual",)
+    assert not any(start is not None for _, _, start in transport.calls)
+
+
+@pytest.mark.parametrize("duplicate", [b"Name: other\n", b"Version: 2.0\n"])
+def test_metadata_with_duplicate_identity_headers_is_not_provider_evidence(duplicate):
+    transport = PublishedWheelTransport(
+        metadata=(
+            b"Metadata-Version: 2.5\nName: example\nVersion: 1.0\n"
+            + duplicate
+            + b"Import-Name: fake\n"
+        )
+    )
+    with pytest.raises(ProviderLookupError, match="identity_mismatch"):
+        inspect(transport)
 
 
 def test_exact_provider_pin_checks_that_release_without_historical_feed():
@@ -202,6 +339,87 @@ def test_range_requires_exact_206_response(status, content_range):
     with pytest.raises(ProviderLookupError, match="range_unsupported"):
         transport.read("https://files.pythonhosted.org/packages/a.whl", 4, start=10, total=100)
     assert _NoRedirect().redirect_request(None, None, 302, "", {}, "https://evil.example") is None
+
+
+@pytest.mark.parametrize(
+    "content_range",
+    [
+        "bytes 10-13/*",
+        "bytes 10-12/100",
+        "bytes 10-13/101",
+        "bytes 010-13/100",
+        "bytes 10-13/100, bytes 14-15/100",
+    ],
+)
+def test_malformed_or_mismatched_content_ranges_are_rejected(content_range):
+    class Reply(io.BytesIO):
+        status = 206
+        headers = {"Content-Range": content_range}
+
+    transport = _IndexTransport(time.monotonic() + 5)
+    transport.opener = SimpleNamespace(open=lambda *args, **kwargs: Reply(b"abcd"))
+    with pytest.raises(ProviderLookupError, match="range_unsupported"):
+        transport.read("https://files.pythonhosted.org/packages/a.whl", 4, start=10, total=100)
+
+
+@pytest.mark.parametrize(
+    "start,total,limit", [(-1, 100, 4), (99, 100, 4), (0, None, 4), (0, 0, 4), (0, 100, 0)]
+)
+def test_invalid_byte_range_arguments_are_rejected_before_http(start, total, limit):
+    def unexpected(*args, **kwargs):
+        pytest.fail("An invalid range must never issue a request")
+
+    transport = _IndexTransport(time.monotonic() + 5)
+    transport.opener = SimpleNamespace(open=unexpected)
+    with pytest.raises(ProviderLookupError, match="range_invalid|response_limit"):
+        transport.read(
+            "https://files.pythonhosted.org/packages/a.whl", limit, start=start, total=total
+        )
+
+
+@pytest.mark.parametrize("body", [b"abc", b"abcde"])
+def test_range_body_must_contain_exactly_the_requested_number_of_bytes(body):
+    class Reply(io.BytesIO):
+        status = 206
+        headers = {"Content-Range": "bytes 10-13/100"}
+
+    transport = _IndexTransport(time.monotonic() + 5)
+    transport.opener = SimpleNamespace(open=lambda *args, **kwargs: Reply(body))
+    with pytest.raises(ProviderLookupError, match="response_limit"):
+        transport.read("https://files.pythonhosted.org/packages/a.whl", 4, start=10, total=100)
+
+
+def test_compressed_range_is_rejected_before_reading_the_body():
+    class Reply(io.BytesIO):
+        status = 206
+        headers = {"Content-Range": "bytes 10-13/100", "Content-Encoding": "gzip"}
+
+        def read(self, *args):
+            pytest.fail("Encoded range bytes cannot be ZIP offsets")
+
+    transport = _IndexTransport(time.monotonic() + 5)
+    transport.opener = SimpleNamespace(open=lambda *args, **kwargs: Reply(b"abcd"))
+    with pytest.raises(ProviderLookupError, match="response_encoding"):
+        transport.read("https://files.pythonhosted.org/packages/a.whl", 4, start=10, total=100)
+
+
+def test_remote_wheel_defends_against_a_short_custom_transport_response():
+    transport = SimpleNamespace(read=lambda *args, **kwargs: b"short")
+    remote = _RemoteWheel(transport, "https://files.pythonhosted.org/packages/a.whl", 100)
+    with pytest.raises(ProviderLookupError, match="response_limit"):
+        remote.read(10)
+    assert remote.tell() == 0 and remote.transferred == 0
+
+
+def test_remote_wheel_cache_does_not_consume_the_transfer_budget_twice():
+    transport = PublishedWheelTransport(padding=3 * 1024**2)
+    remote = _RemoteWheel(transport, transport.artifact["url"], transport.artifact["size"])
+    assert len(remote.read(1024**2)) == 1024**2
+    assert len(remote.read(1024**2)) == 1024**2
+    remote.seek(0)
+    assert len(remote.read(1024**2)) == 1024**2
+    assert remote.transferred == 2 * 1024**2
+    assert len(transport.calls) == 2
 
 
 class ReviewRepository:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import threading
+import time
 import zipfile
 
 import pytest
@@ -70,8 +72,12 @@ def test_two_failed_attempts_are_persisted_and_never_retried_on_reads(focused, m
 
 
 @pytest.mark.parametrize("review_mode", ["legacy", "project"])
+@pytest.mark.parametrize(
+    "proof_method",
+    ["published_wheel_contents", "published_core_metadata", "published_wheel_directory"],
+)
 def test_validated_wheel_mapping_is_cached_without_becoming_an_author_decision(
-    focused, monkeypatch, review_mode
+    focused, monkeypatch, review_mode, proof_method
 ):
     logic, record, report, plan = focused({"experiment.py": "import unknown_lab\n"})
     calls = []
@@ -100,7 +106,7 @@ def test_validated_wheel_mapping_is_cached_without_becoming_an_author_decision(
         "nishtyak_service.automatic_review.PublishedPackageVerifier.verify",
         lambda *args, **kwargs: {
             "package": "research-provider",
-            "method": "published_wheel_contents",
+            "method": proof_method,
             "execution_verified": False,
         },
     )
@@ -154,6 +160,57 @@ def test_unverified_package_does_not_change_effective_mapping(focused, monkeypat
     state = logic.automatic_review.aspect_status(record, report)["package:unknown_lab"]
     assert state["attempts"] == 2 and state["status"] == "exhausted"
     assert state["reason"] == "package_does_not_provide_module"
+
+
+def test_package_hypotheses_are_verified_concurrently_with_a_shared_deadline(focused, monkeypatch):
+    logic, record, report, plan = focused(
+        {"experiment.py": "import unknown_lab\nimport other_lab\n"}
+    )
+    barrier = threading.Barrier(2)
+    timeouts = []
+
+    def mapped(runner, context, feature):
+        source = context.files[0]
+        suggestions = [
+            ProjectAdvisorySuggestion(
+                "package_hypothesis",
+                "Гипотеза пакета.",
+                (item["id"], source["id"]),
+                module=item["module"],
+                package="provider-" + item["module"].replace("_", "-"),
+            )
+            for item in context.facts["imports"]
+        ]
+        return response(context, suggestions)
+
+    def verify(verifier, module, package, *, timeout):
+        timeouts.append(timeout)
+        barrier.wait(timeout=2)
+        return {"package": package, "method": "published_wheel_directory"}
+
+    monkeypatch.setattr("nishtyak_service.automatic_review.ProjectAdviceJobRunner.run", mapped)
+    monkeypatch.setattr("nishtyak_service.automatic_review.PublishedPackageVerifier.verify", verify)
+    logic.automatic_review.prepare_pass(
+        record, report, plan=plan, aspects=("packages",), pass_id="parallel-packages"
+    )
+    assert logic.automatic_review.package_mappings(record, report) == {
+        "unknown_lab": "provider-unknown-lab",
+        "other_lab": "provider-other-lab",
+    }
+    assert len(timeouts) == 2 and all(0 < timeout <= 4 for timeout in timeouts)
+
+
+def test_expired_package_verification_budget_never_contacts_index(focused, monkeypatch):
+    logic, _, _, _ = focused({"experiment.py": "import unknown_lab\n"})
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("An exhausted review must not contact the package index")
+
+    monkeypatch.setattr(
+        "nishtyak_service.automatic_review.PublishedPackageVerifier.verify", unexpected
+    )
+    with pytest.raises(PackageVerificationError, match="review_deadline"):
+        logic.automatic_review._verify_package("unknown_lab", "provider", time.monotonic() - 1)
 
 
 def test_missing_provider_does_not_fake_two_attempts(focused, monkeypatch):

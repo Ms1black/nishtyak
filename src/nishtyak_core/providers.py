@@ -4,12 +4,14 @@ import hashlib
 import io
 import json
 import re
+import stat
 import struct
 import time
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from email.parser import BytesParser
+from http.client import HTTPException
 from pathlib import PurePosixPath
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlsplit
@@ -77,6 +79,16 @@ class _IndexTransport:
         return remaining
 
     def read(self, url: str, limit: int, *, start: int | None = None, total: int | None = None):
+        if type(limit) is not int or not 0 < limit <= 1024**2:
+            raise ProviderLookupError("provider_response_limit")
+        if start is not None and (
+            type(start) is not int
+            or type(total) is not int
+            or start < 0
+            or total <= 0
+            or start + limit > total
+        ):
+            raise ProviderLookupError("provider_range_invalid")
         headers = {"Accept-Encoding": "identity", "Accept": "application/json, */*"}
         if start is not None:
             headers["Range"] = f"bytes={start}-{start + limit - 1}"
@@ -88,6 +100,11 @@ class _IndexTransport:
                         raise ProviderLookupError("provider_range_unsupported")
                 elif reply.status != 200:
                     raise ProviderLookupError("provider_index_unavailable")
+                if reply.headers.get("Content-Encoding", "identity").lower() not in {
+                    "",
+                    "identity",
+                }:
+                    raise ProviderLookupError("provider_response_encoding")
                 content = reply.read(limit + 1)
                 if len(content) > limit or start is not None and len(content) != limit:
                     raise ProviderLookupError("provider_response_limit")
@@ -97,7 +114,7 @@ class _IndexTransport:
             raise ProviderLookupError(
                 "provider_not_found" if error.code == 404 else "provider_index_unavailable"
             ) from None
-        except (OSError, TimeoutError) as error:
+        except (OSError, TimeoutError, HTTPException) as error:
             raise ProviderLookupError("provider_index_unavailable") from error
 
 
@@ -131,14 +148,18 @@ class _RemoteWheel(io.RawIOBase):
         size = min(size, self.size - self.position)
         if size == 0:
             return b""
-        if size > 1024**2 or self.transferred + size > 2 * 1024**2:
+        if size > 1024**2:
             raise ProviderLookupError("provider_directory_limit")
         for start, content in self.cache:
             if start <= self.position and self.position + size <= start + len(content):
                 offset = self.position - start
                 self.position += size
                 return content[offset : offset + size]
+        if self.transferred + size > 2 * 1024**2:
+            raise ProviderLookupError("provider_directory_limit")
         content = self.transport.read(self.url, size, start=self.position, total=self.size)
+        if not isinstance(content, bytes) or len(content) != size:
+            raise ProviderLookupError("provider_response_limit")
         self.cache.append((self.position, content))
         self.transferred += len(content)
         self.position += len(content)
@@ -292,7 +313,9 @@ class PublishedDistributionInspector:
         )
 
     def _metadata_sidecar(self, transport, wheel, name, version):
-        hashes = wheel.get("core-metadata", wheel.get("dist_info_metadata"))
+        hashes = wheel.get(
+            "core-metadata", wheel.get("dist-info-metadata", wheel.get("dist_info_metadata"))
+        )
         if not isinstance(hashes, dict) or not re.fullmatch(
             r"[a-f0-9]{64}", hashes.get("sha256", "")
         ):
@@ -333,7 +356,9 @@ class PublishedDistributionInspector:
     def _metadata(content, name, version):
         fields = BytesParser().parsebytes(content, headersonly=True)
         if (
-            canonicalize_name(fields.get("Name", "")) != name
+            len(fields.get_all("Name", [])) != 1
+            or len(fields.get_all("Version", [])) != 1
+            or canonicalize_name(fields.get("Name", "")) != name
             or Version(fields.get("Version", "")) != version
         ):
             raise ProviderLookupError("provider_identity_mismatch")
@@ -370,6 +395,11 @@ class PublishedDistributionInspector:
                 or metadata[0].compress_size > self.max_metadata_bytes
             ):
                 raise ProviderLookupError("provider_metadata_limit")
+            metadata_parts = self._member_parts(metadata[0])
+            if len(metadata_parts) != 2 or not self._distribution_directory(
+                metadata_parts[0], ".dist-info", name, version
+            ):
+                raise ProviderLookupError("provider_identity_mismatch")
             if metadata[0].compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
                 raise ProviderLookupError("provider_wheel_invalid")
             with archive.open(metadata[0]) as source:
@@ -379,24 +409,69 @@ class PublishedDistributionInspector:
             self._metadata(content, name, version)
             modules = set()
             for member in members:
-                path = PurePosixPath(member.filename)
-                if path.is_absolute() or ".." in path.parts or "\\" in member.filename:
+                parts = self._member_parts(member)
+                if not parts:
                     continue
-                parts = path.parts
-                if (
-                    len(parts) >= 3
-                    and parts[0].endswith(".data")
-                    and parts[1] in {"purelib", "platlib"}
-                ):
+                if parts[0].endswith(".data"):
+                    if (
+                        len(parts) < 3
+                        or parts[1] not in {"purelib", "platlib"}
+                        or not self._distribution_directory(parts[0], ".data", name, version)
+                    ):
+                        continue
                     parts = parts[2:]
-                if not parts or not member.filename.endswith((".py", ".so", ".pyd")):
+                if not all(part.isidentifier() for part in parts[:-1]):
                     continue
-                module = parts[0] if len(parts) > 1 else parts[0].split(".")[0]
-                if module.isidentifier():
+                basename = self._runtime_module(parts[-1])
+                if basename is not None:
+                    module = parts[0] if len(parts) > 1 else basename
                     modules.add(module)
             if len(modules) > 500:
                 raise ProviderLookupError("provider_modules_limit")
             return tuple(sorted(modules))
+
+    @staticmethod
+    def _member_parts(member):
+        path = member.filename
+        kind = stat.S_IFMT(member.external_attr >> 16)
+        if (
+            member.is_dir()
+            or kind not in {0, stat.S_IFREG}
+            or "\\" in path
+            or any(ord(character) < 32 for character in path)
+        ):
+            return ()
+        parts = tuple(path.split("/"))
+        return parts if all(part and part not in {".", ".."} for part in parts) else ()
+
+    @staticmethod
+    def _distribution_directory(directory, suffix, name, version):
+        if not directory.endswith(suffix):
+            return False
+        distribution, separator, release = directory.removesuffix(suffix).rpartition("-")
+        try:
+            return (
+                bool(separator)
+                and canonicalize_name(distribution) == name
+                and Version(release) == version
+            )
+        except InvalidVersion:
+            return False
+
+    @staticmethod
+    def _runtime_module(filename):
+        if filename.endswith(".py"):
+            module = filename[:-3]
+        else:
+            match = re.fullmatch(
+                r"(.+?)(?:(?:\.cpython-[0-9]{2,3}t?-[A-Za-z0-9_-]+|\.abi3)?\.so|"
+                r"(?:\.cp[0-9]{2,3}t?-[A-Za-z0-9_]+|\.abi3)?\.pyd)",
+                filename,
+            )
+            if match is None:
+                return None
+            module = match[1]
+        return module if module.isidentifier() else None
 
     @staticmethod
     def _evidence(package, version, wheel, modules, namespaces, method, metadata_hash=None):
