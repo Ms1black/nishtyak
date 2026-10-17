@@ -97,6 +97,9 @@ class DeploymentConfig:
             raise ValueError("DEEPSEEK_API_KEY must be a plain API token")
         if re.fullmatch(r"[A-Za-z0-9._:/-]{1,120}", model) is None:
             raise ValueError("DEEPSEEK_MODEL must be a plain model identifier")
+        storage_bytes = environment.get("NISHTYAK_MAX_STORAGE_BYTES", "2147483648")
+        if re.fullmatch(r"[1-9][0-9]{0,18}", storage_bytes) is None:
+            raise ValueError("NISHTYAK_MAX_STORAGE_BYTES must be a positive byte count")
         values = {
             "NISHTYAK_WEB_ORIGINS": self.origin,
             "NISHTYAK_DOMAIN": self.domain,
@@ -107,6 +110,7 @@ class DeploymentConfig:
             "DEEPSEEK_API_KEY": api_key,
             "DEEPSEEK_MODEL": model,
             "NISHTYAK_ACCOUNT_SESSION_SECONDS": "604800",
+            "NISHTYAK_MAX_STORAGE_BYTES": storage_bytes,
             "NISHTYAK_MAX_OWNER_STORAGE_BYTES": "268435456",
         }
         return "".join(f"{key}={value}\n" for key, value in values.items())

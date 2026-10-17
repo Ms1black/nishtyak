@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from nishtyak_service.config import Settings
+
 
 def load_script(name, relative):
     path = Path(__file__).resolve().parents[1] / relative
@@ -167,6 +169,7 @@ def test_configuration_generates_private_file_and_preserves_existing_credentials
     assert len(values["NISHTYAK_SERVICE_TOKEN"]) == 64
     assert values["NISHTYAK_AUTOMATIC_REVIEW"] == "1"
     assert values["NISHTYAK_DOCKER_GID"] == "999"
+    assert values["NISHTYAK_MAX_STORAGE_BYTES"] == "2147483648"
     assert "DEEPSEEK_API_KEY=sk-example-private-token\n" in content
     destination = tmp_path / ".env"
     EnvironmentWriter().write(destination, content)
@@ -175,6 +178,32 @@ def test_configuration_generates_private_file_and_preserves_existing_credentials
         EnvironmentWriter().write(destination, "replacement")
     assert destination.read_text() == content
     assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_configured_global_storage_budget_reaches_logic_and_dispatcher(monkeypatch):
+    budget = str(16 * 1024**3)
+    content = DeploymentConfig("https://example.org", docker_gid=999).render(
+        {"NISHTYAK_MAX_STORAGE_BYTES": budget}
+    )
+    values = dict(line.split("=", 1) for line in content.splitlines())
+    assert values["NISHTYAK_MAX_STORAGE_BYTES"] == budget
+    path = Path(__file__).resolve().parents[1] / "deploy" / "production-compose.yaml"
+    services = yaml.safe_load(path.read_text())["services"]
+    for name in ("logic", "dispatcher"):
+        assert services[name]["environment"]["NISHTYAK_MAX_STORAGE_BYTES"] == (
+            "${NISHTYAK_MAX_STORAGE_BYTES:-2147483648}"
+        )
+        with monkeypatch.context() as environment:
+            environment.setenv("NISHTYAK_MAX_STORAGE_BYTES", values["NISHTYAK_MAX_STORAGE_BYTES"])
+            assert Settings.from_env().max_storage_bytes == 16 * 1024**3
+
+
+@pytest.mark.parametrize("budget", ["", "0", "-1", "1.5", "16GiB", "1\nOTHER=value"])
+def test_configuration_rejects_invalid_storage_budget_or_env_injection(budget):
+    with pytest.raises(ValueError, match="positive byte count"):
+        DeploymentConfig("https://example.org", docker_gid=999).render(
+            {"NISHTYAK_MAX_STORAGE_BYTES": budget}
+        )
 
 
 def test_configuration_does_not_follow_destination_symlink(tmp_path):
