@@ -205,14 +205,61 @@ def review_to_web(value: dict | None) -> dict | None:
     return result
 
 
-def analysis_status(report: dict | None, status: str) -> str:
+def analysis_status(
+    report: dict | None,
+    status: str,
+    preparation: dict | None = None,
+    job: dict | None = None,
+) -> str:
     if status in {"queued", "running"}:
         return "analyzing"
     if status != "succeeded" or report is None:
         return "failed"
-    if report.get("status") != "complete" or any(
-        item["category"] == "unresolved" for item in report.get("dependencies", [])
+    plan = (preparation or {}).get("plan") or (job or {}).get("preparation_summary") or {}
+    if (plan.get("report") or {}).get("analysis_id", report.get("analysis_id")) != report.get(
+        "analysis_id"
     ):
+        plan = {}
+    background = job or preparation or {}
+    automation = plan.get("automation") or background.get("automation")
+    if automation is not None:
+        if automation.get("phase") in {"static", "assisting", "validating", "finalizing"}:
+            return "analyzing"
+    elif any(
+        (plan.get(key) or background.get(key) or {}).get("status") in {"pending", "running"}
+        for key in ("automatic_review", "automatic_resolution")
+    ):
+        return "analyzing"
+    # Resolving package names does not fill gaps in parsing, layout or manifest coverage.
+    if report.get("status") != "complete":
+        return "partial"
+    if "findings" in plan:
+        if plan.get("state") == "blocked" or (automation or {}).get("phase") == "needs_input":
+            return "partial"
+        incomplete_codes = {
+            "DEPENDENCY_UNRESOLVED",
+            "DECLARATION_IMPORT_UNRESOLVED",
+            "DIRECT_REFERENCE_UNVERIFIED",
+            "INVALID_DECLARED_REQUIREMENT",
+            "DEPENDENCY_CONFLICT",
+            "LOCAL_MODULE_MISSING",
+            "LOCAL_MODULE_EXCLUDED",
+            "LOCAL_IMPORT_NAME_UNRESOLVED",
+            "LOCAL_IMPORT_CONTEXT_AMBIGUOUS",
+            "LOCAL_IMPORT_CONTEXT_REQUIRED",
+            "PROJECT_ROOT_AMBIGUOUS",
+            "SOURCE_ROOT_MISSING",
+            "SOURCE_PARSE_ERROR",
+            "SYNTAX_ERROR",
+            "SOURCE_TOO_LARGE",
+            "FILE_LIMIT_EXCEEDED",
+            "PYTHON_PROFILE_UNSUPPORTED",
+            "DYNAMIC_IMPORT_UNRESOLVED",
+        }
+        if any(item.get("code") in incomplete_codes for item in plan["findings"]):
+            return "partial"
+        return "full"
+    if any(item["category"] == "unresolved" for item in report.get("dependencies", [])):
         return "partial"
     return "full"
 
@@ -255,17 +302,10 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
     review = job.get("automatic_review")
     resolution = job.get("automatic_resolution")
     automation = plan.get("automation") or job.get("automation")
-    preparing = (
-        automation.get("phase") in {"static", "assisting", "validating", "finalizing"}
-        if automation is not None
-        else any(
-            (item or {}).get("status") in {"pending", "running"} for item in (review, resolution)
-        )
-    )
     return {
         "analysisId": report.get("analysis_id", ""),
         "projectId": project_id,
-        "status": "analyzing" if preparing else analysis_status(report or None, job["status"]),
+        "status": analysis_status(report or None, job["status"], preparation, job),
         "automaticReview": review_to_web(plan.get("automatic_review") or review),
         "automaticResolution": resolution_to_web(plan.get("automatic_resolution") or resolution),
         "automaticPackages": automatic_packages,

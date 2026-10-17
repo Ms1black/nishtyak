@@ -3021,6 +3021,10 @@ components:
             type: object
           - type: 'null'
           title: Automation
+        preparation_summary:
+          anyOf:
+          - $ref: '#/components/schemas/PreparationSummaryDTO'
+          - type: 'null'
       additionalProperties: false
       type: object
       required:
@@ -3183,6 +3187,25 @@ components:
       additionalProperties: false
       type: object
       title: PackageSafetyDTO
+    PreparationAutomationSummaryDTO:
+      properties:
+        phase:
+          type: string
+          enum:
+          - static
+          - assisting
+          - validating
+          - finalizing
+          - needs_input
+          - ready
+          - draft
+          - blocked
+          title: Phase
+      additionalProperties: false
+      type: object
+      required:
+      - phase
+      title: PreparationAutomationSummaryDTO
     PreparationDTO:
       properties:
         project_id:
@@ -3218,6 +3241,56 @@ components:
       - plan
       - launch
       title: PreparationDTO
+    PreparationFindingSummaryDTO:
+      properties:
+        code:
+          type: string
+          maxLength: 128
+          minLength: 1
+          title: Code
+      additionalProperties: false
+      type: object
+      required:
+      - code
+      title: PreparationFindingSummaryDTO
+    PreparationReportSummaryDTO:
+      properties:
+        analysis_id:
+          type: string
+          pattern: ^[a-f0-9]{20}$
+          title: Analysis Id
+      additionalProperties: false
+      type: object
+      required:
+      - analysis_id
+      title: PreparationReportSummaryDTO
+    PreparationSummaryDTO:
+      properties:
+        report:
+          $ref: '#/components/schemas/PreparationReportSummaryDTO'
+        state:
+          type: string
+          enum:
+          - ready_to_verify
+          - draft
+          - blocked
+          title: State
+        findings:
+          items:
+            $ref: '#/components/schemas/PreparationFindingSummaryDTO'
+          type: array
+          title: Findings
+        automation:
+          anyOf:
+          - $ref: '#/components/schemas/PreparationAutomationSummaryDTO'
+          - type: 'null'
+      additionalProperties: false
+      type: object
+      required:
+      - report
+      - state
+      - findings
+      title: PreparationSummaryDTO
     ProjectAdviceDTO:
       properties:
         feature:

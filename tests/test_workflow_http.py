@@ -121,10 +121,13 @@ def test_backend_sdk_full_saved_workflow_and_reanalysis(workflow_client):
     assert plan["state"] == "ready_to_verify", plan
     assert "numpy==1.26.4" in plan["requirements"]
     assert "matplotlib>=3" in plan["requirements"]
-    package = client.bundle(identity, saved["decisions"], include_dockerfile=True)
+    with pytest.raises(LogicClientError) as unlocked_docker:
+        client.bundle(identity, saved["decisions"], include_dockerfile=True)
+    assert unlocked_docker.value.code == "EXPORT_INVALID"
+    package = client.bundle(identity, saved["decisions"], include_dockerfile=False)
     with zipfile.ZipFile(io.BytesIO(package)) as archive:
         assert "run_project.py" in archive.namelist()
-        assert "Dockerfile" in archive.namelist()
+        assert "Dockerfile" not in archive.namelist()
         assert json.loads(archive.read("analysis-report.json"))["decisions"]["selected_extras"] == [
             "plot"
         ]

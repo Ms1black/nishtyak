@@ -432,6 +432,8 @@ def test_static_spa_fallback_never_serves_api_or_outside_files(gateway, tmp_path
         client=("127.0.0.1", 12345),
     ) as client:
         assert client.get("/projects/example").text == "<html>application</html>"
+        for path in ("/", "/index.html", "/team/members", "/team/invite"):
+            assert client.get(path).headers["cache-control"] == "no-cache"
         assert client.get("/app.js").status_code == 200
         assert "frame-ancestors 'none'" in client.get("/").headers["content-security-policy"]
         assert client.get("/api/missing").status_code == 404

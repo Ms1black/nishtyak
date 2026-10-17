@@ -46,19 +46,26 @@ class BrowserService:
     def list(self, identity: WorkspaceIdentity, team_id: str) -> list[dict]:
         self._team(identity, team_id)
         result = []
+        refresh_available = True
         for record in self.store.list(identity.scope):
             try:
-                if json.loads(record["job"])["status"] in {"queued", "running"}:
+                if refresh_available:
                     record = self._refresh(identity, record)
-                result.append(self._project(record))
             except LogicClientError as error:
-                if error.status != 404:
+                if error.status not in {404, 429, 502, 503, 504} and not (
+                    error.status == 409 and error.code == "ANALYSIS_STALE"
+                ):
                     raise
+                # A missing job or an unavailable backend is not a request to delete a project.
+                if error.status in {429, 502, 503, 504}:
+                    refresh_available = False
                 try:
-                    self.store.delete(identity.scope, record["id"])
-                except LogicClientError as delete_error:
-                    if delete_error.status != 404:
+                    record = self.store.get(identity.scope, record["id"])
+                except LogicClientError as lookup_error:
+                    if lookup_error.status != 404:
                         raise
+                    continue
+            result.append(self._project(record))
         return result
 
     def project(self, identity: WorkspaceIdentity, project_id: str) -> dict:
@@ -573,7 +580,7 @@ class BrowserService:
     def _project(record: dict) -> dict:
         job = json.loads(record["job"])
         report = job.get("analysis")
-        status = analysis_status(report, job["status"])
+        status = analysis_status(report, job["status"], job=job)
         archive = {"status": "unavailable" if status in {"analyzing", "failed"} else "not_built"}
         if (
             record["archive_tag"] is not None

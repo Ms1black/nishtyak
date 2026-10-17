@@ -506,6 +506,7 @@ def create_app(
             return FileResponse(
                 candidate,
                 headers={
+                    **({"Cache-Control": "no-cache"} if candidate == index else {}),
                     "X-Content-Type-Options": "nosniff",
                     "Content-Security-Policy": (
                         "default-src 'self'; script-src 'self'; "

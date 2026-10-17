@@ -213,6 +213,16 @@ class LogicService:
             result["automatic_review"] = self.automatic_review.status(record, report)
             result["automatic_resolution"] = self.automatic_resolution.status(record)
             result["automation"] = self.automation.status(record)
+            plan = self._prepare(
+                report, self._decisions(owner, record.project_id, report, None), record
+            )
+            result["preparation_summary"] = {
+                "report": {"analysis_id": report.analysis_id},
+                "state": plan.state,
+                "findings": [{"code": code} for code in sorted({f.code for f in plan.findings})],
+                **({"automation": {"phase": plan.automation["phase"]}} if plan.automation else {}),
+            }
+            self._require_current(record, report)
         elif record.error_code:
             result["error"] = {
                 "code": record.error_code,

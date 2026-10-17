@@ -238,6 +238,34 @@ class PreparationDTO(BaseModel):
     automation: dict | None = None
 
 
+class PreparationReportSummaryDTO(StrictDTO):
+    analysis_id: AnalysisId
+
+
+class PreparationFindingSummaryDTO(StrictDTO):
+    code: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+
+
+class PreparationAutomationSummaryDTO(StrictDTO):
+    phase: Literal[
+        "static",
+        "assisting",
+        "validating",
+        "finalizing",
+        "needs_input",
+        "ready",
+        "draft",
+        "blocked",
+    ]
+
+
+class PreparationSummaryDTO(StrictDTO):
+    report: PreparationReportSummaryDTO
+    state: Literal["ready_to_verify", "draft", "blocked"]
+    findings: list[PreparationFindingSummaryDTO]
+    automation: PreparationAutomationSummaryDTO | None = None
+
+
 class JobDTO(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -251,3 +279,4 @@ class JobDTO(BaseModel):
     automatic_review: dict | None = None
     automatic_resolution: dict | None = None
     automation: dict | None = None
+    preparation_summary: PreparationSummaryDTO | None = None
