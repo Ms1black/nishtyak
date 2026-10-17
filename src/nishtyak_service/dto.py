@@ -28,6 +28,10 @@ class StrictDTO(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
 
+class PackageSafetyDTO(StrictDTO):
+    lock_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
+
+
 class AnalysisOptionsDTO(StrictDTO):
     python_version: PythonVersion = AnalysisOptions().python_version
     python_version_auto: bool = False

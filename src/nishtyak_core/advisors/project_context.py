@@ -11,6 +11,7 @@ from typing import Any
 from ..models import AnalysisReport, ProjectSnapshot, stable_id
 from ..redaction import TextRedactor
 from ..snapshot import SnapshotBuilder
+from .prompt_guard import PromptGuard
 from .source_map import PythonSourceMap
 
 MAX_CONTEXT_BYTES = 196_608
@@ -27,10 +28,16 @@ class ProjectTextFilter(TextRedactor):
     _opaque = re.compile(r"(?<![\w/])[A-Za-z0-9_+/=-]{24,}(?![\w/])")
 
     def redact(self, text: str) -> str:
-        text = super().redact(text)
-        text = self._credentials.sub("[REDACTED]", text)
-        text = self._urls.sub("[URL REMOVED]", self._assignments.sub("[REDACTED]", text))
-        return self._opaque.sub(self._replace_opaque, text)
+        # Keep source line numbers stable even for a multiline secret or injection.
+        for pattern in self.patterns:
+            text = pattern.sub(self._replace_secret, text)
+        text = self._credentials.sub(self._replace_secret, text)
+        text = self._urls.sub("[URL REMOVED]", self._assignments.sub(self._replace_secret, text))
+        return PromptGuard.redact(self._opaque.sub(self._replace_opaque, text))
+
+    @staticmethod
+    def _replace_secret(match: re.Match[str]) -> str:
+        return "[REDACTED]" + "".join(re.findall(r"\r\n|\r|\n", match.group()))
 
     @staticmethod
     def _replace_opaque(match: re.Match[str]) -> str:
@@ -382,9 +389,11 @@ class SafeProjectContext:
             seen.add(file["id"])
             if not isinstance(file["path"], str) or len(file["path"]) > 1024:
                 raise ValueError("Invalid project advisor file path")
-            if SnapshotBuilder.normalize_path(file["path"]) != file[
-                "path"
-            ] or not cls._allowed_path(file["path"]):
+            if (
+                SnapshotBuilder.normalize_path(file["path"]) != file["path"]
+                or not cls._allowed_path(file["path"])
+                or ProjectTextFilter().redact(file["path"]) != file["path"]
+            ):
                 raise ValueError("Forbidden project advisor file path")
             if type(file["size"]) is not int or not 0 <= file["size"] <= 50_000_000:
                 raise ValueError("Invalid project advisor file size")
@@ -459,6 +468,8 @@ class SafeProjectContext:
             raise ValueError("Invalid project advisor omitted count")
         # Apply redaction again after crossing a process boundary, including unknown fact fields.
         safe = ProjectTextFilter().redact_value(json.loads(raw))
+        if len(json.dumps(safe, ensure_ascii=False).encode("utf-8")) > MAX_CONTEXT_BYTES:
+            raise ValueError("Project advisor context too large")
         return cls(
             safe["analysis_id"],
             safe["fingerprint"],

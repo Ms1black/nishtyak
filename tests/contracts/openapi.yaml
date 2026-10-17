@@ -1730,6 +1730,118 @@ paths:
           description: Insufficient Storage
       security:
       - ServiceToken: []
+  /v1/projects/{project_id}/package-safety:
+    post:
+      summary: Package Safety
+      operationId: package_safety_v1_projects__project_id__package_safety_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PackageSafetyDTO'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Package Safety V1 Projects  Project Id  Package Safety
+                  Post
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
   /v1/projects/{project_id}/lock:
     get:
       summary: Get Lock
@@ -3060,6 +3172,17 @@ components:
       - findings
       - state
       title: PackagePlan
+    PackageSafetyDTO:
+      properties:
+        lock_id:
+          anyOf:
+          - type: string
+            pattern: ^[a-f0-9]{64}$
+          - type: 'null'
+          title: Lock Id
+      additionalProperties: false
+      type: object
+      title: PackageSafetyDTO
     PreparationDTO:
       properties:
         project_id:

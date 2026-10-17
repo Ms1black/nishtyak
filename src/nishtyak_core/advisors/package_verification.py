@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from dataclasses import asdict
 
 from packaging.utils import canonicalize_name
 
+from .. import package_safety
 from ..providers import ProviderLookupError, PublishedDistributionInspector
 
 
@@ -33,6 +35,7 @@ class PublishedPackageVerifier:
             or not 0 < timeout <= 15
         ):
             raise PackageVerificationError("package_mapping_invalid")
+        deadline = time.monotonic() + timeout
         try:
             evidence = self.inspector.inspect(package, timeout=min(timeout, 10))
             if canonicalize_name(evidence.package) != canonicalize_name(
@@ -41,7 +44,26 @@ class PublishedPackageVerifier:
                 raise PackageVerificationError("package_mapping_unverified")
             if not evidence.provides(module):
                 raise PackageVerificationError("package_does_not_provide_module")
-            return {**asdict(evidence), "module": module, "execution_verified": False}
+            safety = (
+                package_safety.get_package_safety_client()
+                .check(
+                    [package_safety.PackageVersion(evidence.package, evidence.observed_release)],
+                    deadline=deadline,
+                )
+                .to_dict()
+            )
+            if safety["status"] != "checked":
+                raise PackageVerificationError(
+                    "package_known_malicious"
+                    if safety["status"] == "blocked"
+                    else "package_safety_unavailable"
+                )
+            return {
+                **asdict(evidence),
+                "module": module,
+                "execution_verified": False,
+                "package_safety": safety,
+            }
         except PackageVerificationError:
             raise
         except ProviderLookupError as error:

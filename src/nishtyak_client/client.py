@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+PACKAGE_SAFETY_SOURCE = "https://api.osv.dev/v1/querybatch"
 
 
 class LogicClientError(Exception):
@@ -257,6 +261,107 @@ class LogicClient:
         return self._request(
             "POST", self._project_path(project_id) + "/bundle", self._json(body), binary=True
         )
+
+    def package_safety(self, project_id: str, lock_id: str | None = None) -> dict:
+        path = self._project_path(project_id) + "/package-safety"
+        if lock_id is not None and (
+            not isinstance(lock_id, str) or not re.fullmatch(r"[a-f0-9]{64}", lock_id)
+        ):
+            raise ValueError("Invalid dependency lock ID")
+        try:
+            report = self._request("POST", path, self._json({"lock_id": lock_id}))
+        except LogicClientError as error:
+            if error.status == 409 and error.code == "PACKAGE_MALICIOUS":
+                raise LogicClientError(
+                    409,
+                    "PACKAGE_MALICIOUS",
+                    "Обнаружена известная вредоносная зависимость. Выдача архива заблокирована.",
+                ) from None
+            raise LogicClientError(
+                503,
+                "PACKAGE_SAFETY_UNAVAILABLE",
+                "Проверка зависимостей по OSV не завершена. Повторите попытку позже.",
+            ) from None
+        return self.validate_package_safety(report, project_id, lock_id)
+
+    @staticmethod
+    def validate_package_safety(report: object, project_id: str, lock_id: str | None) -> dict:
+        def timestamp(value: object) -> bool:
+            if not isinstance(value, str) or len(value) > 64:
+                return False
+            try:
+                parsed = datetime.fromisoformat(
+                    value[:-1] + "+00:00" if value.endswith("Z") else value
+                )
+                return parsed.utcoffset() == timedelta(0) and math.isfinite(parsed.timestamp())
+            except (ValueError, OverflowError, OSError):
+                return False
+
+        def identifiers(value: object) -> bool:
+            return (
+                isinstance(value, list)
+                and len(value) <= 2000
+                and all(
+                    isinstance(item, str)
+                    and 0 < len(item) <= 200
+                    and item.isascii()
+                    and all(33 <= ord(char) <= 126 for char in item)
+                    for item in value
+                )
+            )
+
+        def valid() -> bool:
+            if not isinstance(report, dict) or report.get("status") not in (
+                "checked",
+                "blocked",
+                "unavailable",
+            ):
+                return False
+            if (
+                report.get("project_id") != project_id
+                or "lock_id" not in report
+                or report["lock_id"] != lock_id
+                or report.get("source") != PACKAGE_SAFETY_SOURCE
+                or not timestamp(report.get("checked_at"))
+            ):
+                return False
+            packages = report.get("packages")
+            if not isinstance(packages, list) or len(packages) > 2000:
+                return False
+            for package in packages:
+                if not isinstance(package, dict):
+                    return False
+                name = package.get("name")
+                version = package.get("version")
+                status = package.get("status")
+                if (
+                    not isinstance(name, str)
+                    or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9])?", name)
+                    or (
+                        version is not None
+                        and (not isinstance(version, str) or not 0 < len(version) <= 200)
+                    )
+                    or "version" not in package
+                    or status not in ("checked", "blocked", "unavailable")
+                    or package.get("source") != PACKAGE_SAFETY_SOURCE
+                    or not timestamp(package.get("checked_at"))
+                    or not identifiers(package.get("advisory_ids"))
+                    or not identifiers(package.get("malicious_ids"))
+                ):
+                    return False
+                if report["status"] == "checked" and (
+                    status != "checked" or package["malicious_ids"]
+                ):
+                    return False
+            return True
+
+        if not valid():
+            raise LogicClientError(
+                503,
+                "PACKAGE_SAFETY_UNAVAILABLE",
+                "Проверка зависимостей по OSV не завершена. Повторите попытку позже.",
+            )
+        return report
 
     def delete(self, project_id: str) -> None:
         self._request("DELETE", self._project_path(project_id))

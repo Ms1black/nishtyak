@@ -484,6 +484,36 @@ class BrowserService:
                 raise LogicClientError(
                     409, "ARCHIVE_STALE", "Dependency lock changed; rebuild the archive"
                 )
+            try:
+                report = LogicClient.validate_package_safety(
+                    client.package_safety(project_id, lock_id=tag["lock"]), project_id, tag["lock"]
+                )
+            except LogicClientError as error:
+                if error.status == 409 and error.code == "PACKAGE_MALICIOUS":
+                    raise
+                raise LogicClientError(
+                    503,
+                    "PACKAGE_SAFETY_UNAVAILABLE",
+                    "Проверка зависимостей по OSV не завершена. Повторите попытку позже.",
+                ) from None
+            except (AttributeError, TypeError, ValueError):
+                raise LogicClientError(
+                    503,
+                    "PACKAGE_SAFETY_UNAVAILABLE",
+                    "Проверка зависимостей по OSV не завершена. Повторите попытку позже.",
+                ) from None
+            if report["status"] == "blocked":
+                raise LogicClientError(
+                    409,
+                    "PACKAGE_MALICIOUS",
+                    "Обнаружена известная вредоносная зависимость. Выдача архива заблокирована.",
+                )
+            if report["status"] != "checked":
+                raise LogicClientError(
+                    503,
+                    "PACKAGE_SAFETY_UNAVAILABLE",
+                    "Проверка зависимостей по OSV не завершена. Повторите попытку позже.",
+                )
             content = (self.store.root / project_id / "bundle.zip").read_bytes()
             if len(content) != record["archive_size"] or hashlib.sha256(
                 content

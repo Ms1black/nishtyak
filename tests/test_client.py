@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -21,6 +22,9 @@ def local_servers(monkeypatch):
     def start(respond):
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                respond(self)
+
+            def do_POST(self):
                 respond(self)
 
             def log_message(self, format, *args):
@@ -128,7 +132,13 @@ def test_object_identifiers_are_rejected_before_any_request(monkeypatch, identif
         pytest.fail("Invalid object identifiers must never reach the transport")
 
     monkeypatch.setattr(client, "_request", unexpected_request)
-    for operation in (client.project, client.job, client.decisions, client.delete):
+    for operation in (
+        client.project,
+        client.job,
+        client.decisions,
+        client.delete,
+        client.package_safety,
+    ):
         with pytest.raises(ValueError, match="object ID"):
             operation(identifier)
 
@@ -148,6 +158,139 @@ def test_json_request_limits_apply_before_any_request(monkeypatch):
         client.submit(b"PK", author_environment={"platform": "x" * 262144})
     with pytest.raises(ValueError):
         client.plan(PROJECT_ID, {"value": float("nan")})
+
+
+def safety_report(lock_id=None, status="checked"):
+    source = "https://api.osv.dev/v1/querybatch"
+    checked_at = "2026-10-17T12:00:00Z"
+    return {
+        "status": status,
+        "source": source,
+        "checked_at": checked_at,
+        "project_id": PROJECT_ID,
+        "lock_id": lock_id,
+        "packages": [
+            {
+                "name": "numpy",
+                "version": "2.4.6",
+                "status": status,
+                "advisory_ids": ["MAL-2026-1"] if status == "blocked" else [],
+                "malicious_ids": ["MAL-2026-1"] if status == "blocked" else [],
+                "source": source,
+                "checked_at": checked_at,
+                "reason": None,
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize("lock_id", [None, "b" * 64])
+def test_package_safety_binds_receipt_to_project_and_exact_archive_lock(local_servers, lock_id):
+    requests = []
+    report = safety_report(lock_id)
+
+    def respond(handler):
+        requests.append(
+            (handler.path, json.loads(handler.rfile.read(int(handler.headers["Content-Length"]))))
+        )
+        body = json.dumps(report).encode()
+        handler.send_response(200)
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    client = LogicClient(local_servers(respond), TOKEN, OWNER)
+    assert client.package_safety(PROJECT_ID, lock_id) == report
+    assert requests == [(f"/v1/projects/{PROJECT_ID}/package-safety", {"lock_id": lock_id})]
+
+
+@pytest.mark.parametrize("status", ["checked", "blocked", "unavailable"])
+def test_package_safety_retains_evidence_status_without_claiming_safe(monkeypatch, status):
+    report = safety_report(status=status)
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    monkeypatch.setattr(client, "_request", lambda *a, **kw: report)
+    assert client.package_safety(PROJECT_ID) == report
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"status": "safe"},
+        {"status": None},
+        {"status": []},
+        {"packages": None},
+        {"packages": ["numpy"]},
+        {"packages": [{}] * 2001},
+        {"project_id": "c" * 32},
+        {"lock_id": "d" * 64},
+        {"source": "https://untrusted.example/report"},
+        {"checked_at": None},
+        {"checked_at": 123.0},
+        {"checked_at": "2026-10-17"},
+        {"checked_at": "2026-10-17T12:00:00+03:00"},
+    ],
+)
+def test_package_safety_rejects_malformed_or_unbound_receipts(monkeypatch, patch):
+    report = {**safety_report(), **patch}
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    monkeypatch.setattr(client, "_request", lambda *a, **kw: report)
+    with pytest.raises(LogicClientError) as caught:
+        client.package_safety(PROJECT_ID)
+    assert (caught.value.status, caught.value.code) == (503, "PACKAGE_SAFETY_UNAVAILABLE")
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"status": "unavailable"},
+        {"status": "blocked"},
+        {"status": "safe"},
+        {"malicious_ids": ["MAL-2026-1"]},
+        {"advisory_ids": None},
+        {"malicious_ids": [None]},
+        {"name": "../numpy"},
+        {"version": []},
+        {"source": "https://untrusted.example/report"},
+        {"checked_at": "not-a-date"},
+    ],
+)
+def test_checked_receipt_cannot_hide_unchecked_or_malicious_package_results(monkeypatch, patch):
+    report = deepcopy(safety_report())
+    report["packages"][0].update(patch)
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    monkeypatch.setattr(client, "_request", lambda *a, **kw: report)
+    with pytest.raises(LogicClientError) as caught:
+        client.package_safety(PROJECT_ID)
+    assert (caught.value.status, caught.value.code) == (503, "PACKAGE_SAFETY_UNAVAILABLE")
+
+
+def test_checked_package_wide_query_does_not_invent_an_exact_version(monkeypatch):
+    report = safety_report()
+    report["packages"][0].update(version=None, scope="package")
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    monkeypatch.setattr(client, "_request", lambda *a, **kw: report)
+    assert client.package_safety(PROJECT_ID)["packages"][0]["version"] is None
+
+
+@pytest.mark.parametrize("lock_id", ["bad", "b" * 63, "B" * 64, False])
+def test_package_safety_rejects_invalid_lock_before_transport(monkeypatch, lock_id):
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    monkeypatch.setattr(
+        client, "_request", lambda *a, **kw: pytest.fail("Invalid lock reached transport")
+    )
+    with pytest.raises(ValueError, match="lock ID"):
+        client.package_safety(PROJECT_ID, lock_id)
+
+
+def test_package_safety_transport_failure_is_an_explicit_unavailable_gate(monkeypatch):
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+
+    def fail(*args, **kwargs):
+        raise LogicClientError(502, "RESPONSE_INVALID", "Untrusted response")
+
+    monkeypatch.setattr(client, "_request", fail)
+    with pytest.raises(LogicClientError) as caught:
+        client.package_safety(PROJECT_ID)
+    assert (caught.value.status, caught.value.code) == (503, "PACKAGE_SAFETY_UNAVAILABLE")
 
 
 def test_wait_includes_automatic_environment_preparation(monkeypatch):

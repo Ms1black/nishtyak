@@ -30,6 +30,7 @@ from .dto import (
     DecisionsDTO,
     ErrorDTO,
     JobDTO,
+    PackageSafetyDTO,
     PreparationDTO,
     ProjectAdviceDTO,
     ProjectReportDTO,
@@ -447,6 +448,14 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
             project_id,
             ResolutionTarget(**body.target.model_dump()),
             body.decisions.to_core() if body.decisions else None,
+        )
+
+    @app.post("/v1/projects/{project_id}/package-safety", responses=ERROR_RESPONSES)
+    async def package_safety(
+        request: Request, project_id: ProjectId, body: PackageSafetyDTO
+    ) -> dict[str, Any]:
+        return await run_in_threadpool(
+            logic.package_safety, request.state.owner_id, project_id, body.lock_id
         )
 
     @app.get(

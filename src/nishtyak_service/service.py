@@ -50,6 +50,11 @@ class LogicService:
 
     def capabilities(self) -> dict:
         return {
+            "package_safety": {
+                "source": "https://api.osv.dev/v1/querybatch",
+                "known_malware_blocked": True,
+                "unavailable_blocks_export": True,
+            },
             "automatic_review": self.automatic_review.capabilities(),
             "automatic_resolution": self.automatic_resolution.capabilities(),
             "automation": {
@@ -280,6 +285,13 @@ class LogicService:
                 )
                 if lock is not None and lock_id is not None and lock.id != lock_id:
                     raise ServiceError(409, "LOCK_STALE", "Dependency lock was replaced")
+                safety = (
+                    self.automatic_resolution.safety.inspect_lock(lock)
+                    if lock is not None
+                    else self.automatic_resolution.safety.inspect(plan.requirements)
+                )
+                self.automatic_resolution.safety.require_checked(safety)
+                plan = self.automatic_resolution.safety.enrich(plan, safety)
                 generated = self.core.render(
                     plan,
                     include_dockerfile=include_dockerfile,
@@ -386,10 +398,26 @@ class LogicService:
             except ResolutionError as error:
                 status = 503 if error.code in {"RESOLVER_UNAVAILABLE", "INDEX_UNAVAILABLE"} else 422
                 raise ServiceError(status, error.code, str(error)) from None
+            safety = self.automatic_resolution.safety.inspect_lock(lock)
+            self.automatic_resolution.safety.require_checked(safety)
             self.repository.save_lock(owner, project_id, lock)
-            self.automatic_resolution.record_lock(record, plan, lock)
+            self.automatic_resolution.record_lock(record, plan, lock, safety)
         self.repository.get_project(owner, project_id)
         return lock.to_dict()
+
+    def package_safety(self, owner: str, project_id: str, lock_id: str | None = None) -> dict:
+        self.repository.consume_rate(owner, "package-safety", 120)
+        with self.repository.operation(owner, project_id) as record:
+            report = self.repository.read_report(record)
+            plan = self._prepare(report, self._decisions(owner, project_id, report, None), record)
+            if lock_id is None:
+                result = self.automatic_resolution.safety.inspect(plan.requirements)
+            else:
+                lock = self.repository.read_lock(owner, project_id)
+                if lock.id != lock_id:
+                    raise ServiceError(409, "LOCK_STALE", "Dependency lock was replaced")
+                result = self.automatic_resolution.safety.inspect_lock(lock)
+        return {**result, "project_id": project_id, "lock_id": lock_id}
 
     def get_lock(self, owner: str, project_id: str) -> dict:
         self.repository.consume_rate(owner, "read", 120)

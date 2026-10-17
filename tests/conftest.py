@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from nishtyak_core import package_safety
 from nishtyak_core.providers import ProviderEvidence, ProviderLookupError
+
+
+@pytest.fixture(autouse=True)
+def offline_package_safety(monkeypatch):
+    """Workflow tests use explicit empty advisory data; transport tests cover real parsing."""
+
+    class AdvisoryTransport:
+        def post(self, payload, *, deadline, max_bytes):
+            queries = json.loads(payload)["queries"]
+            return json.dumps({"results": [{} for _ in queries]}).encode()
+
+    client = package_safety.PackageSafetyClient(AdvisoryTransport(), cache_ttl=0)
+    monkeypatch.setattr(package_safety, "get_package_safety_client", lambda: client)
+    return client
 
 
 @pytest.fixture(autouse=True)

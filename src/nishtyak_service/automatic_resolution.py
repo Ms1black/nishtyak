@@ -16,6 +16,7 @@ from nishtyak_core.models import PackagePlan, UserDecisions, stable_id
 from nishtyak_core.python_targets import select_python_target
 
 from .errors import ServiceError
+from .package_safety import DependencySafety
 from .storage import JobRecord, SQLiteJobRepository
 
 
@@ -66,6 +67,7 @@ class AutomaticDependencyResolution:
 
     def __init__(self, repository: SQLiteJobRepository):
         self.repository = repository
+        self.safety = DependencySafety()
 
     def capabilities(self) -> dict:
         return {
@@ -103,7 +105,8 @@ class AutomaticDependencyResolution:
             metadata.update(cached, target=asdict(target))
         except ResolutionError as error:
             metadata = {"status": "needs_input", "reason": error.code}
-        return replace(plan, automatic_resolution=metadata)
+        plan = replace(plan, automatic_resolution=metadata)
+        return self.safety.enrich(plan, metadata.get("package_safety"))
 
     def queue_if_changed(self, record: JobRecord, plan: PackagePlan) -> None:
         if not self.repository.settings.automatic_resolution:
@@ -128,6 +131,7 @@ class AutomaticDependencyResolution:
                     "context_id": self._context_id(plan),
                     "lock_id": None,
                     "packages": [],
+                    "package_safety": None,
                 },
             )
 
@@ -171,6 +175,7 @@ class AutomaticDependencyResolution:
 
     def _resolve(self, record: JobRecord, plan: PackagePlan) -> None:
         started = time.monotonic()
+        target = None
         result = {
             "status": "unavailable",
             "provenance": self.provenance,
@@ -202,6 +207,8 @@ class AutomaticDependencyResolution:
             self.repository.consume_rate("_service", "automatic-resolve-global", 20)
             self.repository.save_resolution(record, {**result, "status": "running"})
             lock = VersionResolver(timeout=self.budget_seconds).resolve(plan, target)
+            result["package_safety"] = self.safety.inspect_lock(lock)
+            self.safety.require_checked(result["package_safety"])
             self.repository.save_lock(record.owner_id, record.project_id, lock)
             result.update(
                 status="ready", reason=None, lock_id=lock.id, packages=list(lock.packages)
@@ -214,16 +221,34 @@ class AutomaticDependencyResolution:
         except ServiceError as error:
             result.update(
                 status="unavailable",
-                reason="RESOLUTION_QUOTA" if error.status == 429 else "RESOLUTION_UNAVAILABLE",
+                reason=error.code
+                if error.code in {"PACKAGE_MALICIOUS", "PACKAGE_SAFETY_UNAVAILABLE"}
+                else "RESOLUTION_QUOTA"
+                if error.status == 429
+                else "RESOLUTION_UNAVAILABLE",
             )
         except Exception:
             # A resolver or index failure leaves a usable, honestly labelled dependency draft.
             result.update(status="unavailable", reason="RESOLUTION_UNAVAILABLE")
         finally:
+            if "package_safety" not in result and plan.state != "blocked":
+                result["package_safety"] = self.safety.inspect(plan.requirements, target)
+            safety = result.get("package_safety")
+            if safety is not None and safety["status"] != "checked":
+                result.update(
+                    status="unavailable",
+                    reason="PACKAGE_MALICIOUS"
+                    if safety["status"] == "blocked"
+                    else "PACKAGE_SAFETY_UNAVAILABLE",
+                )
+            if safety is not None:
+                result["package_safety"] = self.safety.compact(safety)
             result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
             self.repository.save_resolution(record, result)
 
-    def record_lock(self, record: JobRecord, plan: PackagePlan, lock: DependencyLock) -> None:
+    def record_lock(
+        self, record: JobRecord, plan: PackagePlan, lock: DependencyLock, safety: dict | None = None
+    ) -> None:
         if self.repository.read_resolution(record) is None:
             return
         _, metadata = self._target(plan)
@@ -251,6 +276,9 @@ class AutomaticDependencyResolution:
                 "input_id": lock.input_id,
                 "context_id": self._context_id(plan),
                 "elapsed_ms": 0,
+                "package_safety": self.safety.compact(
+                    safety if safety is not None else self.safety.inspect_lock(lock)
+                ),
             },
         )
 
@@ -302,11 +330,12 @@ class AutomaticDependencyResolution:
     def _context_id(self, plan: PackagePlan) -> str:
         relevant = self._incomplete | self._unsupported | {"SECRET_DETECTED"}
         return stable_id(
-            plan.state == "blocked",
+            (plan.automatic_resolution or {}).get("safety_source_state", plan.state) == "blocked",
             sorted(
                 finding.id
                 for finding in plan.findings
-                if finding.code in relevant or finding.severity == "error"
+                if finding.code not in self.safety.finding_codes
+                and (finding.code in relevant or finding.severity == "error")
             ),
         )
 
