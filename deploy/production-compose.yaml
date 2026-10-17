@@ -1,0 +1,194 @@
+name: nishtyak
+
+x-runtime: &runtime
+  user: "65532:65532"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 64
+  init: true
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-size: 5m
+      max-file: "2"
+
+x-logic-environment: &logic-environment
+  NISHTYAK_DATA_DIR: /data
+  NISHTYAK_RUNNER: docker
+  NISHTYAK_ANALYZER_IMAGE: nishtyak-analyzer:0.3.0
+  NISHTYAK_MAX_OWNER_STORAGE_BYTES: ${NISHTYAK_MAX_OWNER_STORAGE_BYTES:-268435456}
+
+services:
+  initialize:
+    image: python:3.11-slim
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - jobs:/data/jobs
+      - web:/data/web
+    command:
+      - python
+      - -c
+      - "import os; [(os.chmod(p, 0o770), os.chown(p, 65532, 65532)) for p in ('/data/jobs', '/data/web')]"
+    restart: "no"
+
+  logic:
+    <<: *runtime
+    image: nishtyak-logic:0.3.0
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.service
+      target: http
+    environment:
+      <<: *logic-environment
+      NISHTYAK_SERVICE_TOKEN: ${NISHTYAK_SERVICE_TOKEN:?Run python3 deploy/configure.py first}
+      NISHTYAK_AUTOMATIC_REVIEW: ${NISHTYAK_AUTOMATIC_REVIEW:-0}
+      NISHTYAK_AUTOMATIC_RESOLUTION: "1"
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - jobs:/data
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,uid=65532,gid=65532,mode=700
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 2
+    stop_grace_period: 40s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  dispatcher:
+    <<: *runtime
+    image: nishtyak-dispatcher:0.3.0
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.service
+      target: controller
+    environment:
+      <<: *logic-environment
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - jobs:/data
+      - ${NISHTYAK_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add:
+      - "${NISHTYAK_DOCKER_GID:?Run python3 deploy/configure.py first}"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=65532,gid=65532,mode=700
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    stop_grace_period: 20s
+
+  web:
+    <<: *runtime
+    image: nishtyak-web:0.3.0
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    network_mode: host
+    command: ["--host", "127.0.0.1", "--port", "8082"]
+    environment:
+      NISHTYAK_WEB_MODE: accounts
+      NISHTYAK_WEB_PORT: "8082"
+      NISHTYAK_WEB_DATA_DIR: /data
+      NISHTYAK_LOGIC_URL: http://127.0.0.1:8010
+      NISHTYAK_SERVICE_TOKEN: ${NISHTYAK_SERVICE_TOKEN:?Run python3 deploy/configure.py first}
+      NISHTYAK_WEB_ORIGINS: ${NISHTYAK_WEB_ORIGINS:?Set an exact HTTPS origin}
+      NISHTYAK_ACCOUNT_SESSION_SECONDS: ${NISHTYAK_ACCOUNT_SESSION_SECONDS:-604800}
+    volumes:
+      - web:/data
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      logic:
+        condition: service_healthy
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=65532,gid=65532,mode=700
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    stop_grace_period: 35s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/api/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 4s
+      retries: 3
+
+  analyzer-image:
+    image: nishtyak-analyzer:0.3.0
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: [build]
+
+  initialize-edge:
+    image: python:3.11-slim
+    profiles: [edge]
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    command:
+      - python
+      - -c
+      - "import os; [(os.chmod(p, 0o770), os.chown(p, 65532, 65532)) for p in ('/data', '/config')]"
+    restart: "no"
+
+  edge:
+    <<: *runtime
+    image: caddy:2-alpine
+    profiles: [edge]
+    network_mode: host
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      NISHTYAK_DOMAIN: ${NISHTYAK_DOMAIN:-}
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      initialize-edge:
+        condition: service_completed_successfully
+      web:
+        condition: service_healthy
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=65532,gid=65532,mode=700
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    stop_grace_period: 15s
+
+volumes:
+  jobs:
+    name: nishtyak-logic_jobs
+  web:
+    name: nishtyak-preview_preview
+  caddy-data:
+    name: nishtyak_caddy-data
+  caddy-config:
+    name: nishtyak_caddy-config

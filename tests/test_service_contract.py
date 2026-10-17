@@ -9,7 +9,7 @@ from nishtyak_service.config import Settings
 def test_published_openapi_matches_implemented_api(tmp_path):
     settings = Settings(data_dir=tmp_path, api_token="contract-test-token-" + "x" * 32)
     implemented = create_app(settings).openapi()
-    contract = Path(__file__).parents[1] / "docs/openapi.yaml"
+    contract = Path(__file__).parent / "contracts/openapi.yaml"
     assert yaml.safe_load(contract.read_text()) == implemented
 
 
