@@ -313,7 +313,9 @@ def test_non_linux_lock_is_usable_without_docker_but_refuses_linux_container():
     _, plan = plan_for()
     lock = make_lock(plan, ResolutionTarget("3.11", "windows-x86_64"))
     exporter = LockExporter()
-    assert exporter.attach(ReproducibilityService().render(plan), plan, lock)
+    assert exporter.attach(
+        ReproducibilityService().render(plan, include_dockerfile=False), plan, lock
+    )
     with pytest.raises(ResolutionError) as error:
         exporter.attach(ReproducibilityService().render(plan, include_dockerfile=True), plan, lock)
     assert error.value.code == "LOCK_DOCKER_UNSUPPORTED"

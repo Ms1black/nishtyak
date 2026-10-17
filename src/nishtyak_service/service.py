@@ -242,7 +242,7 @@ class LogicService:
         owner: str,
         project_id: str,
         decisions: UserDecisions | None = None,
-        include_dockerfile: bool = False,
+        include_dockerfile: bool | None = None,
         lock_id: str | None = None,
     ) -> bytes:
         self.repository.consume_rate(owner, "bundle", 10)
@@ -273,17 +273,22 @@ class LogicService:
                 snapshot = ArchiveReader().from_path(self.repository.archive_path(project_id))
                 if snapshot.fingerprint != report.fingerprint:
                     raise ServiceError(409, "SNAPSHOT_CHANGED", "The stored project has changed")
-                generated = self.core.render(plan, include_dockerfile=include_dockerfile)
                 lock = (
                     self.repository.read_lock(owner, project_id)
                     if lock_id is not None
                     else self.automatic_resolution.valid_lock(record, plan)
                 )
+                if lock is not None and lock_id is not None and lock.id != lock_id:
+                    raise ServiceError(409, "LOCK_STALE", "Dependency lock was replaced")
+                generated = self.core.render(
+                    plan,
+                    include_dockerfile=include_dockerfile,
+                    snapshot=snapshot,
+                    target_platform=lock.target.platform if lock is not None else None,
+                )
                 if lock is not None:
-                    if lock_id is not None and lock.id != lock_id:
-                        raise ServiceError(409, "LOCK_STALE", "Dependency lock was replaced")
                     try:
-                        generated = LockExporter().attach(generated, plan, lock)
+                        generated = LockExporter().attach(generated, plan, lock, snapshot=snapshot)
                     except ResolutionError as error:
                         raise ServiceError(409, error.code, str(error)) from None
                 source_bytes = sum(file.size for file in plan.files)

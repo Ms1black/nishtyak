@@ -164,7 +164,11 @@ class DecisionDocumentDTO(StrictDTO):
 
 class BundleDTO(StrictDTO):
     decisions: DecisionsDTO | None = None
-    include_dockerfile: bool = False
+    include_dockerfile: bool | None = Field(
+        default=None,
+        description="Omitted/null: include a supported Dockerfile automatically; "
+        "false: exclude; true: require a supported Linux pip Dockerfile.",
+    )
     lock_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 

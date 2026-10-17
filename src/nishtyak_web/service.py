@@ -423,7 +423,7 @@ class BrowserService:
         self,
         identity: WorkspaceIdentity,
         project_id: str,
-        include_dockerfile: bool = False,
+        include_dockerfile: bool | None = None,
         lock_id: str | None = None,
     ) -> dict:
         with self.store.locked(project_id):
@@ -455,7 +455,7 @@ class BrowserService:
                     "analysis": report["analysis_id"],
                     "revision": revision,
                     "lock": lock_id,
-                    "docker": include_dockerfile,
+                    "docker": "Dockerfile" in files,
                     "sha256": hashlib.sha256(content).hexdigest(),
                     "files": files,
                 },

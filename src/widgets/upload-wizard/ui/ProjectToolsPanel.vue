@@ -212,12 +212,7 @@ async function applyTarget() {
       </div>
     </details>
 
-    <BaseCheckbox
-      v-model="wizard.includeDockerfile"
-      :disabled="disabled || waitingForAnswers || (!wizard.canIncludeDockerfile && !wizard.includeDockerfile)"
-      >{{ $t('workflow.dockerfile') }}</BaseCheckbox
-    >
-    <p v-if="!wizard.canIncludeDockerfile" class="tools__hint">{{ $t('workflow.dockerUnavailable') }}</p>
+    <p class="tools__hint">{{ $t(wizard.canIncludeDockerfile ? 'workflow.dockerAutomatic' : 'workflow.dockerUnavailable') }}</p>
     <p v-if="localError" class="tools__error" role="alert">{{ localError }}</p>
   </div>
 </template>

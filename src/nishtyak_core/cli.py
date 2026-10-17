@@ -55,7 +55,12 @@ class CommandLine:
         launch_kind = build.add_mutually_exclusive_group()
         launch_kind.add_argument("--module", action="store_true")
         launch_kind.add_argument("--callable", action="store_true")
-        build.add_argument("--docker", action="store_true")
+        build.add_argument(
+            "--docker",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Include a Dockerfile (automatic for supported projects by default)",
+        )
         build.add_argument(
             "--lock", action="store_true", help="Resolve wheel-only versions for an explicit target"
         )
@@ -167,7 +172,12 @@ class CommandLine:
                     raise ValueError("Decisions document exceeds 256 KiB")
                 decisions = DecisionsCodec().decode(json.loads(arguments.decisions.read_text()))
             plan = service.prepare(report, decisions)
-            generated = service.render(plan, include_dockerfile=arguments.docker)
+            generated = service.render(
+                plan,
+                include_dockerfile=arguments.docker,
+                snapshot=snapshot,
+                target_platform=arguments.target_platform,
+            )
             if arguments.lock:
                 from .locking import LockExporter, ResolutionTarget, VersionResolver
 
@@ -177,7 +187,7 @@ class CommandLine:
                     raise ValueError("Supply --target-platform for the dependency lock")
                 target = ResolutionTarget(plan.python_version, arguments.target_platform)
                 lock = VersionResolver().resolve(plan, target)
-                generated = LockExporter().attach(generated, plan, lock)
+                generated = LockExporter().attach(generated, plan, lock, snapshot=snapshot)
             elif arguments.target_platform is not None:
                 raise ValueError("--target-platform requires --lock")
             artifact = BundleWriter().write(

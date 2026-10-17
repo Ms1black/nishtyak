@@ -248,7 +248,7 @@ class LogicClient:
         self,
         project_id: str,
         decisions: dict | None = None,
-        include_dockerfile: bool = False,
+        include_dockerfile: bool | None = None,
         lock_id: str | None = None,
     ) -> bytes:
         body = {"decisions": decisions, "include_dockerfile": include_dockerfile}

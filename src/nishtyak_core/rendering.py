@@ -6,22 +6,29 @@ import shlex
 
 from packaging.requirements import InvalidRequirement, Requirement
 
+from .installation import EnvironmentInstructions
 from .launches import LaunchCandidate, LaunchDetector
 from .layout import ProjectLauncher
 from .messages import RussianFindingFormatter
-from .models import Finding, GeneratedFile, GeneratedFiles, PackagePlan, RunSpec
+from .models import Finding, GeneratedFile, GeneratedFiles, PackagePlan, ProjectSnapshot, RunSpec
 from .security import SecretScanner
 
 
 class DocumentRenderer:
     """Render deterministic documents using only the reviewed package plan."""
 
-    def render(self, plan: PackagePlan) -> GeneratedFiles:
+    def render(
+        self,
+        plan: PackagePlan,
+        *,
+        extra_files: tuple[GeneratedFile, ...] = (),
+        snapshot: ProjectSnapshot | None = None,
+        target: dict | None = None,
+    ) -> GeneratedFiles:
         if plan.state == "blocked":
             raise ValueError("Resolve blocking findings before generating package files")
         scanner = SecretScanner()
         files = (
-            GeneratedFile("README.md", self.readme(plan).encode("utf-8")),
             GeneratedFile("requirements.txt", self._requirements(plan).encode("utf-8")),
             GeneratedFile(
                 "analysis-report.json",
@@ -38,7 +45,14 @@ class DocumentRenderer:
         )
         if ProjectLauncher.required(plan):
             files = (*files, ProjectLauncher().generate(plan))
-        return GeneratedFiles(files)
+        files = (*files, *extra_files)
+        readme = self.readme(
+            plan,
+            generated_paths=tuple(file.path for file in files),
+            snapshot=snapshot,
+            target=target,
+        )
+        return GeneratedFiles((GeneratedFile("README.md", readme.encode("utf-8")), *files))
 
     @staticmethod
     def _requirements(plan: PackagePlan) -> str:
@@ -50,7 +64,15 @@ class DocumentRenderer:
         ]
         return "\n".join(lines) + "\n"
 
-    def readme(self, plan: PackagePlan, *, target: dict | None = None, locked: bool = False) -> str:
+    def readme(
+        self,
+        plan: PackagePlan,
+        *,
+        target: dict | None = None,
+        locked: bool = False,
+        generated_paths: tuple[str, ...] = (),
+        snapshot: ProjectSnapshot | None = None,
+    ) -> str:
         target = (
             target
             or (plan.automatic_resolution or {}).get("target")
@@ -70,6 +92,14 @@ class DocumentRenderer:
             or plan.report.options.python_version
         )
         platform = target.get("platform")
+        instructions = EnvironmentInstructions(
+            plan,
+            python_version,
+            platform,
+            locked=locked,
+            generated_paths=generated_paths,
+            snapshot=snapshot,
+        )
         state = (plan.automation or {}).get("phase", plan.state)
         state_label = "Черновик с ограничениями" if state == "draft" else "Пакет для проверки"
         lines = [
@@ -127,16 +157,7 @@ class DocumentRenderer:
                 "",
                 "## Установка",
                 "",
-                "Откройте терминал в корне распакованного архива. "
-                "Используйте указанный Python; команда python в вашей системе "
-                "может означать другую версию.",
-                "",
-                *self._installation_commands(python_version, platform, locked),
-                "",
-                "В `requirements.txt` сохранены известные ограничения. "
-                "Незафиксированные версии — черновик; исходные проверенные версии "
-                "невозможно восстановить только по импортам.",
-                "",
+                *instructions.installation(),
                 "## Запуск",
                 "",
             ]
@@ -174,7 +195,7 @@ class DocumentRenderer:
                 lines.extend(["Конфигурация запуска указана автором.", ""])
             lines.extend(
                 [
-                    "Из корня распакованного архива с активированной .venv:",
+                    "Из корня распакованного архива с активированной выбранной средой:",
                     "",
                     "```powershell" if platform and platform.startswith("windows") else "```sh",
                 ]
@@ -231,6 +252,7 @@ class DocumentRenderer:
                     ["У других файлов проекта могут быть собственные сценарии запуска.", ""]
                 )
 
+        lines.extend(instructions.docker())
         lines.extend(
             [
                 "## Входные данные",
@@ -259,6 +281,7 @@ class DocumentRenderer:
                 "RUN_INFERRED",
                 "RUN_AUTOMATIC",
                 "PYTHON_VERSION_UNKNOWN",
+                "BUILD_DEPENDENCIES_SEPARATE",
             }
         )
         if review_findings:
@@ -278,7 +301,7 @@ class DocumentRenderer:
                 "Исходный README, если он был, остаётся там. "
                 "Полные факты анализа и происхождение решений записаны в `analysis-report.json`.",
                 "",
-                *self._file_tree(plan, locked=locked),
+                *self._file_tree(plan, locked=locked, generated_paths=generated_paths),
             ]
         )
         if plan.report.layout:
@@ -309,59 +332,6 @@ class DocumentRenderer:
             ]
         )
         return SecretScanner().redact("\n".join(lines))
-
-    @staticmethod
-    def _installation_commands(
-        python_version: str, platform: str | None, locked: bool
-    ) -> list[str]:
-        version = ".".join(python_version.split(".")[:2])
-        install = "python -m pip install " + (
-            "--only-binary=:all: --require-hashes -r requirements.lock.txt"
-            if locked
-            else "-r requirements.txt"
-        )
-        if platform and platform.startswith("windows"):
-            return [
-                "Windows, PowerShell:",
-                "",
-                "```powershell",
-                f"py -{version} --version",
-                f"py -{version} -m venv .venv",
-                ".\\.venv\\Scripts\\Activate.ps1",
-                install,
-                "```",
-            ]
-        commands = [
-            (
-                "Linux:"
-                if platform and platform.startswith("linux")
-                else "macOS:"
-                if platform and platform.startswith("macos")
-                else "Linux / macOS:"
-            ),
-            "",
-            "```sh",
-            f"python{version} --version",
-            f"python{version} -m venv .venv",
-            ". .venv/bin/activate",
-            install,
-            "```",
-        ]
-        if platform is None:
-            commands.extend(
-                [
-                    "",
-                    "Альтернатива для Windows, PowerShell:",
-                    "",
-                    "```powershell",
-                    f"py -{version} --version",
-                    f"py -{version} -m venv .venv",
-                    ".\\.venv\\Scripts\\Activate.ps1",
-                    install,
-                    "```",
-                ]
-            )
-        return commands
 
     @staticmethod
     def _review_findings(plan: PackagePlan) -> tuple[Finding, ...]:
@@ -402,12 +372,15 @@ class DocumentRenderer:
         return tuple(result)
 
     @staticmethod
-    def _file_tree(plan: PackagePlan, *, locked: bool = False) -> list[str]:
+    def _file_tree(
+        plan: PackagePlan, *, locked: bool = False, generated_paths: tuple[str, ...] = ()
+    ) -> list[str]:
         lines = ["```text", "README.md", "requirements.txt", "analysis-report.json"]
         if locked:
             lines.extend(["requirements.lock.txt", "dependency-lock.json"])
         if ProjectLauncher.required(plan):
             lines.append("run_project.py")
+        lines.extend(path for path in generated_paths if path not in lines)
         lines.append("project/")
         for file in plan.files[:80]:
             lines.append("  " + file.path.replace("`", "\\`"))

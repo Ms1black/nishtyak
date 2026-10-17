@@ -83,6 +83,16 @@ describe('single target environment control', () => {
     expect(state.wizard.reanalyze).not.toHaveBeenCalled()
   })
 
+  it('includes Docker automatically without a manual opt-in checkbox', async () => {
+    mount()
+    expect(container.textContent).toContain('workflow.dockerAutomatic')
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull()
+    state.wizard.canIncludeDockerfile = false
+    await nextTick()
+    expect(container.textContent).toContain('workflow.dockerUnavailable')
+    expect(container.textContent).not.toContain('workflow.dockerAutomatic')
+  })
+
   it('hydrates the persisted environment when analysis changes without submitting it again', async () => {
     mount()
     state.wizard.analysis = { ...(state.wizard.analysis as object), analysisId: 'next' }

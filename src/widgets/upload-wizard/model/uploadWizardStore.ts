@@ -39,7 +39,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   const plan = ref<PackagePlan | null>(null)
   const lastAutomation = ref<ProjectAutomation | null>(null)
   const lock = ref<DependencyLock | null>(null)
-  const includeDockerfile = ref(false)
+  const includeDockerfile = ref<boolean | null>(null)
   const isLoading = ref(false)
   const isBuilding = ref(false)
   const isRefreshing = ref(false)
@@ -93,7 +93,12 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     if (platform && !platform.startsWith('linux-')) return false
     if (!/^[A-Za-z0-9_./-]+$/.test(current.runSpec.workingDirectory)) return false
     if (current.requirements.some((requirement) => /\s@\s/.test(requirement))) return false
-    return !analysis.value?.files.some((file) => /(^|\/)environment\.ya?ml$/.test(file.path))
+    const root = analysis.value?.layout?.root ?? analysis.value?.options?.projectRoot ?? '.'
+    const prefix = root === '.' ? '' : `${root}/`
+    const files = current.files ?? analysis.value?.files
+      .filter((file) => !decisions.value?.excludedFiles.includes(file.path))
+      .map((file) => file.path) ?? []
+    return !['environment.yml', 'environment.yaml'].some((name) => files.includes(`${prefix}${name}`))
   })
 
   function invalidateArchive() {
@@ -102,10 +107,10 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     projectStore.upsert(project.value)
   }
 
-  async function openProject(next: Project, options: { autoBuild?: boolean; includeDockerfile?: boolean } = {}) {
+  async function openProject(next: Project, options: { autoBuild?: boolean; includeDockerfile?: boolean | null } = {}) {
     reset()
     carriedDockerfile = options.includeDockerfile === true && canEdit.value
-    includeDockerfile.value = carriedDockerfile
+    includeDockerfile.value = options.includeDockerfile === false ? false : carriedDockerfile ? true : null
     autoBuildRequested = options.autoBuild === true && canEdit.value && next.archive.status !== 'ready'
     project.value = next
     step.value = next.archive.status === 'ready' ? 3 : 2
@@ -211,7 +216,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
 
   async function continueAutomaticBuild() {
     if (carriedDockerfile && plan.value && !isBusy.value && automation.value?.phase !== 'needs_input') {
-      includeDockerfile.value = canIncludeDockerfile.value
+      includeDockerfile.value = canIncludeDockerfile.value ? true : null
       carriedDockerfile = false
     }
     if (!autoBuildRequested || !plan.value) return
@@ -411,7 +416,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
       }
       projectStore.patch(projectId, { archive: { status: 'building' } })
       const built = await projectApi.buildArchive(projectId, {
-        includeDockerfile: includeDockerfile.value,
+        ...(includeDockerfile.value === null ? {} : { includeDockerfile: includeDockerfile.value }),
         ...(lock.value ? { lockId: lock.value.id } : {}),
       })
       if (epoch !== requestEpoch) return
@@ -529,7 +534,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     lastAutomation.value = null
     lock.value = null
     revision.value = 0
-    includeDockerfile.value = false
+    includeDockerfile.value = null
     isLoading.value = false
     isBuilding.value = false
     isRefreshing.value = false

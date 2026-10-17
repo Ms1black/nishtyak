@@ -276,7 +276,7 @@ describe('upload wizard request coordination', () => {
     await store.openProject(project('new-upload'), { autoBuild: true })
     expect(store.step).toBe(3)
     expect(api.resolve).not.toHaveBeenCalled()
-    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('new-upload', { includeDockerfile: false })
+    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('new-upload', {})
     expect(api.saveDecisions.mock.calls[0]![1]).toMatchObject({
       pythonVersion: null,
       runSpec: null,
@@ -388,7 +388,7 @@ describe('upload wizard request coordination', () => {
     await vi.advanceTimersByTimeAsync(2000)
     expect(store.isPreparingEnvironment).toBe(false)
     expect(api.buildArchive).toHaveBeenCalledOnce()
-    expect(api.buildArchive).toHaveBeenCalledWith('new-upload', { includeDockerfile: false })
+    expect(api.buildArchive).toHaveBeenCalledWith('new-upload', {})
     expect(store.step).toBe(3)
   })
 
@@ -777,6 +777,24 @@ describe('upload wizard request coordination', () => {
     await store.build()
     expect(api.buildArchive).toHaveBeenCalledOnce()
   })
+
+  it('checks only retained Conda manifests in the selected project root for Docker support', async () => {
+    api.getAnalysis.mockResolvedValueOnce({
+      ...analysis('nested'), layout: { root: 'lab' },
+      files: [{ path: 'lab/experiment.py', size: 40 }, { path: 'lab/environment.yml', size: 30 }],
+    })
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), state: 'ready_to_verify', pythonVersion: '3.11',
+      files: decisions.excludedFiles.includes('lab/environment.yml')
+        ? ['lab/experiment.py'] : ['lab/experiment.py', 'lab/environment.yml'],
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('nested'))
+    expect(store.canIncludeDockerfile).toBe(false)
+    store.update({ excludedFiles: ['lab/environment.yml'] })
+    await store.refreshPlan()
+    expect(store.canIncludeDockerfile).toBe(true)
+  })
   it('retains automatic launch provenance while saving data clarifications', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({ ...plan(decisions), runSpecOrigin: 'automatic' }))
     const store = useUploadWizardStore()
@@ -938,8 +956,8 @@ describe('upload wizard request coordination', () => {
     await store.openProject(project('docker'))
     store.includeDockerfile = true
     await store.applyTarget({ pythonVersion: '3.12', platform: 'windows-x86_64' })
-    expect(store.includeDockerfile).toBe(false)
-    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('docker', { includeDockerfile: false })
+    expect(store.includeDockerfile).toBeNull()
+    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('docker', {})
     expect(store.step).toBe(3)
   })
 
@@ -967,8 +985,8 @@ describe('upload wizard request coordination', () => {
     api.getAnalysis.mockResolvedValueOnce({ ...analysis('docker'), targetEnvironment: target })
     await store.applyTarget(target)
     expect(store.canIncludeDockerfile).toBe(false)
-    expect(store.includeDockerfile).toBe(false)
-    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('docker', { includeDockerfile: false })
+    expect(store.includeDockerfile).toBeNull()
+    expect(api.buildArchive).toHaveBeenCalledExactlyOnceWith('docker', {})
     expect(store.step).toBe(3)
   })
 

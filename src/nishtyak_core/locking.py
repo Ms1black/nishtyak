@@ -17,7 +17,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from .models import GeneratedFile, GeneratedFiles, PackagePlan
+from .models import GeneratedFile, GeneratedFiles, PackagePlan, ProjectSnapshot
 from .rendering import DocumentRenderer
 from .report_codec import bounded_json
 from .resolver_proxy import RestrictedIndexProxy
@@ -431,7 +431,12 @@ class VersionResolver:
 
 class LockExporter:
     def attach(
-        self, generated: GeneratedFiles, plan: PackagePlan, lock: DependencyLock
+        self,
+        generated: GeneratedFiles,
+        plan: PackagePlan,
+        lock: DependencyLock,
+        *,
+        snapshot: ProjectSnapshot | None = None,
     ) -> GeneratedFiles:
         if (
             resolution_input_id(plan, lock.target) != lock.input_id
@@ -445,7 +450,14 @@ class LockExporter:
         files = []
         for file in generated.files:
             if file.path == "README.md":
-                text = DocumentRenderer().readme(plan, target=asdict(lock.target), locked=True)
+                text = DocumentRenderer().readme(
+                    plan,
+                    target=asdict(lock.target),
+                    locked=True,
+                    generated_paths=tuple(item.path for item in generated.files)
+                    + ("requirements.lock.txt", "dependency-lock.json"),
+                    snapshot=snapshot,
+                )
                 files.append(GeneratedFile(file.path, text.encode()))
             elif file.path == "Dockerfile":
                 platform = {"linux-x86_64": "linux/amd64", "linux-aarch64": "linux/arm64"}.get(
@@ -457,7 +469,11 @@ class LockExporter:
                         "The generated Linux image needs a Linux dependency lock",
                     )
                 text = file.content.decode("utf-8")
-                text = re.sub(r"(?m)^FROM python:", f"FROM --platform={platform} python:", text)
+                text = re.sub(
+                    r"(?m)^FROM (?:--platform=\S+ )?python:",
+                    f"FROM --platform={platform} python:",
+                    text,
+                )
                 text = text.replace(
                     "COPY requirements.txt ./requirements.txt",
                     "COPY requirements.lock.txt ./requirements.lock.txt",

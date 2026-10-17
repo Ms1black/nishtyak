@@ -111,6 +111,7 @@ export interface ProjectAnalysis {
   suggestedRunSpec?: RunSpec | null
   options?: AnalysisOptions
   targetEnvironment?: TargetEnvironment | null
+  layout?: { root: string }
   projectRoots?: string[]
   optionalGroups?: string[]
   launchCandidates?: LaunchCandidate[]

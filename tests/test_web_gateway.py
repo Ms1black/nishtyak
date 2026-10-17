@@ -159,7 +159,7 @@ def test_real_browser_workflow_upload_analyze_save_export_restart(gateway):
     plan = client.post(f"/api/projects/{project_id}/plan", json=decisions(analysis)).json()
     assert plan["state"] == "ready_to_verify", plan
     assert plan["runSpec"]["target"] == "experiment.py"
-    built = client.post(f"/api/projects/{project_id}/archive", json={"includeDockerfile": True})
+    built = client.post(f"/api/projects/{project_id}/archive", json={})
     assert built.status_code == 200, built.text
     assert built.json()["archive"]["status"] == "ready"
     archive = client.get(f"/api/projects/{project_id}/archive")
@@ -588,6 +588,33 @@ def test_lock_and_explicit_ai_source_consent(gateway):
     unavailable = client.post(prefix + "/advice", json={"feature": "readme", "shareSource": True})
     assert unavailable.status_code == 200, unavailable.text
     assert unavailable.json()["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("platform", ["windows-x86_64", "macos-arm64", "linux-aarch64"])
+def test_automatic_docker_export_uses_the_stored_lock_target(gateway, platform):
+    client, service, _ = gateway
+    project = upload(client)
+    analysis = analyzed(client, project["id"])
+    prefix = f"/api/projects/{project['id']}"
+    saved = client.put(
+        prefix + "/decisions", json={"expectedRevision": 0, "decisions": decisions(analysis)}
+    )
+    assert saved.status_code == 200, saved.text
+    resolved = client.post(
+        prefix + "/resolve", json={"target": {"pythonVersion": "3.11", "platform": platform}}
+    )
+    assert resolved.status_code == 200, resolved.text
+    built = client.post(prefix + "/archive", json={})
+    assert built.status_code == 200, built.text
+    archive = client.get(prefix + "/archive")
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as package:
+        has_docker = "Dockerfile" in package.namelist()
+        assert has_docker == platform.startswith("linux-")
+        assert "requirements.lock.txt" in package.namelist()
+        if has_docker:
+            assert b"FROM --platform=linux/arm64 python:" in package.read("Dockerfile")
+    stored = service.store.get(WorkspaceIdentity("local", "local", "local").scope, project["id"])
+    assert json.loads(stored["archive_tag"])["docker"] is has_docker
 
 
 def test_preview_checks_retained_source_fingerprint(gateway):

@@ -44,7 +44,11 @@ class ClarificationsBody(SaveBody):
 
 
 class ArchiveBody(StrictBody):
-    includeDockerfile: bool = False
+    includeDockerfile: bool | None = Field(
+        default=None,
+        description="Omitted/null: include a supported Dockerfile automatically; "
+        "false: exclude; true: require a supported Linux pip Dockerfile.",
+    )
     lockId: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 

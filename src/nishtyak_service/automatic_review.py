@@ -813,9 +813,10 @@ class AutomaticProjectReview:
         sources = [file.path for file in plan.files if file.path.endswith(".py")]
         text = f"Python-проект содержит {len(sources)} модулей."
         if plan.run_spec is not None:
-            text += f" Начальная точка запуска — {plan.run_spec.target}."
+            text += f" Начальная точка запуска — `{plan.run_spec.target}`."
         if reads:
-            text += " В коде обнаружены обращения к файлам: " + ", ".join(sorted(reads)[:5]) + "."
+            paths = ", ".join(f"`{path}`" for path in sorted(reads)[:5])
+            text += " В коде обнаружены обращения к файлам: " + paths + "."
         return TextRedactor().redact(text)
 
     def candidate_id(self, record: JobRecord, report: AnalysisReport) -> str | None:

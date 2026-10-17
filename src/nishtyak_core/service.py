@@ -81,10 +81,27 @@ class ReproducibilityService:
             automatic_packages=automatic_packages,
         )
 
-    def render(self, plan: PackagePlan, include_dockerfile: bool = False) -> GeneratedFiles:
-        generated = self.renderer.render(plan)
-        if include_dockerfile:
-            from .docker import DockerfileGenerator
+    def render(
+        self,
+        plan: PackagePlan,
+        include_dockerfile: bool | None = None,
+        *,
+        snapshot: ProjectSnapshot | None = None,
+        target_platform: str | None = None,
+    ) -> GeneratedFiles:
+        from .docker import DockerfileGenerator
 
-            generated = GeneratedFiles((*generated.files, DockerfileGenerator().generate(plan)))
-        return generated
+        generator = DockerfileGenerator()
+        include = include_dockerfile is True or (
+            include_dockerfile is None
+            and generator.skip_reason(plan, target_platform=target_platform) is None
+        )
+        extras = (generator.generate(plan, target_platform=target_platform),) if include else ()
+        return self.renderer.render(
+            plan,
+            extra_files=extras,
+            snapshot=snapshot,
+            target={"python_version": plan.python_version, "platform": target_platform}
+            if target_platform is not None
+            else None,
+        )

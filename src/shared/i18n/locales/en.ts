@@ -34,7 +34,7 @@ export const en: MessageSchema = {
     targetPlatform: 'Target OS',
     lockReady: 'Lock saved. Packages: {count}. It will be included in the next archive.',
     lockNotExecution: 'Project scripts were not executed; computation results were not verified.',
-    dockerfile: 'Add a Dockerfile template to the archive',
+    dockerAutomatic: 'A Dockerfile will be included in the ZIP automatically. It is a Linux template: no image was built and no project code was executed.',
     launchCandidates: 'Launch candidates from static analysis',
     launchHint:
       'When launch is detected automatically, no manual main-file selection is required. The command has not been verified by execution.',

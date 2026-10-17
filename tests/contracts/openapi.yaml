@@ -2410,9 +2410,12 @@ components:
           - $ref: '#/components/schemas/DecisionsDTO'
           - type: 'null'
         include_dockerfile:
-          type: boolean
+          anyOf:
+          - type: boolean
+          - type: 'null'
           title: Include Dockerfile
-          default: false
+          description: 'Omitted/null: include a supported Dockerfile automatically;
+            false: exclude; true: require a supported Linux pip Dockerfile.'
         lock_id:
           anyOf:
           - type: string
