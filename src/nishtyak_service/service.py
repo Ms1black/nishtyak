@@ -303,22 +303,6 @@ class LogicService:
         self._require_current(record, report)
         return TextRedactor().redact_value(result)
 
-    def graph(self, owner: str, project_id: str) -> dict:
-        from nishtyak_core.import_graph import ImportGraph
-
-        self.repository.consume_rate(owner, "read", 120)
-        with self.repository.operation(owner, project_id) as record:
-            report = self.repository.read_report(record)
-            snapshot = ArchiveReader().from_path(self.repository.archive_path(project_id))
-            if snapshot.fingerprint != report.fingerprint:
-                raise ServiceError(409, "SNAPSHOT_CHANGED", "The stored project has changed")
-            roots = report.layout.source_roots if report.layout else report.options.source_roots
-            result = TextRedactor().redact_value(
-                ImportGraph(snapshot, roots, report.imports).to_dict()
-            )
-        self.repository.get_project(owner, project_id)
-        return result
-
     def project_advice(self, owner: str, project_id: str, feature: str, description: str) -> dict:
         from nishtyak_core.advisors import ProjectAdvisoryResult, SafeProjectContext
 

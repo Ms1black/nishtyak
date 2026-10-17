@@ -29,7 +29,6 @@ from .dto import (
     DecisionDocumentDTO,
     DecisionsDTO,
     ErrorDTO,
-    ImportGraphDTO,
     JobDTO,
     PreparationDTO,
     ProjectAdviceDTO,
@@ -408,12 +407,6 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
     )
     async def preparation(request: Request, project_id: ProjectId) -> dict[str, Any]:
         return await run_in_threadpool(logic.preparation, request.state.owner_id, project_id)
-
-    @app.get(
-        "/v1/projects/{project_id}/graph", response_model=ImportGraphDTO, responses=ERROR_RESPONSES
-    )
-    async def graph(request: Request, project_id: ProjectId) -> dict[str, Any]:
-        return await run_in_threadpool(logic.graph, request.state.owner_id, project_id)
 
     @app.post(
         "/v1/projects/{project_id}/project-advice",

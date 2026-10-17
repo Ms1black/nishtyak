@@ -5,7 +5,6 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from nishtyak_core.environment import AuthorEnvironmentSnapshot
-from nishtyak_core.import_graph import ImportEdge
 from nishtyak_core.launches import LaunchAssessment
 from nishtyak_core.models import (
     AnalysisOptions,
@@ -215,13 +214,6 @@ class PreparationDTO(BaseModel):
     automatic_review: dict | None = None
     automatic_resolution: dict | None = None
     automation: dict | None = None
-
-
-class ImportGraphDTO(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    nodes: list[str]
-    edges: list[ImportEdge]
 
 
 class JobDTO(BaseModel):

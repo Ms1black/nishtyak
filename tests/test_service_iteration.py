@@ -55,8 +55,6 @@ def test_default_flow_needs_no_main_decision(project):
         client.post(prefix + "/plan", headers=HEADERS).json()["report"]["analysis_id"]
         == report.analysis_id
     )
-    graph = client.get(prefix + "/graph", headers=HEADERS)
-    assert graph.status_code == 200 and "helpers.py" in graph.text
     bundle = client.post(prefix + "/bundle", json={}, headers=HEADERS)
     assert bundle.status_code == 200
     with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
@@ -101,11 +99,11 @@ def test_locks_persist_and_reanalysis_invalidates_them(project, monkeypatch):
     assert not (reopened.archive_path(identifier).parent / "dependency-lock.json").exists()
 
 
-def test_other_owner_cannot_read_graph_or_lock_or_run_advisor(project):
+def test_other_owner_cannot_read_preparation_or_lock_or_run_advisor(project):
     client, _, identifier, _, _ = project
     headers = {**HEADERS, "X-Owner-ID": "mallory"}
     prefix = f"/v1/projects/{identifier}"
-    for suffix in ("preparation", "graph", "lock"):
+    for suffix in ("preparation", "lock"):
         assert client.get(prefix + "/" + suffix, headers=headers).status_code == 404
     response = client.post(
         prefix + "/project-advice",

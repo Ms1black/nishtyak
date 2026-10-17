@@ -313,7 +313,6 @@ PROJECT_ROUTES = [
     ("PUT", "decisions"),
     ("POST", "plan"),
     ("GET", "preparation"),
-    ("GET", "graph"),
     ("POST", "resolve"),
     ("GET", "lock"),
     ("POST", "advice"),

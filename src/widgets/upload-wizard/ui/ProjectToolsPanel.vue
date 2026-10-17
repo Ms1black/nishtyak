@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { projectApi, type TargetPlatform } from '@/entities/project'
-import { ApiError } from '@/shared/api'
+import type { TargetPlatform } from '@/entities/project'
 import { t } from '@/shared/i18n'
-import { downloadBlob } from '@/shared/lib'
 import { BaseButton, BaseCheckbox, BaseInput, BaseSelect, CodeBlock, type SelectOption } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 
@@ -16,7 +14,6 @@ const platform = ref<TargetPlatform | null>('linux-x86_64')
 const environment = ref<unknown>()
 const environmentName = ref('')
 const localError = ref<string | null>(null)
-const isGraphLoading = ref(false)
 
 const pythonOptions: SelectOption[] = Array.from({ length: 7 }, (_, index) => {
   const version = `3.${index + 8}`
@@ -85,24 +82,6 @@ async function reanalyze() {
   )
 }
 
-async function downloadGraph() {
-  if (!wizard.project || isGraphLoading.value) return
-  const projectId = wizard.project.id
-  isGraphLoading.value = true
-  localError.value = null
-  try {
-    const graph = await projectApi.getGraph(projectId)
-    if (wizard.project?.id !== projectId) return
-    downloadBlob(
-      new Blob([JSON.stringify(graph, null, 2)], { type: 'application/json' }),
-      'import-graph.json',
-    )
-  } catch (cause) {
-    localError.value = cause instanceof ApiError ? cause.message : t('workflow.graphError')
-  } finally {
-    isGraphLoading.value = false
-  }
-}
 </script>
 
 <template>
@@ -199,9 +178,6 @@ async function downloadGraph() {
       >{{ $t('workflow.dockerfile') }}</BaseCheckbox
     >
     <p v-if="!wizard.canIncludeDockerfile" class="tools__hint">{{ $t('workflow.dockerUnavailable') }}</p>
-    <BaseButton variant="tonal" :disabled="wizard.isBusy" :loading="isGraphLoading" @click="downloadGraph">{{
-      $t('workflow.downloadGraph')
-    }}</BaseButton>
     <p v-if="localError" class="tools__error" role="alert">{{ localError }}</p>
   </div>
 </template>

@@ -47,6 +47,5 @@ export interface ProjectApi {
     decisions?: AnalysisDecisions,
   ): Promise<DependencyLock>
   getLock(projectId: string): Promise<DependencyLock>
-  getGraph(projectId: string): Promise<unknown>
   remove(projectId: string): Promise<void>
 }

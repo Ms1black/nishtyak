@@ -59,7 +59,5 @@ export const projectHttpApi: ProjectApi = {
 
   getLock: (projectId) => apiClient.get(`/projects/${projectId}/lock`),
 
-  getGraph: (projectId) => apiClient.get(`/projects/${projectId}/graph`),
-
   remove: (projectId) => apiClient.delete(`/projects/${projectId}`),
 }

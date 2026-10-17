@@ -413,10 +413,6 @@ def create_app(
     def preparation(request: Request, project_id: ProjectId):
         return browser.preparation(request.state.identity, project_id)
 
-    @app.get("/api/projects/{project_id}/graph")
-    def graph(request: Request, project_id: ProjectId):
-        return browser.forward(request.state.identity, project_id, "graph")
-
     @app.post("/api/projects/{project_id}/resolve")
     def resolve(request: Request, project_id: ProjectId, body: ResolveBody):
         target = ResolutionTargetDTO.model_validate(

@@ -354,7 +354,6 @@ def test_proxy_workspace_identity_and_cross_workspace_isolation(gateway):
             "decisions",
             "archive",
             "files?path=main.py",
-            "graph",
             "preparation",
             "lock",
         ):
@@ -491,14 +490,11 @@ def test_extras_round_trip_and_package_plan(gateway):
     assert client.get(prefix + "/decisions").json()["decisions"]["selectedExtras"] == ["plot"]
 
 
-def test_lock_graph_and_explicit_ai_source_consent(gateway):
+def test_lock_and_explicit_ai_source_consent(gateway):
     client, service, _ = gateway
     project = upload(client)
     analyzed(client, project["id"])
     prefix = f"/api/projects/{project['id']}"
-    graph = client.get(prefix + "/graph")
-    assert graph.status_code == 200, graph.text
-    assert "nodes" in graph.json() and "edges" in graph.json()
     lock = client.post(
         prefix + "/resolve",
         json={
