@@ -252,8 +252,10 @@ class EnvironmentInstructions:
                 ]
             )
         if conda:
-            known_target = self.locked and self.platform and re.fullmatch(
-                r"3\.[0-9]+(?:\.[0-9]+)?", self.python_version
+            known_target = (
+                self.locked
+                and self.platform
+                and re.fullmatch(r"3\.[0-9]+(?:\.[0-9]+)?", self.python_version)
             )
             if known_target:
                 lines.extend(

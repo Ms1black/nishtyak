@@ -62,10 +62,7 @@ class RussianFindingFormatter:
         else:
             message = self.messages.get(
                 finding.code,
-                "Требуется проверка условия «"
-                + finding.code
-                + "»: "
-                + finding.message,
+                "Требуется проверка условия «" + finding.code + "»: " + finding.message,
             )
         modules = sorted(
             {

@@ -111,9 +111,7 @@ def unresolved_report():
     return {
         "analysis_id": "analysis-one",
         "status": "complete",
-        "dependencies": [
-            {"id": "dep-one", "module": "research_lib", "category": "unresolved"}
-        ],
+        "dependencies": [{"id": "dep-one", "module": "research_lib", "category": "unresolved"}],
         "findings": [{"code": "DEPENDENCY_UNRESOLVED"}],
     }
 
@@ -199,9 +197,7 @@ def test_active_effective_preparation_keeps_analysis_in_progress(phase):
 
 def test_effective_question_and_blocked_plan_remain_partial():
     assert (
-        analysis_status(
-            unresolved_report(), "succeeded", resolved_preparation(phase="needs_input")
-        )
+        analysis_status(unresolved_report(), "succeeded", resolved_preparation(phase="needs_input"))
         == "partial"
     )
     preparation = resolved_preparation()
