@@ -118,7 +118,6 @@ const command = computed(() => hasCommand.value ? formatRunCommand(runSpec.value
         <button type="button" class="run__reset" @click="useAutomatic">
           {{ $t('analysis.run.useAutomatic') }}
         </button>
-        <p class="run__hint">{{ $t('analysis.run.automaticHint') }}</p>
       </div>
       <div v-if="candidates?.length" class="run__field">
         <span class="run__label">{{ $t('workflow.launchCandidates') }}</span>
@@ -133,7 +132,6 @@ const command = computed(() => hasCommand.value ? formatRunCommand(runSpec.value
           <InlineCode :code="formatRunCommand(candidate.runSpec)" language="bash" />
           <span>{{ candidate.reason }}</span>
         </button>
-        <p class="run__hint">{{ $t('workflow.launchHint') }}</p>
       </div>
       <div class="run__field">
         <span class="run__label">{{ $t('analysis.run.what') }}</span>

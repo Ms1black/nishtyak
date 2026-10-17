@@ -21,7 +21,6 @@ function onSuccess() {
   <div class="container login-page">
     <BaseCard tag="section" padding="lg" class="login-page__card" aria-labelledby="login-title">
       <h1 id="login-title" class="login-page__title">{{ $t(register ? 'auth.registerTitle' : 'auth.title') }}</h1>
-      <p class="login-page__subtitle">{{ $t(register ? 'auth.registerSubtitle' : 'auth.subtitle') }}</p>
       <LoginForm :key="String(register)" :register="register" class="login-page__form" @success="onSuccess" />
       <p v-if="!isStandaloneWorkspace" class="login-page__preview">
         {{ $t(register ? 'auth.haveAccount' : 'auth.noAccount') }}
@@ -57,12 +56,6 @@ function onSuccess() {
   font-size: 30px;
   font-weight: 500;
   line-height: 1.2;
-}
-
-.login-page__subtitle {
-  margin-top: 8px;
-  color: var(--color-text-muted);
-  font-size: 14px;
 }
 
 .login-page__form {

@@ -38,7 +38,6 @@ describe('automatic project data facts', () => {
     const { root, changed } = mount({ files: ['measurements.csv', 'config.yml'] })
     expect(root.textContent).toContain('measurements.csv')
     expect(root.textContent).toContain('config.yml')
-    expect(root.textContent).toContain('analysis.data.automaticHint')
     expect(root.querySelector('input[type="checkbox"], textarea')).toBeNull()
     expect(root.querySelector('details')?.open).toBe(false)
     expect(changed).not.toHaveBeenCalled()

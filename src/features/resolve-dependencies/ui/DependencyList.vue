@@ -85,7 +85,6 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
     </details>
 
     <div v-if="editor && installable.length" class="deps__advanced">
-      <p class="deps__editor-hint">{{ $t('analysis.deps.editorHint') }}</p>
       <div class="deps__head" aria-hidden="true">
         <span>{{ $t('analysis.deps.columnImport') }}</span>
         <span />
@@ -148,11 +147,6 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
 
 .deps__automatic > summary {
   cursor: pointer;
-  line-height: 1.6;
-}
-
-.deps__editor-hint {
-  margin-bottom: 16px;
   line-height: 1.6;
 }
 

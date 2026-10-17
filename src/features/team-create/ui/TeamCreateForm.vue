@@ -60,7 +60,7 @@ defineExpose({ focus })
       <BaseButton type="submit" icon="plus" :loading="isCreating" :disabled="isStandaloneWorkspace || !name.trim()">{{ $t('teams.create.submit') }}</BaseButton>
     </div>
     <p v-if="error" class="create__error" role="alert">{{ $t(error) }}</p>
-    <p v-else class="create__hint">{{ $t(isStandaloneWorkspace ? 'integration.teamsPending' : 'teams.create.hint') }}</p>
+    <p v-else-if="isStandaloneWorkspace" class="create__hint">{{ $t('integration.teamsPending') }}</p>
   </form>
 </template>
 

@@ -19,7 +19,6 @@ const { logout, isLoggingOut } = useLogout()
       </div>
     </div>
     <ProfileNameForm class="profile__form" />
-    <p class="profile__note">{{ $t('profile.note') }}</p>
     <BaseButton variant="tonal" icon="logout" block class="profile__logout" :loading="isLoggingOut" @click="logout">
       {{ $t(isLocalWorkspace ? 'integration.loginScreen' : 'header.logout') }}
     </BaseButton>
@@ -62,12 +61,4 @@ const { logout, isLoggingOut } = useLogout()
   margin-top: 20px;
 }
 
-.profile__note {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--color-border);
-  color: var(--color-text-subtle);
-  font-size: 12px;
-  line-height: 1.45;
-}
 </style>

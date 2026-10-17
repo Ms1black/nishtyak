@@ -26,7 +26,7 @@ describe('one project questionnaire', () => {
     expect(html.match(/<input /g)).toHaveLength(2)
     expect(html.match(/<textarea /g)).toHaveLength(1)
     expect(html).toContain('Where are the input data?')
-    expect(html).toContain('analysis.automation.finalPassHint')
+    expect(html).toContain('analysis.automation.questionHint')
     expect(html).not.toContain(' required')
     expect(html).not.toContain('type="checkbox"')
   })

@@ -116,7 +116,6 @@ async function applyTarget() {
     <section class="tools__section" aria-labelledby="target-environment-title">
       <h3 id="target-environment-title">{{ $t('workflow.targetTitle') }}</h3>
       <div class="tools__body">
-        <p class="tools__hint">{{ $t('workflow.targetHint') }}</p>
         <div class="tools__row">
           <label class="tools__field">
             <span>{{ $t('workflow.targetPython') }}</span>
@@ -207,7 +206,6 @@ async function applyTarget() {
         <div class="tools__result">
           <p>{{ $t('workflow.lockReady', { count: wizard.lock.packages.length }) }}</p>
           <CodeBlock :code="wizard.lock.requirements" language="plaintext" filename="requirements.lock.txt" />
-          <p class="tools__hint">{{ $t('workflow.lockNotExecution') }}</p>
         </div>
       </div>
     </details>

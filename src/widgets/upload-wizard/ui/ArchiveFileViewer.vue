@@ -39,7 +39,6 @@ async function copySource() {
   <BaseDialog v-model:open="open" size="wide" :title="$t('ready.files.title')">
     <div class="archive-file">
       <p class="archive-file__path">{{ path }}</p>
-      <p class="archive-file__hint">{{ $t('ready.files.actualArchive') }}</p>
       <p v-if="state.isLoading" class="archive-file__state" role="status">
         <BaseIcon name="refresh" :size="20" spin /> {{ $t('common.loading') }}
       </p>

@@ -32,7 +32,6 @@ defineExpose({ openAdditions })
       <ul v-if="dataFiles.length" class="data__files">
         <li v-for="file in dataFiles" :key="file"><InlineCode :code="file" language="plaintext" /></li>
       </ul>
-      <p class="data__note">{{ $t('analysis.data.automaticHint') }}</p>
     </div>
     <div v-if="inputNotes.length" class="data__missing" role="note">
       <h3>{{ $t('analysis.data.missingTitle') }}</h3>
@@ -44,7 +43,6 @@ defineExpose({ openAdditions })
     <details class="data__additions" :open="additionsOpen" @toggle="toggleAdditions">
       <summary>{{ $t('analysis.data.additionsTitle') }}<span v-if="hasAdditions"> · {{ $t('analysis.data.savedAdditions') }}</span></summary>
       <div v-if="additionsOpen" class="data__fields">
-        <p class="data__note">{{ $t('analysis.data.additionsHint') }}</p>
         <div class="data__field">
           <label for="data-input">{{ $t('analysis.data.input') }}</label>
           <BaseTextarea id="data-input" v-model="inputDescription" :rows="2" :maxlength="8192" :placeholder="$t('analysis.data.inputPlaceholder')" :disabled="disabled" />

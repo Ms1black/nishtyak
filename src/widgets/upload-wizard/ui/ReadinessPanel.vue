@@ -140,7 +140,6 @@ const saveText = computed(() => {
       <BaseButton block :disabled="!canBuild || isBlocked" :loading="isWorking" @click="emit('build')">
         {{ buttonText }}
       </BaseButton>
-      <p v-if="!needsInput && !isWorking && !isBlocked" class="panel__next">{{ $t('analysis.review.nextStep') }}</p>
       <p v-if="saveState !== 'idle'" class="panel__save" :class="`panel__save--${saveState}`" aria-live="polite">
         {{ saveText }}
         <button v-if="saveState === 'conflict'" type="button" class="panel__link" @click="emit('reload')">
@@ -150,10 +149,6 @@ const saveText = computed(() => {
       <BaseButton block variant="tonal" :disabled="isBuilding" @click="emit('reset')">
         {{ $t('analysis.panel.otherProject') }}
       </BaseButton>
-    </div>
-    <div class="panel__contents">
-      <p class="panel__group">{{ $t('analysis.review.archiveContents') }}</p>
-      <p>{{ $t('analysis.review.archiveFiles') }}</p>
     </div>
   </aside>
 </template>
@@ -245,29 +240,6 @@ const saveText = computed(() => {
   font-size: 13px;
   line-height: 1.4;
 }
-
-.panel__group {
-  margin-bottom: -10px;
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-
-.panel__contents {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-
-.panel__contents .panel__group {
-  margin-bottom: 6px;
-}
-
-.panel__next {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--color-text-muted);
-}
-
 
 .panel__footer {
   display: flex;

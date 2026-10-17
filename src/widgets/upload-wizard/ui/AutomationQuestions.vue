@@ -97,10 +97,9 @@ function submit() {
     <BaseButton v-if="unboundQuestions.some((question) => !question.code && !question.filePath)" variant="tonal" :disabled="disabled" @click="emit('openSettings', unboundQuestions.find((question) => !question.code && !question.filePath))">
       {{ $t('analysis.automation.openSettings') }}
     </BaseButton>
-    <p v-if="draftContext && (notes || Object.values(values).some(Boolean))" class="question__hint" role="status">
-      {{ $t(draftSaved ? 'analysis.automation.draftSaved' : 'analysis.automation.draftUnavailable') }}
+    <p v-if="draftContext && (notes || Object.values(values).some(Boolean)) && !draftSaved" class="question__hint" role="status">
+      {{ $t('analysis.automation.draftUnavailable') }}
     </p>
-    <p class="question__hint">{{ $t('analysis.automation.finalPassHint') }}</p>
     <BaseButton type="submit" :disabled="disabled || !questionnaireId">{{ $t('analysis.automation.continue') }}</BaseButton>
   </form>
 </template>

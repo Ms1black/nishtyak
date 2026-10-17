@@ -3,28 +3,27 @@ import type { MessageSchema } from './ru'
 export const en: MessageSchema = {
   workflow: {
     dockerUnavailable:
-      'Dockerfile requires a Linux target, a package ready for verification, a selected Python version and a launch command. The template supports pip projects without environment.yml or direct dependency URLs. A draft ZIP can still be downloaded.',
+      'No Dockerfile was prepared for this environment. See README for the reason.',
     ownerStorageLimit:
-      'Upload storage limit reached. Delete an unused project or wait for its retention period to expire.',
+      'Upload storage limit reached. Delete unused projects.',
     argumentsHint: 'One argument per line, without quotes. Spaces within a line are preserved.',
     toolsTitle: 'Additional settings',
     analysisSettings: 'Analysis diagnostics',
     reanalysisWarning:
-      'Reanalysis resets saved decisions, the lock and the built archive. Source code is not executed.',
-    analysisProfile: 'Standard library profile: Python {version}. It follows the target environment.',
+      'You will need to rebuild the ZIP after reanalysis.',
+    analysisProfile: 'Python {version} standard library.',
     projectRoot: 'Project root inside the archive',
     autoRoot: 'Detect automatically',
     rootCandidates: 'Detected candidates: {roots}',
     sourceRoots: 'Source directories, separated by commas',
     authorEnvironment: 'Author environment report — optional JSON',
     environmentHint:
-      'Upload a report explicitly collected on the author’s computer. The browser does not inspect your environment.',
+      'A report collected on the author’s computer.',
     environmentTooLarge: 'Environment report exceeds 256 KiB.',
     environmentInvalid: 'Expected an environment report as a JSON object.',
     reanalyze: 'Run analysis again',
     extras: 'Optional dependency groups',
     targetTitle: 'Target environment: Python and OS',
-    targetHint: 'Imports and dependencies will be checked for this environment. This is a new compatible environment; the author’s original environment remains separate.',
     pythonRequires: 'The project declares this Python constraint: {spec}',
     targetAfterQuestions: 'Submit the clarification form first. You can then change the target environment.',
     applyTarget: 'Apply and prepare package',
@@ -32,12 +31,9 @@ export const en: MessageSchema = {
     environmentDetails: 'Resolved dependency details',
     targetPython: 'Target Python version',
     targetPlatform: 'Target OS',
-    lockReady: 'Lock saved. Packages: {count}. It will be included in the next archive.',
-    lockNotExecution: 'Project scripts were not executed; computation results were not verified.',
-    dockerAutomatic: 'A Dockerfile will be included in the ZIP automatically. It is a Linux template: no image was built and no project code was executed.',
-    launchCandidates: 'Launch candidates from static analysis',
-    launchHint:
-      'When launch is detected automatically, no manual main-file selection is required. The command has not been verified by execution.',
+    lockReady: 'Pinned packages: {count}.',
+    dockerAutomatic: 'A Dockerfile will be included in the ZIP.',
+    launchCandidates: 'Detected launch commands',
     truncatedFile: 'Only the beginning of the file is shown.',
     archiveError: 'Could not get the archive. Please retry.',
   },
@@ -100,7 +96,6 @@ export const en: MessageSchema = {
     name: 'nishtyak',
     credits: 'A MISIS x BMSTU x Nishtyak project',
     terms: 'Terms of use',
-    staticNote: 'Static analysis · No code execution',
   },
   routes: {
     upload: 'Upload project',
@@ -122,21 +117,18 @@ export const en: MessageSchema = {
   },
   auth: {
     registerTitle: 'Create an account',
-    registerSubtitle: 'Your personal workspace and shared team projects',
     registerSubmit: 'Create account',
     name: 'Name',
     haveAccount: 'Already have an account?',
     noAccount: 'New here?',
     passwordHint: 'Use 12 to 128 characters. A passphrase works well.',
     title: 'Sign in',
-    subtitle: 'Sign in to open your team projects',
     email: 'Email',
     emailPlaceholder: 'name{\'@\'}company.com',
     password: 'Password',
     showPassword: 'Show password',
     hidePassword: 'Hide password',
     submit: 'Sign in',
-    demo: 'Demo mode: any email and a password of 6+ characters will do',
     agree: 'By signing in you accept the',
     agreeLink: 'terms of use',
     errors: {
@@ -172,14 +164,8 @@ export const en: MessageSchema = {
     pyFile: 'Python file',
     chooseOther: 'Choose another',
     removeFile: 'Remove',
-    hintSelect: 'Choose a file first',
-    hintReady: 'Ready for analysis',
     hintUploading: 'Uploading and analyzing…',
     analyze: 'Prepare package',
-    automaticReviewConditional:
-      'The project is analyzed statically first. If facts are missing and DeepSeek is enabled on the server, it receives filtered source excerpts. Files with detected secrets are excluded; code is not executed.',
-    automaticReviewDisclosure:
-      'The project is analyzed statically first. If facts are missing, DeepSeek helps using filtered source excerpts. Files with detected secrets are not sent; project code is not executed.',
     errors: {
       type: 'One ZIP with all source files and sample data is required',
       multiple: 'Choose one ZIP archive. Put the source files and sample data in one archive.',
@@ -266,16 +252,14 @@ export const en: MessageSchema = {
     automation: {
       preparing: 'Preparing package…',
       awaitingAnswer: 'Waiting for your answer',
-      needsAnswer: 'All questions collected',
-      answerNext: 'Answer what you know in one submission. The service will finish preparation and record remaining unknowns in the report.',
+      needsAnswer: 'Details needed',
+      answerNext: 'Answer the questions below. Skip anything unknown.',
       validatingAnswer: 'Finishing preparation…',
-      environmentAwaitingAnswer: 'All missing details are collected below. Answer what you know and continue with limitations.',
-      assisting: 'Clarifying {aspect} from sources: attempt {attempt} of {max}.',
-      assistingBrief: 'Clarifying {aspect} from sources.',
+      assistingBrief: 'Checking {aspect}…',
       phases: {
-        static: 'Analyzing sources and identifying what the package still needs.',
-        validating: 'Validating findings and selecting a compatible environment.',
-        finalizing: 'Checking your answers once and building the package. There will be no further rounds of questions.',
+        static: 'Analyzing files…',
+        validating: 'Checking dependencies…',
+        finalizing: 'Preparing archive…',
       },
       aspects: {
         dependencies: 'dependencies',
@@ -290,28 +274,25 @@ export const en: MessageSchema = {
         text: 'What else is known about this limitation?',
       },
       batchTitle: 'All project questions',
-      questionHint: 'All questions are collected here. Fill in only what you know. Blank means “I do not know / continue with limitations”.',
-      packageHint: 'Enter package names you know for the imports below. Unknown names can be left blank; no manual environment setup is needed.',
-      requirementHint: 'A full package requirement, such as numpy>=1.26. Leave blank to keep the constraint unknown.',
-      versionHint: 'The version constraint for import {module}, such as >=1.26. Do not include the package name.',
+      questionHint: 'Fill in what you know. Skip anything unknown.',
+      packageHint: 'Use the package names from PyPI.',
+      requirementHint: 'For example: numpy>=1.26.',
+      versionHint: 'For import {module}, for example >=1.26. Omit the package name.',
       unknown: 'I do not know — continue with limitations',
       textHint: 'Explain this in the shared comment below or correct it in advanced settings.',
-      notesLabel: 'Anything else known about the project — optional',
-      finalPassHint: 'All answers are checked once. If the sources have no blocking errors, the package is built; unknown details remain in the report.',
+      notesLabel: 'Comment — optional',
       continue: 'Submit answers and build package',
       openSettings: 'Open advanced settings',
       openIssue: 'Open the related file or finding',
-      draftSaved: 'The answer draft is saved in this tab and will be restored after a page reload.',
       draftUnavailable: 'The browser could not save the draft. Do not reload before submitting your answers.',
     },
     automatic: {
       environmentTitle: 'Dependencies and environment',
       resolving: 'Selecting compatible library versions…',
-      resolvingHint: 'Python and compatible packages are selected automatically. Exact versions will be included in the archive.',
-      resolved: 'Versions pinned for {platform}, including package dependencies.',
-      provenance: 'This is a newly resolved environment. The author’s original environment and project execution are unverified.',
-      needsInput: 'An ambiguity prevents automatic resolution. Correct it in advanced settings or build a draft.',
-      unavailable: 'Automatic version resolution is currently unavailable. A draft will retain known dependencies and limitations.',
+      resolvingHint: 'Selecting compatible dependency versions.',
+      resolved: 'Versions pinned for {platform}.',
+      needsInput: 'Clarify the dependencies or build a draft.',
+      unavailable: 'Versions could not be resolved. You can build a draft.',
       blockingTitle: 'An error prevents packaging',
       fix: 'Fix',
       advancedTitle: 'Advanced settings and report',
@@ -322,15 +303,8 @@ export const en: MessageSchema = {
     },
     review: {
       expertTitle: 'Expert settings',
-      expertHint: 'Manual dependency, launch and project-file editors. A normal build does not require these settings.',
-      eyebrow: 'Automatic preparation',
       title: 'Project analyzed',
-      intro:
-        'The facts found in the sources are shown below. Unknown dependencies, launch details and data will be identified in README.',
       descriptionTitle: 'README description',
-      descriptionAutomatic:
-        'Prepared automatically from the sources and included in README. Author additions below are optional.',
-      descriptionInferred: 'Description prepared from the project structure and source files.',
       questionsTitle: 'Optional details before building',
       questionsHint:
         'Only details that cannot be reliably determined from the code. All answers are optional.',
@@ -355,11 +329,7 @@ export const en: MessageSchema = {
       packages: 'Packages to install',
       editRun: 'Edit',
       runUnknown:
-        'A single launch command could not be determined. You can build a draft without one; detected candidates will be included in README.',
-      runAuthor: 'You specified this command. It has not been executed on the server.',
-      runAutomatic: 'DeepSeek selected this command from project sources; it has not been executed.',
-      runInferred:
-        'Detected automatically. No manual main-file selection is needed; the command has not been executed.',
+        'Launch command not found. You can build a draft.',
       recorded: 'What the report will record',
       showReport: 'View the full report',
       notices: {
@@ -370,20 +340,10 @@ export const en: MessageSchema = {
         other:
           'There are additional project findings. They will be included in the report and do not require answers before building.',
       },
-      depsHint: 'Known packages are already included. Clarify unknown mappings only if you know the answer.',
       optional: 'Optional — open only the settings you need',
       runSettings: 'Launch command',
-      runHint: 'Change the command, arguments or working directory',
-      dataHint: 'Archive files and specific limitations found in source code',
-      filesHint: 'Browse sources and exclusions. Currently excluded: {excluded}',
-      toolsHint: 'Dependency locking, Dockerfile, author environment and reanalysis',
+      filesHint: 'Excluded files: {excluded}',
       reportTitle: 'Full analysis report',
-      reportHint: 'All warnings will be included in the package; you do not need to answer each one',
-      archiveContents: 'What we will build',
-      archiveFiles:
-        'Sources, README with installation and launch instructions, requirements.txt, and an uncertainty report.',
-      nextStep:
-        'New projects are prepared automatically. Manual corrections remain available in advanced settings.',
     },
     files: {
       title: 'All project files',
@@ -409,7 +369,6 @@ export const en: MessageSchema = {
       binary: 'Binary file — it cannot be shown as text.',
     },
     deps: {
-      editorHint: 'Change only facts you know. Unresolved imports and conflicts are collected in the single clarification batch.',
       unknownVersion: 'version unknown',
       unresolvedTitle: 'Package could not be identified',
       unresolvedHint:
@@ -445,7 +404,6 @@ export const en: MessageSchema = {
       done: 'Done',
       unknown: 'The launch command is not determined yet.',
       useAutomatic: 'Use automatic launch',
-      automaticHint: 'The command will be inferred from the project analysis again.',
       title: 'Run',
       what: 'What to run',
       kindLabel: 'Run type',
@@ -459,22 +417,20 @@ export const en: MessageSchema = {
     },
     data: {
       title: 'Project data',
-      automaticHint: 'File presence is determined from the archive. Code was not executed: data completeness and computed results are unverified. README will record these limitations automatically.',
       missingTitle: 'Check input files',
       replaceZip: 'Add files — replace ZIP',
       additionsTitle: 'Add author details — optional',
       savedAdditions: 'saved additions',
-      additionsHint: 'The project description and instructions are already prepared. Add only what you know; blank fields do not block the build.',
       confirm: 'All required input data and configs are included in the archive',
       found: 'Data and configuration files in the archive:',
-      notFound: 'No matching data files were found in the archive. Analysis does not establish whether additional data is required.',
+      notFound: 'No data files found.',
       input: 'What input data is needed',
       inputPlaceholder: 'For example: data/sales.csv — September sales, columns date, region, amount',
       output: 'How to check the result',
       outputPlaceholder: 'For example: report_sales.json appears with 4 records',
       description: 'About the project',
       descriptionPlaceholder: 'What the project does and why',
-      note: 'These texts go into the archive README. Detected secrets are filtered, but detection is not complete — do not paste keys or passwords.',
+      note: 'Do not enter keys or passwords.',
     },
     notes: {
       title: 'Analysis notes',
@@ -483,7 +439,7 @@ export const en: MessageSchema = {
     state: {
       analyzingTitle: 'Analyzing {name}',
       analyzingText:
-        'Analyzing imports, manifests and data files without executing code. You can reopen the project from the team list; unsubmitted answers are saved only in this tab.',
+        'Preparing the project. You can reopen it later from your team’s projects.',
       failedTitle: 'Could not analyze the project',
       uploadOther: 'Upload another file',
     },
@@ -492,8 +448,8 @@ export const en: MessageSchema = {
       leftFix: 'Left to fix',
       leftAnswer: 'Left to answer',
       limitations: 'Analysis limitations',
-      saving: 'Saving answers and recalculating the package…',
-      savedAt: 'Answers saved and package recalculated at {time}',
+      saving: 'Saving…',
+      savedAt: 'Saved at {time}',
       saveError: 'Could not save — check your connection',
       conflict: 'Answers changed in another tab',
       autosave: 'The package is recalculated automatically after each change',
@@ -506,15 +462,15 @@ export const en: MessageSchema = {
     plan: {
       blocked: {
         title: 'Fix an error before building',
-        text: 'Fix the indicated file issue or upload a corrected ZIP. An archive cannot be built while this error remains.',
+        text: 'Fix the errors or upload a corrected ZIP.',
       },
       draft: {
         title: 'Ready to build a draft',
-        text: 'Limitations are recorded in README. To add source files or data, replace the source ZIP in the files section.',
+        text: 'Remaining limitations are listed in README.',
       },
       ready_to_verify: {
         title: 'Ready to build a package',
-        text: 'Next, verify installation and execution in a separate environment.',
+        text: 'Verify installation and execution in a separate environment.',
       },
     },
     errors: {
@@ -568,13 +524,11 @@ export const en: MessageSchema = {
     detailsUnavailable: 'Could not load archive details',
     detailsHint: 'Package status, requirements and the launch command will appear after the report loads.',
     limitationsTitle: 'Package limitations',
-    reportHint:
-      'These limitations are already recorded in README and the report inside the ZIP. No additional answers are needed to download it.',
     title: 'Archive ready',
     titleDraft: 'Draft archive ready',
     text: 'Project “{name}” is built and available to the whole team.',
     textDraft:
-      'The ZIP is ready to download. Known details and remaining limitations are included. The next step is verification in a separate environment.',
+      'Remaining limitations are listed in README.',
     sources: '{entry} and other sources',
     summaryTitle: 'What\'s inside',
     summary: {
@@ -589,8 +543,7 @@ export const en: MessageSchema = {
     platformUnknown: 'not specified',
     files: {
       title: 'Built archive file',
-      hint: 'Select a file name to view its contents from this ZIP.',
-      actualArchive: 'Viewing a file from the built ZIP. Source files and commands are not executed.',
+      hint: 'Select a file to open it.',
       hashRequired: 'Refresh the built ZIP metadata before viewing its files.',
       error: 'Could not open the archive file. Please retry.',
       missing: 'This file was not found in the ZIP. Refresh the package metadata.',
@@ -601,7 +554,7 @@ export const en: MessageSchema = {
     },
     repeat: {
       title: 'How to repeat the project',
-      hint: 'Download and extract the ZIP on your colleague’s computer. These commands come from this archive’s README and were not executed by the service. Review input data and limitations before running in a separate environment.',
+      hint: 'Extract the ZIP and run the commands in a separate environment.',
     },
     readme: {
       loading: 'Loading README from the built ZIP…',
@@ -615,9 +568,9 @@ export const en: MessageSchema = {
     },
     verification: {
       title: 'Manual verification result',
-      hint: 'After running locally or on a colleague’s computer, record the actual result. The service did not execute this project.',
+      hint: 'Record the verification result after running the project.',
       details: 'Verification details — optional',
-      detailsHint: 'Record only facts from the actual check. Leave unknown versions blank. Do not paste keys, passwords or personal data into the output.',
+      detailsHint: 'Record the verification details. Do not enter keys or passwords.',
       pythonVersion: 'Python version actually used',
       loading: 'Loading verification record…',
       stale: 'This record concerns an earlier analysis or ZIP. Verification must be repeated for the current package.',
@@ -721,7 +674,6 @@ export const en: MessageSchema = {
     nameHint: 'Visible to your team members',
     nameMin: 'At least 2 characters',
     saveError: 'Could not save',
-    note: 'Change the name visible to members of your teams here.',
   },
   teams: {
     readOnly: 'You can view projects and download archives in this team. Team members can upload and edit projects.',
@@ -733,7 +685,6 @@ export const en: MessageSchema = {
       label: 'New team',
       placeholder: 'Name, for example “ML Lab”',
       submit: 'Create',
-      hint: 'You will be the owner. Add members with an invite link.',
       tooShort: 'Name must be at least 2 characters',
       duplicate: 'A team with this name already exists',
       error: 'Could not create the team',

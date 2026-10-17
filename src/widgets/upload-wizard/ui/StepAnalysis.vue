@@ -101,12 +101,7 @@ const progressText = computed(() => {
   if (!automation || !wizard.isAutomating) return null
   const aspect = automation.aspect ? t(`analysis.automation.aspects.${automation.aspect}`) : ''
   if (automation.phase === 'assisting') {
-    if (automation.attempt === undefined || automation.maxAttempts === undefined) {
-      return t('analysis.automation.assistingBrief', { aspect })
-    }
-    return t('analysis.automation.assisting', {
-      aspect, attempt: automation.attempt, max: automation.maxAttempts,
-    })
+    return t('analysis.automation.assistingBrief', { aspect })
   }
   return t(`analysis.automation.phases.${automation.phase}`)
 })
@@ -214,9 +209,7 @@ function toggleAdvanced(event: Event) {
     <div v-else-if="wizard.analysis && wizard.decisions" class="analysis__grid">
       <div class="analysis__main">
         <BaseCard padding="lg" class="overview">
-          <p class="overview__eyebrow">{{ $t('analysis.review.eyebrow') }}</p>
           <h2 class="overview__title">{{ $t('analysis.review.title') }}</h2>
-          <p class="overview__text">{{ $t('analysis.review.intro') }}</p>
           <dl class="overview__facts">
             <div>
               <dt>{{ $t('analysis.review.sources') }}</dt>
@@ -240,11 +233,6 @@ function toggleAdvanced(event: Event) {
             </div>
             <CodeBlock v-if="command" :code="command" language="bash" :line-numbers="false" />
             <p v-else>{{ $t('analysis.review.runUnknown') }}</p>
-            <p v-if="command" class="overview__hint">
-              {{
-                wizard.decisions.runSpec ? $t('analysis.review.runAuthor') : visiblePlan?.runSpecOrigin === 'automatic' ? $t('analysis.review.runAutomatic') : $t('analysis.review.runInferred')
-              }}
-            </p>
           </div>
           <div v-if="visiblePlan?.description" class="overview__description">
             <div class="overview__run-head">
@@ -254,12 +242,6 @@ function toggleAdvanced(event: Event) {
               </button>
             </div>
             <MarkdownContent class="overview__description-text" :content="visiblePlan.description" />
-            <p v-if="visiblePlan.descriptionOrigin === 'automatic'" class="overview__hint">
-              {{ $t('analysis.review.descriptionAutomatic') }}
-            </p>
-            <p v-else-if="visiblePlan.descriptionOrigin === 'inferred'" class="overview__hint">
-              {{ $t('analysis.review.descriptionInferred') }}
-            </p>
           </div>
           <div class="overview__environment" aria-live="polite">
             <div class="overview__run-head">
@@ -269,17 +251,13 @@ function toggleAdvanced(event: Event) {
             </div>
             <template v-if="wizard.isPreparingEnvironment || wizard.isAutomating">
               <p>{{ progressText ?? $t('analysis.automatic.resolving') }}</p>
-              <p class="overview__hint">{{ $t('analysis.automatic.resolvingHint') }}</p>
             </template>
             <template v-else>
               <ul v-if="summaryRequirements.length" class="overview__requirements">
                 <li v-for="requirement in summaryRequirements" :key="requirement"><InlineCode :code="requirement" language="plaintext" /></li>
               </ul>
               <p v-else>{{ $t('analysis.deps.empty') }}</p>
-              <p v-if="wizard.automation?.phase === 'needs_input'" class="overview__hint">
-                {{ $t('analysis.automation.environmentAwaitingAnswer') }}
-              </p>
-              <p v-else-if="resolvedRequirements" class="overview__hint">
+              <p v-if="resolvedRequirements && wizard.automation?.phase !== 'needs_input'" class="overview__hint">
                 {{ $t('analysis.automatic.resolved', { platform: wizard.lock?.target.platform ?? resolution?.target?.platform ?? '' }) }}
               </p>
               <p v-else-if="!wizard.automation && resolution?.status === 'needs_input'" class="overview__hint">
@@ -288,7 +266,6 @@ function toggleAdvanced(event: Event) {
               <p v-else-if="resolution?.status === 'unavailable' || resolution?.status === 'disabled'" class="overview__hint">
                 {{ $t('analysis.automatic.unavailable') }}
               </p>
-              <p v-if="resolvedRequirements && wizard.automation?.phase !== 'needs_input'" class="overview__hint">{{ $t('analysis.automatic.provenance') }}</p>
             </template>
           </div>
         </BaseCard>
@@ -316,7 +293,6 @@ function toggleAdvanced(event: Event) {
         <SectionCard
           id="section-data"
           :title="$t('analysis.data.title')"
-          :subtitle="$t('analysis.review.dataHint')"
         >
           <DataConfirmation
             ref="dataDetails"
@@ -335,14 +311,12 @@ function toggleAdvanced(event: Event) {
         <p v-if="!wizard.canEdit" class="analysis__optional">{{ $t('teams.readOnly') }}</p>
         <details class="analysis__advanced" :open="advancedOpen" @toggle="toggleAdvanced">
           <summary>{{ $t('analysis.review.expertTitle') }}</summary>
-          <p class="overview__hint">{{ $t('analysis.review.expertHint') }}</p>
 
           <SectionCard
             id="section-dependencies"
             v-model:open="expanded.dependencies"
             collapsible
             :title="$t('analysis.deps.title')"
-            :subtitle="$t('analysis.review.depsHint')"
             :errors="errorCount('dependencies')"
           >
             <DependencyList
@@ -365,7 +339,6 @@ function toggleAdvanced(event: Event) {
             v-model:open="expanded.run"
             collapsible
             :title="$t('analysis.review.runSettings')"
-            :subtitle="$t('analysis.review.runHint')"
             :errors="errorCount('run')"
           >
             <RunSettings
@@ -405,7 +378,6 @@ function toggleAdvanced(event: Event) {
             v-model:open="expanded.tools"
             collapsible
             :title="$t('workflow.toolsTitle')"
-            :subtitle="$t('analysis.review.toolsHint')"
           >
             <ProjectToolsPanel />
           </SectionCard>
@@ -415,7 +387,6 @@ function toggleAdvanced(event: Event) {
             v-model:open="expanded.notes"
             collapsible
             :title="$t('analysis.review.reportTitle')"
-            :subtitle="$t('analysis.review.reportHint')"
           >
             <FindingList :findings="findings" actionable @select="focusFinding" />
           </SectionCard>
@@ -526,11 +497,6 @@ function toggleAdvanced(event: Event) {
   margin: 12px 4px 0;
   color: var(--color-text-muted);
   font-size: 13px;
-}
-.overview__eyebrow {
-  margin-bottom: 10px;
-  color: var(--color-text-muted);
-  font-size: 12px;
 }
 .overview__title {
   font-family: var(--font-display);

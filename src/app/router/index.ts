@@ -34,7 +34,7 @@ export const router = createRouter({
       path: '/team/invite',
       name: RouteName.TeamInvite,
       component: () => import('@/pages/team-invite'),
-      meta: { title: 'routes.teamInvite', footerNote: 'app.staticNote' },
+      meta: { title: 'routes.teamInvite' },
     },
     {
       path: '/profile',

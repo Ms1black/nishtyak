@@ -111,7 +111,6 @@ function toProjects() {
         <p class="step-muted">{{ $t(wizard.project.archive.sha256 ? 'ready.files.hint' : 'ready.files.hashRequired') }}</p>
         <details v-if="wizard.plan?.findings.length" class="ready__report">
           <summary>{{ $t('ready.limitationsTitle') }}</summary>
-          <p class="step-muted">{{ $t('ready.reportHint') }}</p>
           <FindingList :findings="wizard.plan.findings" residual-only />
         </details>
       </BaseCard>
@@ -124,9 +123,6 @@ function toProjects() {
             <dd>{{ row.value }}</dd>
           </div>
         </dl>
-        <p v-if="automaticResolution?.status === 'ready'" class="summary__provenance">
-          {{ $t('analysis.automatic.provenance') }}
-        </p>
       </BaseCard>
 
       <ArchiveReview
@@ -189,10 +185,6 @@ function toProjects() {
   font-size: 14px;
 }
 
-.ready__report .step-muted {
-  margin-top: 12px;
-}
-
 .ready__check {
   display: inline-flex;
   align-items: center;
@@ -241,10 +233,5 @@ function toProjects() {
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.summary__provenance {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--color-text-muted);
 }
 </style>

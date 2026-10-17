@@ -36,7 +36,6 @@ describe('dependency result and explicit expert editor', () => {
   it('opens package and constraint controls only when the parent explicitly requests expert editing', async () => {
     const root = await render(true)
     expect(root.querySelectorAll('input')).toHaveLength(4)
-    expect(root.textContent).toContain('analysis.deps.editorHint')
     expect(root.querySelector('.mapping, form')).toBeNull()
     expect(root.querySelectorAll('.dep__toggle')).toHaveLength(2)
   })
