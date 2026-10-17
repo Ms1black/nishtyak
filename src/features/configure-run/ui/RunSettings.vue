@@ -6,6 +6,8 @@ import {
   BaseInput,
   BaseSelect,
   BaseTextarea,
+  CodeBlock,
+  InlineCode,
   SegmentedControl,
   type SegmentedItem,
   type SelectOption,
@@ -94,7 +96,7 @@ const command = computed(() => formatRunCommand(runSpec.value))
         :disabled="disabled"
         @click="runSpec = { ...candidate.runSpec, args: [...candidate.runSpec.args] }"
       >
-        <code>{{ formatRunCommand(candidate.runSpec) }}</code>
+        <InlineCode :code="formatRunCommand(candidate.runSpec)" language="bash" />
         <span>{{ candidate.reason }}</span>
       </button>
       <p class="run__hint">{{ $t('workflow.launchHint') }}</p>
@@ -179,7 +181,7 @@ const command = computed(() => formatRunCommand(runSpec.value))
 
     <div class="run__preview">
       <span class="run__preview-label">{{ $t('analysis.run.command') }}</span>
-      <code><span aria-hidden="true">$ </span>{{ command }}</code>
+      <CodeBlock :code="command" language="bash" :line-numbers="false" />
     </div>
   </div>
 </template>
@@ -257,17 +259,6 @@ const command = computed(() => formatRunCommand(runSpec.value))
 .run__preview-label {
   color: var(--color-text-subtle);
   font-size: 12px;
-}
-
-.run__preview code {
-  overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.run__preview code span {
-  color: var(--color-text-subtle);
 }
 
 @media (max-width: 640px) {

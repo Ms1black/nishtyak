@@ -16,16 +16,18 @@ function emptyForm(): VerificationForm {
   return { status: 'not_checked', pythonVersion: '', platform: '', command: '', output: '', notes: '' }
 }
 
-export function readmeCommands(content: string): { title: string; content: string }[] {
-  const commands: { title: string; content: string }[] = []
+export function readmeCommands(content: string): { title: string; content: string; language: string }[] {
+  const commands: { title: string; content: string; language: string }[] = []
   const seen = new Set<string>()
-  const pattern = /^```(?:bash|sh|shell|zsh|console|powershell|pwsh|cmd|bat)\s*\r?\n([\s\S]*?)^```\s*$/gm
+  const pattern = /^```(bash|sh|shell|zsh|console|powershell|pwsh|cmd|bat)[ \t]*\r?\n([\s\S]*?)^```[ \t]*\r?$/gm
   for (const match of content.matchAll(pattern)) {
-    const value = match[1]?.trim()
-    if (!value || seen.has(value)) continue
-    seen.add(value)
-    const heading = content.slice(0, match.index).match(/^#{1,6}\s+(.+)$/gm)?.at(-1)?.replace(/^#+\s+/, '') ?? ''
-    commands.push({ title: heading, content: value })
+    const language = match[1]!
+    const value = match[2] ?? ''
+    const key = `${language}\0${value}`
+    if (!value.trim() || seen.has(key)) continue
+    seen.add(key)
+    const heading = content.slice(0, match.index).match(/^#{1,6}\s+(.+)$/gm)?.at(-1)?.replace(/^#+\s+/, '').trimEnd() ?? ''
+    commands.push({ title: heading, content: value, language })
   }
   return commands
 }

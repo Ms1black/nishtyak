@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArchiveTree, FindingList, getArchiveFileName, isPackageBlocked } from '@/entities/project'
 import { useArchiveActions } from '@/features/archive-actions'
@@ -9,10 +9,17 @@ import { formatBytes } from '@/shared/lib'
 import { BaseButton, BaseCard, BaseIcon } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 import ArchiveReview from './ArchiveReview.vue'
+import ArchiveFileViewer from './ArchiveFileViewer.vue'
 
 const wizard = useUploadWizardStore()
 const router = useRouter()
 const archive = useArchiveActions()
+const selectedFile = ref<string | null>(null)
+const fileViewerOpen = ref(false)
+watch(() => [wizard.project?.id, wizard.project?.archive.sha256], () => {
+  selectedFile.value = null
+  fileViewerOpen.value = false
+}, { flush: 'sync' })
 
 const automaticResolution = computed(() => wizard.plan?.automaticResolution)
 const isBlocked = computed(() => isPackageBlocked(wizard.plan))
@@ -55,6 +62,12 @@ function download() {
   if (wizard.project) archive.download(wizard.project)
 }
 
+function openFile(path: string) {
+  if (!wizard.project?.archive.sha256 || !treeItems.value.includes(path)) return
+  selectedFile.value = path
+  fileViewerOpen.value = true
+}
+
 function toProjects() {
   router.push({ name: RouteName.TeamProjects })
 }
@@ -87,7 +100,15 @@ function toProjects() {
             </p>
           </div>
         </div>
-        <ArchiveTree :root-name="getArchiveFileName(wizard.project)" :items="treeItems" />
+        <ArchiveTree
+          :root-name="getArchiveFileName(wizard.project)"
+          :items="treeItems"
+          selectable
+          :selected="selectedFile"
+          :disabled="!wizard.project.archive.sha256"
+          @select="openFile"
+        />
+        <p class="step-muted">{{ $t(wizard.project.archive.sha256 ? 'ready.files.hint' : 'ready.files.hashRequired') }}</p>
         <details v-if="wizard.plan?.findings.length" class="ready__report">
           <summary>{{ $t('ready.limitationsTitle') }}</summary>
           <p class="step-muted">{{ $t('ready.reportHint') }}</p>
@@ -112,6 +133,13 @@ function toProjects() {
         :project-id="wizard.project.id"
         :archive-tag="wizard.project.archive.sha256"
         :can-edit="wizard.canEdit"
+        @refresh="wizard.reloadProject()"
+      />
+      <ArchiveFileViewer
+        v-model:open="fileViewerOpen"
+        :project-id="wizard.project.id"
+        :archive-tag="wizard.project.archive.sha256"
+        :path="selectedFile"
         @refresh="wizard.reloadProject()"
       />
 

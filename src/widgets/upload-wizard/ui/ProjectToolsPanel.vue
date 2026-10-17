@@ -4,7 +4,7 @@ import { projectApi, type TargetPlatform } from '@/entities/project'
 import { ApiError } from '@/shared/api'
 import { t } from '@/shared/i18n'
 import { downloadBlob } from '@/shared/lib'
-import { BaseButton, BaseCheckbox, BaseInput, BaseSelect, type SelectOption } from '@/shared/ui'
+import { BaseButton, BaseCheckbox, BaseInput, BaseSelect, CodeBlock, type SelectOption } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 
 const wizard = useUploadWizardStore()
@@ -187,7 +187,7 @@ async function downloadGraph() {
         >
         <div v-if="wizard.lock" class="tools__result">
           <p>{{ $t('workflow.lockReady', { count: wizard.lock.packages.length }) }}</p>
-          <code v-for="requirement in wizard.lock.packages" :key="requirement">{{ requirement }}</code>
+          <CodeBlock :code="wizard.lock.requirements" language="plaintext" filename="requirements.lock.txt" />
           <p class="tools__hint">{{ $t('workflow.lockNotExecution') }}</p>
         </div>
       </div>

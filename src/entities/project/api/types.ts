@@ -22,6 +22,7 @@ export interface ProjectApi {
   upload(teamId: string, file: File): Promise<Project>
   getAnalysis(projectId: string): Promise<ProjectAnalysis>
   getFileContent(projectId: string, path: string): Promise<FileContent>
+  getArchiveFileContent(projectId: string, path: string, archiveTag: string): Promise<FileContent>
   getDecisions(projectId: string): Promise<DecisionsDocument>
   saveDecisions(
     projectId: string,

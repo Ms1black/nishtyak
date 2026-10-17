@@ -698,6 +698,102 @@ def test_project_lookup_and_readme_preview_use_the_ready_archive(gateway, monkey
     assert built["archive"]["sha256"] == hashlib.sha256(downloaded).hexdigest()
 
 
+def test_final_archive_preview_reads_actual_generated_files_and_checks_selected_hash(
+    gateway, monkeypatch, tmp_path
+):
+    client, service, _ = gateway
+    marker = tmp_path / "preview-never-executed"
+    project = upload(
+        client,
+        {
+            "main.py": f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+            "data.csv": "value\n4\n",
+            "README.md": "Original author README\n",
+        },
+    )
+    identifier = project["id"]
+    prefix = f"/api/projects/{identifier}"
+    analysis = analyzed(client, identifier)
+    saved = client.put(
+        prefix + "/decisions", json={"expectedRevision": 0, "decisions": decisions(analysis)}
+    )
+    assert saved.status_code == 200, saved.text
+    resolved = client.post(
+        prefix + "/resolve", json={"target": {"pythonVersion": "3.11", "platform": "linux-x86_64"}}
+    )
+    assert resolved.status_code == 200, resolved.text
+    response = client.post(prefix + "/archive", json={"includeDockerfile": True})
+    assert response.status_code == 200, response.text
+    built = response.json()
+    downloaded = client.get(prefix + "/archive").content
+    monkeypatch.setattr(service, "build", lambda *a, **kw: pytest.fail("Preview rebuilt archive"))
+    monkeypatch.setattr(service, "file", lambda *a, **kw: pytest.fail("Preview used raw source"))
+    endpoint = prefix + "/archive/files"
+    with zipfile.ZipFile(io.BytesIO(downloaded)) as archive:
+        expected = {
+            "README.md",
+            "requirements.txt",
+            "requirements.lock.txt",
+            "dependency-lock.json",
+            "analysis-report.json",
+            "Dockerfile",
+            "project/main.py",
+            "project/data.csv",
+            "project/README.md",
+        }
+        assert expected <= set(built["archive"]["files"])
+        for path in expected:
+            result = client.get(
+                endpoint, params={"path": path, "archiveTag": built["archive"]["sha256"]}
+            )
+            assert result.status_code == 200, (path, result.text)
+            assert result.json() == {
+                "kind": "text",
+                "content": archive.read(path).decode(),
+                "truncated": False,
+            }
+    assert not marker.exists()
+    assert client.get(endpoint, params={"path": "README.md"}).status_code == 422
+    assert (
+        client.get(endpoint, params={"path": "README.md", "archiveTag": "invalid"}).status_code
+        == 422
+    )
+    stale = client.get(endpoint, params={"path": "README.md", "archiveTag": "0" * 64})
+    assert stale.status_code == 409 and stale.json()["code"] == "ARCHIVE_STALE"
+    absent = client.get(
+        endpoint, params={"path": "not-in-output.py", "archiveTag": built["archive"]["sha256"]}
+    )
+    assert absent.status_code == 404 and absent.json()["code"] == "FILE_NOT_FOUND"
+    traversal = client.get(
+        endpoint, params={"path": "../README.md", "archiveTag": built["archive"]["sha256"]}
+    )
+    assert traversal.status_code == 422
+    cached = service.store.root / identifier / "bundle.zip"
+    cached.write_bytes(cached.read_bytes() + b"tampered")
+    changed = client.get(
+        endpoint, params={"path": "README.md", "archiveTag": built["archive"]["sha256"]}
+    )
+    assert changed.status_code == 409 and changed.json()["code"] == "ARCHIVE_STALE"
+
+
+def test_final_archive_preview_includes_generated_launcher(gateway):
+    client, _, _ = gateway
+    project = upload(
+        client,
+        {"src/lab/__init__.py": "", "src/lab/__main__.py": "print(4)\n"},
+    )
+    prefix = f"/api/projects/{project['id']}"
+    analyzed(client, project["id"])
+    built = client.post(prefix + "/archive").json()
+    assert "run_project.py" in built["archive"]["files"]
+    result = client.get(
+        prefix + "/archive/files",
+        params={"path": "run_project.py", "archiveTag": built["archive"]["sha256"]},
+    )
+    assert result.status_code == 200 and result.json()["kind"] == "text"
+    assert "class ProjectRunner" in result.json()["content"]
+
+
 def test_manual_verification_is_revisioned_redacted_and_bound_to_archive(gateway):
     client, _, _ = gateway
     project = upload(client)

@@ -13,6 +13,7 @@ vi.mock('@/features/archive-actions', () => ({
   useArchiveActions: () => ({ error: { value: null }, isPending: () => false }),
 }))
 vi.mock('./ArchiveReview.vue', () => ({ default: () => null }))
+vi.mock('./ArchiveFileViewer.vue', () => ({ default: () => null }))
 vi.mock('@/entities/project', async () => {
   const { h } = await import('vue')
   return {

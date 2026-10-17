@@ -18,7 +18,7 @@ function detectLocale(): Locale {
     if (saved === 'ru' || saved === 'en') return saved
   } catch {
   }
-  return navigator.language.toLowerCase().startsWith('ru') ? 'ru' : 'en'
+  return typeof navigator === 'undefined' || navigator.language.toLowerCase().startsWith('ru') ? 'ru' : 'en'
 }
 
 const ruPlural = new Intl.PluralRules('ru-RU')
@@ -50,7 +50,7 @@ export const intlLocale = computed(() => (locale.value === 'ru' ? 'ru-RU' : 'en-
 watch(
   locale,
   (value) => {
-    document.documentElement.lang = value
+    if (typeof document !== 'undefined') document.documentElement.lang = value
     try {
       localStorage.setItem(STORAGE_KEY, value)
     } catch {

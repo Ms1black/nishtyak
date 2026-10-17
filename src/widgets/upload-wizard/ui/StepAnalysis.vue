@@ -16,7 +16,7 @@ import { RunSettings } from '@/features/configure-run'
 import { ProjectFileExplorer } from '@/features/exclude-files'
 import { DependencyList } from '@/features/resolve-dependencies'
 import { t } from '@/shared/i18n'
-import { BaseButton, BaseCard, BaseIcon } from '@/shared/ui'
+import { BaseButton, BaseCard, BaseIcon, CodeBlock, InlineCode, MarkdownContent } from '@/shared/ui'
 import { useUploadWizardStore } from '../model/uploadWizardStore'
 import ReadinessPanel from './ReadinessPanel.vue'
 import SectionCard from './SectionCard.vue'
@@ -234,7 +234,7 @@ function toggleAdvanced(event: Event) {
                 {{ $t('analysis.review.editRun') }}
               </button>
             </div>
-            <code v-if="command">{{ command }}</code>
+            <CodeBlock v-if="command" :code="command" language="bash" :line-numbers="false" />
             <p v-else>{{ $t('analysis.review.runUnknown') }}</p>
             <p v-if="command" class="overview__hint">
               {{
@@ -249,7 +249,7 @@ function toggleAdvanced(event: Event) {
                 {{ $t('analysis.review.editRun') }}
               </button>
             </div>
-            <p class="overview__description-text">{{ visiblePlan.description }}</p>
+            <MarkdownContent class="overview__description-text" :content="visiblePlan.description" />
             <p v-if="visiblePlan.descriptionOrigin === 'automatic'" class="overview__hint">
               {{ $t('analysis.review.descriptionAutomatic') }}
             </p>
@@ -269,7 +269,7 @@ function toggleAdvanced(event: Event) {
             </template>
             <template v-else>
               <ul v-if="summaryRequirements.length" class="overview__requirements">
-                <li v-for="requirement in summaryRequirements" :key="requirement"><code>{{ requirement }}</code></li>
+                <li v-for="requirement in summaryRequirements" :key="requirement"><InlineCode :code="requirement" language="plaintext" /></li>
               </ul>
               <p v-else>{{ $t('analysis.deps.empty') }}</p>
               <p v-if="wizard.automation?.phase === 'needs_input'" class="overview__hint">
@@ -383,6 +383,7 @@ function toggleAdvanced(event: Event) {
               v-if="expanded.files"
               ref="explorer"
               :project-id="wizard.project.id"
+              :analysis-id="wizard.analysis.analysisId"
               :project-name="wizard.project.name"
               :files="wizard.analysis.files"
               :excluded-files="wizard.decisions.excludedFiles"
@@ -497,7 +498,6 @@ function toggleAdvanced(event: Event) {
   color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.6;
-  white-space: pre-line;
 }
 .analysis__grid {
   display: grid;

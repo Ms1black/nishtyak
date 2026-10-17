@@ -29,8 +29,15 @@ describe('archive README and manual verification', () => {
   it('copies only actual shell blocks and retains their commands without inventing a main file', () => {
     const content = '# Проект\n## Установка\n```bash\npython -m venv .venv\npython -m pip install -r requirements.txt\n```\n## Запуск\n```sh\npython -m measurement --input data.csv\n```\n```python\nraise RuntimeError()\n```\n<script>ignored()</script>'
     expect(readmeCommands(content)).toEqual([
-      { title: 'Установка', content: 'python -m venv .venv\npython -m pip install -r requirements.txt' },
-      { title: 'Запуск', content: 'python -m measurement --input data.csv' },
+      { title: 'Установка', content: 'python -m venv .venv\npython -m pip install -r requirements.txt\n', language: 'bash' },
+      { title: 'Запуск', content: 'python -m measurement --input data.csv\n', language: 'sh' },
+    ])
+  })
+
+  it('preserves PowerShell language and exact fenced whitespace instead of highlighting it as Bash', () => {
+    const command = '  .\\.venv\\Scripts\\Activate.ps1\r\npython experiment.py\r\n'
+    expect(readmeCommands('## Windows\r\n```powershell\r\n' + command + '```\r\n')).toEqual([
+      { title: 'Windows', content: command, language: 'powershell' },
     ])
   })
 

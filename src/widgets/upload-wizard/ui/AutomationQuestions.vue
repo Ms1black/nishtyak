@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatRunCommand, type AutomationQuestion, type LaunchCandidate } from '@/entities/project'
-import { BaseButton, BaseInput, BaseTextarea } from '@/shared/ui'
+import { BaseButton, BaseInput, BaseTextarea, InlineCode, MarkdownContent } from '@/shared/ui'
 import { integrationSession } from '@/shared/api'
 import { collectClarificationChanges, uniqueClarificationQuestions, type ClarificationAnswers } from '../model/clarifications'
 import { useClarificationDraft } from '../model/clarificationDraft'
@@ -61,7 +61,7 @@ function submit() {
       <legend class="question__label">
         {{ $t(`analysis.automation.questions.${question.kind}`, { module: question.module ?? '' }) }}
       </legend>
-      <p v-if="question.message && question.kind !== 'package_mapping'" class="question__hint">{{ question.message }}</p>
+      <MarkdownContent v-if="question.message && question.kind !== 'package_mapping'" class="question__hint" :content="question.message" />
       <code v-if="question.filePath" class="question__hint">{{ question.filePath }}</code>
       <template v-if="hasTextField(question)">
         <label v-if="question.kind !== 'package_mapping'" :for="`answer-${question.id}`" class="question__hint">
@@ -85,7 +85,7 @@ function submit() {
         </label>
         <label v-for="candidate in choices(question)" :key="candidate.id" class="question__candidate">
           <input v-model="values[question.id]" type="radio" :name="`launch-${question.id}`" :value="candidate.id" :disabled="disabled">
-          <code>{{ formatRunCommand(candidate.runSpec) }}</code>
+          <InlineCode :code="formatRunCommand(candidate.runSpec)" language="bash" />
         </label>
       </div>
       <BaseButton v-else-if="question.code || question.filePath" variant="tonal" :disabled="disabled" @click="emit('openSettings', question)">

@@ -308,6 +308,7 @@ PROJECT_ROUTES = [
     ("GET", "analysis"),
     ("POST", "analysis"),
     ("GET", "files?path=main.py"),
+    ("GET", "archive/files?path=README.md&archiveTag=" + "0" * 64),
     ("GET", "decisions"),
     ("PUT", "decisions"),
     ("POST", "plan"),
@@ -400,6 +401,20 @@ def test_viewer_can_read_plan_but_cannot_mutate_project_and_headers_cannot_switc
         assert viewer.post(f"/api/projects/{project_id}/plan", json={}).status_code == 200
         assert seen[0].role == "viewer" and seen[0].workspace == team["id"]
         assert seen[0].user == viewer_user["id"]
+        monkeypatch.setattr(
+            app.state.browser,
+            "archive_file",
+            lambda identity, *args: (
+                seen.append(identity) or {"kind": "text", "content": "ready", "truncated": False}
+            ),
+        )
+        archive_preview = viewer.get(
+            f"/api/projects/{project_id}/archive/files",
+            params={"path": "README.md", "archiveTag": "a" * 64},
+        )
+        assert archive_preview.status_code == 200
+        assert archive_preview.json()["content"] == "ready"
+        assert seen[-1].role == "viewer" and seen[-1].workspace == team["id"]
         owner.patch(f"/api/teams/{team['id']}/members/{viewer_user['id']}", json={"role": "member"})
         viewer.post(
             f"/api/projects/{project_id}/plan",

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path as FilePath
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, Path, Request
+from fastapi import FastAPI, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
@@ -352,6 +352,15 @@ def create_app(
     @app.get("/api/projects/{project_id}/files")
     def file_content(request: Request, project_id: ProjectId, path: str):
         return browser.file(request.state.identity, project_id, path)
+
+    @app.get("/api/projects/{project_id}/archive/files")
+    def archive_file_content(
+        request: Request,
+        project_id: ProjectId,
+        path: Annotated[str, Query(min_length=1, max_length=4096)],
+        archiveTag: Annotated[str, Query(pattern=r"^[a-f0-9]{64}$")],
+    ):
+        return browser.archive_file(request.state.identity, project_id, path, archiveTag)
 
     @app.post("/api/projects/{project_id}/source", status_code=202)
     async def replace_source(request: Request, project_id: ProjectId):

@@ -15,6 +15,7 @@ from nishtyak_core.archives import ArchiveReader
 from nishtyak_core.redaction import TextRedactor
 from nishtyak_core.snapshot import SnapshotBuilder
 
+from .archive_preview import ArchiveFilePreview
 from .auth import WorkspaceIdentity
 from .config import WebSettings
 from .mapping import (
@@ -77,6 +78,18 @@ class BrowserService:
                     409, "README_UNAVAILABLE", "README exceeds the preview limit"
                 )
         return {"content": TextRedactor().redact(text.decode("utf-8"))}
+
+    def archive_file(
+        self, identity: WorkspaceIdentity, project_id: str, path: str, archive_tag: str
+    ) -> dict:
+        if not isinstance(archive_tag, str) or not re.fullmatch(r"[a-f0-9]{64}", archive_tag):
+            raise LogicClientError(422, "INVALID_REQUEST", "Expected the selected archive hash")
+        ArchiveFilePreview.validate_path(path)
+        with self.store.locked(project_id):
+            content = self.download(identity, project_id)
+            if hashlib.sha256(content).hexdigest() != archive_tag:
+                raise LogicClientError(409, "ARCHIVE_STALE", "The selected archive has changed")
+            return ArchiveFilePreview().read(content, path)
 
     def verification(self, identity: WorkspaceIdentity, project_id: str) -> dict:
         with self.store.locked(project_id):

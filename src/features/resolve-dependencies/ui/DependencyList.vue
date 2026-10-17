@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Dependency } from '@/entities/project'
+import { InlineCode } from '@/shared/ui'
 import { dependencySummaries, needsPackageMapping } from '../lib/dependencyDisplay'
 import DependencyRow from './DependencyRow.vue'
 
@@ -80,7 +81,7 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
         </span>
       </li>
       <li v-for="dep in skipped" :key="`unknown-${dep.id}`" class="deps__summary-row">
-        <code>import {{ dep.module }}</code>
+        <InlineCode :code="`import ${dep.module}`" language="python" />
         <span class="deps__version">{{ $t('analysis.deps.unknownPackage') }}</span>
         <button type="button" class="deps__clarify" :disabled="disabled" @click="clarify(dep.module)">
           {{ $t('analysis.deps.clarify') }}
@@ -102,11 +103,11 @@ const stdlib = computed(() => props.dependencies.filter((d) => d.category === 's
       <p class="deps__builtin">
         {{ $t('analysis.deps.builtin') }}
         <template v-if="local.length">
-          <code v-for="m in local" :key="m">{{ m }}</code> {{ $t('analysis.deps.local')
+          <InlineCode v-for="m in local" :key="m" :code="`import ${m}`" language="python" /> {{ $t('analysis.deps.local')
           }}<template v-if="stdlib.length">; </template>
         </template>
         <template v-if="stdlib.length">
-          <code v-for="m in stdlib" :key="m">{{ m }}</code> {{ $t('analysis.deps.stdlib') }}
+          <InlineCode v-for="m in stdlib" :key="m" :code="`import ${m}`" language="python" /> {{ $t('analysis.deps.stdlib') }}
         </template>
       </p>
     </details>

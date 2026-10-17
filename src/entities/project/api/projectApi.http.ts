@@ -19,6 +19,9 @@ export const projectHttpApi: ProjectApi = {
   getFileContent: (projectId, path) =>
     apiClient.get(`/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 
+  getArchiveFileContent: (projectId, path, archiveTag) =>
+    apiClient.get(`/projects/${projectId}/archive/files?path=${encodeURIComponent(path)}&archiveTag=${encodeURIComponent(archiveTag)}`),
+
   getDecisions: (projectId) => apiClient.get(`/projects/${projectId}/decisions`),
 
   saveDecisions: (projectId, decisions, expectedRevision) =>

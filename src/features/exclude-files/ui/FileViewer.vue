@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { getSecretLabel, projectApi, type FileContent, type ProjectFile } from '@/entities/project'
+import { computed, onScopeDispose, ref, watch } from 'vue'
+import { getFileLanguage, getSecretLabel, isMarkdownFile, type ProjectFile } from '@/entities/project'
+import { sessionGeneration } from '@/shared/api'
 import { formatBytes } from '@/shared/lib'
-import { BaseIcon } from '@/shared/ui'
+import { BaseButton, BaseIcon, CodeBlock, MarkdownContent } from '@/shared/ui'
+import { useFileContent } from '../model/useFileContent'
 
 const props = defineProps<{
   projectId: string
+  analysisId?: string
   file: ProjectFile | null
   excluded: boolean
   disabled?: boolean
@@ -13,35 +16,33 @@ const props = defineProps<{
 
 const emit = defineEmits<{ toggle: [path: string] }>()
 
-const content = ref<FileContent | null>(null)
-const isLoading = ref(false)
-const error = ref(false)
-let requestId = 0
-
-const lines = computed(() => (content.value?.kind === 'text' ? content.value.content.split('\n') : []))
-
+const selection = computed(() => ({ projectId: props.projectId, path: props.file?.path ?? null, analysisId: props.analysisId }))
+const { content, isLoading, error, reload } = useFileContent(selection)
+const mode = ref<'rendered' | 'source'>('rendered')
+const copyStatus = ref<'copied' | 'error' | null>(null)
+const markdown = computed(() => !!props.file && isMarkdownFile(props.file.path))
+const language = computed(() => props.file ? getFileLanguage(props.file.path) : 'plaintext')
 const isPlaceholder = computed(() => content.value?.kind === 'hidden' || content.value?.kind === 'binary')
+let viewGeneration = 0
+watch([selection, sessionGeneration], () => {
+  viewGeneration += 1
+  mode.value = 'rendered'
+  copyStatus.value = null
+}, { flush: 'sync' })
+onScopeDispose(() => { viewGeneration += 1 })
 
-watch(
-  () => [props.projectId, props.file?.path] as const,
-  async ([projectId, path]) => {
-    const currentRequest = ++requestId
-    content.value = null
-    error.value = false
-    isLoading.value = false
-    if (!path) return
-    isLoading.value = true
-    try {
-      const result = await projectApi.getFileContent(projectId, path)
-      if (requestId === currentRequest) content.value = result
-    } catch {
-      if (requestId === currentRequest) error.value = true
-    } finally {
-      if (requestId === currentRequest) isLoading.value = false
-    }
-  },
-  { immediate: true },
-)
+async function copySource() {
+  if (content.value?.kind !== 'text') return
+  const view = viewGeneration
+  const source = content.value.content
+  copyStatus.value = null
+  try {
+    await navigator.clipboard.writeText(source)
+    if (view === viewGeneration) copyStatus.value = 'copied'
+  } catch {
+    if (view === viewGeneration) copyStatus.value = 'error'
+  }
+}
 </script>
 
 <template>
@@ -62,12 +63,22 @@ watch(
       {{ file.path }} <span>· {{ formatBytes(file.size) }}</span>
     </p>
 
+    <div v-if="markdown && content?.kind === 'text' && content.content" class="viewer__modes" role="group" :aria-label="$t('analysis.files.previewMode')">
+      <BaseButton size="sm" variant="tonal" :aria-pressed="mode === 'rendered'" @click="mode = 'rendered'">{{ $t('analysis.files.rendered') }}</BaseButton>
+      <BaseButton size="sm" variant="tonal" :aria-pressed="mode === 'source'" @click="mode = 'source'">{{ $t('analysis.files.source') }}</BaseButton>
+      <BaseButton v-if="mode === 'rendered'" size="sm" variant="tonal" @click="copySource">{{ $t(copyStatus === 'copied' ? 'common.copied' : 'analysis.files.copySource') }}</BaseButton>
+    </div>
+    <p v-if="copyStatus === 'error'" class="viewer__note" role="alert">{{ $t('analysis.files.copyError') }}</p>
+
     <div class="viewer__body" :class="{ 'viewer__body--placeholder': isPlaceholder }">
       <p v-if="!file" class="viewer__empty">{{ $t('analysis.files.pickFile') }}</p>
       <p v-else-if="isLoading" class="viewer__empty">
         <BaseIcon name="refresh" :size="18" spin /> {{ $t('common.loading') }}
       </p>
-      <p v-else-if="error" class="viewer__empty">{{ $t('analysis.files.openError') }}</p>
+      <div v-else-if="error" class="viewer__empty" role="alert">
+        <p>{{ $t('analysis.files.openError') }}</p>
+        <BaseButton size="sm" variant="tonal" @click="reload">{{ $t('common.retry') }}</BaseButton>
+      </div>
       <div v-else-if="content?.kind === 'hidden'" class="viewer__unavailable">
         <BaseIcon name="lock" :size="28" />
         <p class="viewer__unavailable-title">{{ $t('analysis.files.unavailable') }}</p>
@@ -83,13 +94,11 @@ watch(
       <p v-else-if="content?.kind === 'text' && !content.content" class="viewer__empty">
         {{ $t('analysis.files.emptyFile') }}
       </p>
-      <ol v-else-if="content?.kind === 'text'" class="code">
-        <li v-for="(line, index) in lines" :key="index" class="code__line">
-          <span class="code__number">{{ index + 1 }}</span>
-          <span class="code__text">{{ line || ' ' }}</span>
-        </li>
-      </ol>
-      <p v-if="content?.kind === 'text' && content.truncated" class="viewer__empty">
+      <template v-else-if="content?.kind === 'text'">
+        <MarkdownContent v-if="markdown && mode === 'rendered'" class="viewer__markdown" :content="content.content" />
+        <CodeBlock v-else :code="content.content" :language="language" :filename="file?.path" />
+      </template>
+      <p v-if="content?.kind === 'text' && content.truncated" class="viewer__note" role="note">
         {{ $t('workflow.truncatedFile') }}
       </p>
     </div>
@@ -211,28 +220,20 @@ watch(
   line-height: 1.45;
 }
 
-.code {
-  margin: 0;
-  padding: 14px 0;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 28px;
-  counter-reset: none;
-}
-
-.code__line {
+.viewer__modes {
   display: flex;
-  gap: 24px;
-  padding: 0 20px 0 14px;
-  white-space: pre;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }
 
-.code__number {
-  width: 24px;
-  flex-shrink: 0;
-  color: var(--color-text-subtle);
-  font-size: 11px;
-  text-align: right;
-  user-select: none;
+.viewer__markdown {
+  padding: 20px;
+}
+
+.viewer__note {
+  padding: 12px 16px;
+  color: var(--color-text-muted);
+  font-size: 13px;
 }
 </style>

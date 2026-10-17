@@ -11,6 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "dompurify": "^3.4.17",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.3",
     "pinia": "^4.1.0",
     "vue": "^3.5.44",
     "vue-i18n": "^11.4.14",
@@ -20,6 +23,7 @@
     "@types/node": "^26.6.5",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vue/tsconfig": "^0.9.1",
+    "jsdom": "^30.1.3",
     "typescript": "~5.9",
     "vite": "^8.3.4",
     "vitest": "^5.0.5",

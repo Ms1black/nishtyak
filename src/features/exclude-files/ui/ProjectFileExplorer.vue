@@ -8,6 +8,7 @@ import FileViewer from './FileViewer.vue'
 
 const props = defineProps<{
   projectId: string
+  analysisId?: string
   projectName: string
   files: ProjectFile[]
   excludedFiles: string[]
@@ -90,6 +91,7 @@ defineExpose({ focusFile })
 
       <FileViewer
         :project-id="projectId"
+        :analysis-id="analysisId"
         :file="selectedFile"
         :excluded="!!selectedFile && excluded.has(selectedFile.path)"
         :disabled="disabled"

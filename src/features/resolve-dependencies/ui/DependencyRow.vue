@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Dependency } from '@/entities/project'
-import { BaseButton, BaseIcon, BaseInput } from '@/shared/ui'
+import { BaseButton, BaseIcon, BaseInput, InlineCode } from '@/shared/ui'
 import { splitRequirement } from '../lib/requirement'
 import { dependencyRequirement, needsPackageMapping } from '../lib/dependencyDisplay'
 
@@ -53,7 +53,7 @@ const version = computed({
   <form v-if="variant === 'mapping'" class="mapping" @submit.prevent="applyPackage">
     <div>
       <p class="mapping__title">
-        <code>import {{ dependency.module }}</code>
+        <InlineCode :code="`import ${dependency.module}`" language="python" />
       </p>
       <p class="mapping__hint">{{ $t('analysis.deps.unresolvedHint') }}</p>
     </div>
@@ -83,7 +83,7 @@ const version = computed({
     <div class="dep__import">
       <span class="dep__module">
         <BaseIcon v-if="needsAnswer" name="alert" :size="16" class="dep__alert" />
-        import {{ dependency.module }}
+        <InlineCode :code="`import ${dependency.module}`" language="python" />
       </span>
     </div>
 

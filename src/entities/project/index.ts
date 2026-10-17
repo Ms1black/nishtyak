@@ -49,6 +49,7 @@ export {
   type FindingKind,
 } from './lib/findings'
 export { buildFileTree, type FileTreeNode } from './lib/fileTree'
+export { getFileLanguage, isMarkdownFile } from './lib/filePreview'
 export { default as ProjectSourceIcon } from './ui/ProjectSourceIcon.vue'
 export { default as AnalysisBadge } from './ui/AnalysisBadge.vue'
 export { default as ArchiveStatusLabel } from './ui/ArchiveStatusLabel.vue'

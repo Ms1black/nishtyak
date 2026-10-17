@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { VerificationStatus } from '@/entities/project'
 import { sessionGeneration } from '@/shared/api'
-import { BaseButton, BaseCard, BaseInput, BaseTextarea } from '@/shared/ui'
+import { BaseButton, BaseCard, BaseInput, BaseTextarea, CodeBlock, MarkdownContent } from '@/shared/ui'
 import { ArchiveReview, readmeCommands } from '../model/archiveReview'
 
 const props = defineProps<{ projectId: string; archiveTag?: string; canEdit: boolean }>()
@@ -10,6 +10,7 @@ const emit = defineEmits<{ refresh: [] }>()
 const review = new ArchiveReview()
 const state = review.state
 const copyStatus = ref<'copied' | 'error' | null>(null)
+const readmeRendered = ref(true)
 const commands = computed(() => readmeCommands(state.readme))
 const statuses: VerificationStatus[] = ['not_checked', 'passed', 'failed', 'unable']
 const canSave = computed(() => props.canEdit && !!state.verification?.analysisId &&
@@ -17,7 +18,11 @@ const canSave = computed(() => props.canEdit && !!state.verification?.analysisId
 
 function load() { void review.open(props.projectId, props.archiveTag) }
 onMounted(load)
-watch(() => [props.projectId, props.archiveTag], load)
+watch(() => [props.projectId, props.archiveTag], () => {
+  copyStatus.value = null
+  readmeRendered.value = true
+  load()
+})
 watch(sessionGeneration, () => review.reset(), { flush: 'sync' })
 onBeforeUnmount(() => review.reset())
 
@@ -42,13 +47,17 @@ async function copy(content: string) {
     <template v-else-if="state.readme">
       <div v-for="(command, index) in commands" :key="index" class="archive-review__command">
         <h3>{{ command.title || $t('ready.readme.commands') }}</h3>
-        <pre><code>{{ command.content }}</code></pre>
-        <BaseButton size="sm" variant="tonal" @click="copy(command.content)">{{ $t('ready.readme.copyCommands') }}</BaseButton>
+        <CodeBlock :code="command.content" :language="command.language" :line-numbers="false" />
       </div>
       <details class="archive-review__readme">
         <summary>{{ $t('ready.readme.preview') }}</summary>
-        <pre>{{ state.readme }}</pre>
-        <BaseButton size="sm" variant="tonal" @click="copy(state.readme)">{{ $t('ready.readme.copyReadme') }}</BaseButton>
+        <div class="archive-review__modes" role="group" :aria-label="$t('analysis.files.previewMode')">
+          <BaseButton size="sm" variant="tonal" :aria-pressed="readmeRendered" @click="readmeRendered = true">{{ $t('analysis.files.rendered') }}</BaseButton>
+          <BaseButton size="sm" variant="tonal" :aria-pressed="!readmeRendered" @click="readmeRendered = false">{{ $t('analysis.files.source') }}</BaseButton>
+        </div>
+        <MarkdownContent v-if="readmeRendered" :content="state.readme" />
+        <CodeBlock v-else :code="state.readme" language="markdown" filename="README.md" />
+        <BaseButton v-if="readmeRendered" size="sm" variant="tonal" @click="copy(state.readme)">{{ $t('ready.readme.copyReadme') }}</BaseButton>
       </details>
       <p v-if="copyStatus" role="status">{{ $t(copyStatus === 'copied' ? 'ready.readme.copied' : 'ready.readme.copyError') }}</p>
     </template>
@@ -122,18 +131,7 @@ async function copy(content: string) {
 .archive-review__verification { padding-top: 24px; border-top: 1px solid var(--color-border); }
 .archive-review__field { gap: 8px; font-size: 14px; }
 .archive-review__row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.archive-review pre {
-  margin: 12px 0;
-  padding: 16px;
-  max-height: 480px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  font-size: 13px;
-  line-height: 1.6;
-}
+.archive-review__modes { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
 .archive-review h3 { font-size: 15px; font-weight: 500; }
 .archive-review summary { cursor: pointer; }
 .archive-review select { padding: 14px; background: var(--color-bg); border-radius: var(--radius-md); }

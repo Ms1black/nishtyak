@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { nextTick, ref, useId, watch } from 'vue'
 
-const props = defineProps<{ title: string }>()
+const props = withDefaults(defineProps<{ title: string; size?: 'default' | 'wide' }>(), {
+  size: 'default',
+})
 const open = defineModel<boolean>('open', { required: true })
 
 const panel = ref<HTMLElement | null>(null)
@@ -46,7 +48,7 @@ defineExpose({ close, title: props.title })
   <Teleport to="body">
     <Transition name="dialog">
       <div v-if="open" class="dialog" @keydown="onKeydown" @mousedown.self="close">
-        <div ref="panel" class="dialog__panel" role="dialog" aria-modal="true" :aria-labelledby="titleId">
+        <div ref="panel" class="dialog__panel" :class="{ 'dialog__panel--wide': size === 'wide' }" role="dialog" aria-modal="true" :aria-labelledby="titleId">
           <h2 :id="titleId" class="dialog__title">{{ title }}</h2>
           <div class="dialog__body"><slot /></div>
           <div class="dialog__actions"><slot name="actions" /></div>
@@ -82,6 +84,12 @@ defineExpose({ close, title: props.title })
   font-size: 22px;
   font-weight: 500;
   line-height: 1.25;
+}
+
+.dialog__panel--wide {
+  width: min(1120px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
 }
 
 .dialog__body {
