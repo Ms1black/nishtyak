@@ -25,6 +25,9 @@ const rendered = computed(() => renderMarkdown(props.content))
   line-height: 1.75;
   overflow-wrap: anywhere;
 }
+.markdown-content__body {
+  min-width: 0;
+}
 .markdown-content__body :deep(> :first-child) {
   margin-top: 0;
 }
@@ -49,6 +52,8 @@ const rendered = computed(() => renderMarkdown(props.content))
   color: var(--color-text, #fff);
   font-weight: 600;
   line-height: 1.35;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 .markdown-content__body :deep(h1) {
   padding-bottom: 10px;

@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends string">
-import { computed, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import BaseIcon from './BaseIcon.vue'
 import type { IconName } from './icons'
 import type { SelectOption } from './types'
@@ -18,22 +18,67 @@ const props = defineProps<{
 const model = defineModel<T | null>({ required: true })
 
 const root = ref<HTMLElement | null>(null)
+const list = ref<HTMLElement | null>(null)
 const isOpen = ref(false)
+const opensUp = ref(false)
+const maxHeight = ref<number>()
 const activeIndex = ref(-1)
 const listId = useId()
+const listGap = 8
+const viewportPadding = 12
 
 const selected = computed(() => props.options.find((o) => o.value === model.value) ?? null)
 const triggerIcon = computed(() => selected.value?.icon ?? props.icon)
 
 useClickOutside(root, () => close())
 
-function open() {
+function updatePlacement() {
+  if (!isOpen.value || !root.value || !list.value) return
+  const rect = root.value.getBoundingClientRect()
+  const above = Math.max(0, rect.top - listGap - viewportPadding)
+  const below = Math.max(0, window.innerHeight - rect.bottom - listGap - viewportPadding)
+  opensUp.value = below < list.value.scrollHeight + 2 && above > below
+  maxHeight.value = opensUp.value ? above : below
+}
+
+function keepActiveVisible() {
+  if (!isOpen.value || !list.value) return
+  const option = list.value.children[activeIndex.value] as HTMLElement | undefined
+  if (!option) return
+  const bottom = option.offsetTop + option.offsetHeight
+  if (option.offsetTop < list.value.scrollTop) list.value.scrollTop = option.offsetTop
+  else if (bottom > list.value.scrollTop + list.value.clientHeight) {
+    list.value.scrollTop = bottom - list.value.clientHeight
+  }
+}
+
+function onViewportChange(event: Event) {
+  if (event.target instanceof Node && list.value?.contains(event.target)) return
+  updatePlacement()
+  void nextTick(keepActiveVisible)
+}
+
+onMounted(() => {
+  window.addEventListener('resize', onViewportChange)
+  window.addEventListener('scroll', onViewportChange, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onViewportChange)
+  window.removeEventListener('scroll', onViewportChange, true)
+})
+watch(activeIndex, () => void nextTick(keepActiveVisible))
+
+async function open() {
   if (props.disabled) return
   isOpen.value = true
   activeIndex.value = Math.max(
     0,
     props.options.findIndex((o) => o.value === model.value),
   )
+  await nextTick()
+  updatePlacement()
+  await nextTick()
+  keepActiveVisible()
 }
 
 function close() {
@@ -68,11 +113,11 @@ function onKeydown(event: KeyboardEvent) {
       break
     case 'ArrowDown':
       event.preventDefault()
-      activeIndex.value = (activeIndex.value + 1) % total
+      if (total) activeIndex.value = (activeIndex.value + 1) % total
       break
     case 'ArrowUp':
       event.preventDefault()
-      activeIndex.value = (activeIndex.value - 1 + total) % total
+      if (total) activeIndex.value = (activeIndex.value - 1 + total) % total
       break
     case 'Enter':
     case ' ': {
@@ -86,7 +131,7 @@ function onKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div ref="root" class="select" :class="[`select--${size ?? 'md'}`, { 'is-open': isOpen, 'is-disabled': disabled }]">
+  <div ref="root" class="select" :class="[`select--${size ?? 'md'}`, { 'is-open': isOpen, 'is-disabled': disabled, 'select--up': opensUp }]">
     <button
       type="button"
       class="select__trigger"
@@ -109,7 +154,7 @@ function onKeydown(event: KeyboardEvent) {
     </button>
 
     <Transition name="select-pop">
-      <ul v-show="isOpen" :id="listId" class="select__list" role="listbox">
+      <ul v-show="isOpen" :id="listId" ref="list" class="select__list" :style="{ maxHeight: maxHeight === undefined ? undefined : `${maxHeight}px` }" role="listbox">
         <li
           v-for="(option, index) in options"
           :id="`${listId}-${index}`"
@@ -204,11 +249,18 @@ function onKeydown(event: KeyboardEvent) {
   top: calc(100% + 8px);
   left: 0;
   right: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-raised);
   box-shadow: 0 16px 40px rgb(0 0 0 / 0.5);
+}
+
+.select--up .select__list {
+  top: auto;
+  bottom: calc(100% + 8px);
 }
 
 .select__option {

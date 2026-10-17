@@ -122,6 +122,7 @@ async function copySource() {
 
 .viewer__title {
   flex: 1;
+  min-width: 180px;
   font-family: var(--font-display);
   font-size: 18px;
   font-weight: 500;
@@ -160,6 +161,7 @@ async function copySource() {
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .viewer__path span {
@@ -168,9 +170,11 @@ async function copySource() {
 
 .viewer__body {
   flex: 1;
+  min-width: 0;
   margin-top: 16px;
   overflow: auto;
-  max-height: 460px;
+  max-height: min(720px, 75dvh);
+  scrollbar-gutter: stable;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);

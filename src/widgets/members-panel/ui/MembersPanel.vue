@@ -81,7 +81,6 @@ const membersStore = useMembersStore()
 
 .members__table {
   margin-top: 24px;
-  overflow: hidden;
   border-radius: var(--radius-xl);
   background: var(--color-surface);
 }
@@ -93,6 +92,7 @@ const membersStore = useMembersStore()
   gap: 16px;
   height: 46px;
   padding: 0 20px;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   background: var(--color-surface-header);
   color: var(--color-text-secondary);
   font-size: 13px;

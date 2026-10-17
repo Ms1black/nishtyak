@@ -106,10 +106,21 @@ defineExpose({ focusFile })
 </template>
 
 <style scoped>
+.explorer {
+  container-type: inline-size;
+  min-width: 0;
+}
+
 .explorer__grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.4fr) minmax(0, 0.6fr);
-  gap: 32px 48px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+.explorer__tree {
+  min-width: 0;
+  max-height: 240px;
+  overflow: auto;
 }
 
 .explorer__title {
@@ -130,6 +141,11 @@ defineExpose({ focusFile })
   font-size: 15px;
 }
 
+.tree__root span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .tree__root-chevron {
   color: var(--color-text-secondary);
 }
@@ -147,7 +163,7 @@ defineExpose({ focusFile })
 
 .explorer__collapse {
   display: block;
-  width: calc(100% - 96px);
+  width: 100%;
   height: 30px;
   margin: 28px auto 0;
   border-radius: var(--radius-pill);
@@ -165,13 +181,13 @@ defineExpose({ focusFile })
   margin-top: 20px;
 }
 
-@media (max-width: 900px) {
+@container (min-width: 960px) {
   .explorer__grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 240px minmax(0, 1fr);
   }
 
-  .explorer__collapse {
-    width: 100%;
+  .explorer__tree {
+    max-height: 640px;
   }
 }
 </style>
