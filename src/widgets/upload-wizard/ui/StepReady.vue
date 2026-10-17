@@ -24,10 +24,7 @@ const treeItems = computed(() => {
 const summary = computed(() => [
   {
     label: t('ready.summary.packages'),
-    value: String(
-      wizard.lock?.packages.length ?? automaticResolution.value?.packages?.length ??
-      wizard.plan?.requirements.length ?? 0,
-    ),
+    value: String(wizard.plan?.requirements.length ?? 0),
   },
   {
     label: t('ready.summary.run'),
