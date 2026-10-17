@@ -35,7 +35,11 @@ services:
     command:
       - python
       - -c
-      - "import os; [(os.chmod(p, 0o770), os.chown(p, 65532, 65532)) for p in ('/data/jobs', '/data/web')]"
+      - |
+        import os
+        for directory in ('/data/jobs', '/data/web'):
+            os.chmod(directory, 0o770)
+            os.chown(directory, 65532, 65532)
     restart: "no"
 
   logic:
@@ -66,7 +70,18 @@ services:
     cpus: 2
     stop_grace_period: 40s
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=2)"]
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import os
+          import urllib.request
+          request = urllib.request.Request(
+              'http://127.0.0.1:8010/readyz',
+              headers={'Authorization': 'Bearer ' + os.environ['NISHTYAK_SERVICE_TOKEN']},
+          )
+          urllib.request.urlopen(request, timeout=2)
       interval: 15s
       timeout: 3s
       retries: 3
@@ -154,7 +169,11 @@ services:
     command:
       - python
       - -c
-      - "import os; [(os.chmod(p, 0o770), os.chown(p, 65532, 65532)) for p in ('/data', '/config')]"
+      - |
+        import os
+        for directory in ('/data', '/config'):
+            os.chmod(directory, 0o770)
+            os.chown(directory, 65532, 65532)
     restart: "no"
 
   edge:

@@ -19,7 +19,7 @@ import { useUploadWizardStore } from '../model/uploadWizardStore'
 import ReadinessPanel from './ReadinessPanel.vue'
 import SectionCard from './SectionCard.vue'
 import ProjectToolsPanel from './ProjectToolsPanel.vue'
-import AutomationQuestion from './AutomationQuestion.vue'
+import AutomationQuestions from './AutomationQuestions.vue'
 
 const wizard = useUploadWizardStore()
 const explorer = ref<InstanceType<typeof ProjectFileExplorer> | null>(null)
@@ -79,9 +79,11 @@ const unresolvedModules = computed(() => {
   return modules
 })
 const resolution = computed(() => visiblePlan.value?.automaticResolution)
-const automationQuestion = computed(() =>
-  wizard.automation?.phase === 'needs_input' ? wizard.automation.question : null,
-)
+const automationQuestions = computed(() => {
+  const automation = wizard.automation
+  if (automation?.phase !== 'needs_input') return []
+  return automation.questions ?? (automation.question ? [automation.question] : [])
+})
 const progressText = computed(() => {
   const automation = wizard.automation
   if (!automation || !wizard.isAutomating) return null
@@ -154,7 +156,8 @@ function focusFinding(finding: Finding) {
 
 function focusQuestion() {
   const sections = { dependencies: 'dependencies', entrypoint: 'run', description: 'data', environment: 'tools' }
-  return focusSection(sections[automationQuestion.value?.aspect ?? 'dependencies'])
+  const question = automationQuestions.value.find((item) => item.kind === 'text') ?? automationQuestions.value[0]
+  return focusSection(sections[question?.aspect ?? 'dependencies'])
 }
 
 function toggleAdvanced(event: Event) {
@@ -276,12 +279,13 @@ function toggleAdvanced(event: Event) {
           </div>
         </BaseCard>
 
-        <BaseCard v-if="automationQuestion" padding="lg" class="questions" role="status">
-          <AutomationQuestion
-            :question="automationQuestion"
+        <BaseCard v-if="wizard.automation?.phase === 'needs_input'" padding="lg" class="questions">
+          <AutomationQuestions
+            :questions="automationQuestions"
+            :questionnaire-id="wizard.automation.questionnaireId"
             :candidates="wizard.analysis.launchCandidates ?? []"
             :disabled="wizard.isBusy || !wizard.canEdit"
-            @answer="wizard.answerQuestion"
+            @answer="wizard.answerQuestions"
             @open-settings="focusQuestion"
           />
         </BaseCard>

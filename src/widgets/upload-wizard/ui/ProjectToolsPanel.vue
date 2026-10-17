@@ -180,7 +180,7 @@ async function downloadGraph() {
         <p v-if="!targetMatchesProfile" class="tools__hint">{{ $t('workflow.profileMismatch') }}</p>
         <BaseButton
           variant="tonal"
-          :disabled="wizard.isBusy || !platform || !targetPython || !targetMatchesProfile"
+          :disabled="wizard.isBusy || !wizard.canEdit || wizard.automation?.phase === 'needs_input' || !platform || !targetPython || !targetMatchesProfile"
           :loading="wizard.isResolving"
           @click="targetPython && platform && wizard.resolve({ pythonVersion: targetPython, platform })"
           >{{ $t('workflow.resolve') }}</BaseButton

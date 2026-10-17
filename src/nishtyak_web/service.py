@@ -106,7 +106,7 @@ class BrowserService:
         preparation = None
         automation = job.get("automation")
         preparing = (
-            automation.get("phase") in {"static", "assisting", "validating"}
+            automation.get("phase") in {"static", "assisting", "validating", "finalizing"}
             if automation is not None
             else any(
                 (job.get(key) or {}).get("status") in {"pending", "running"}
@@ -137,6 +137,8 @@ class BrowserService:
             "automation": {
                 "enabled": automation["enabled"],
                 "maxAttempts": automation.get("max_attempts", 2),
+                "maxHumanRounds": automation.get("max_human_rounds", 1),
+                "maxFinalAttempts": automation.get("max_final_attempts", 1),
             },
         }
 
@@ -186,6 +188,27 @@ class BrowserService:
             self.store.get(identity.scope, project_id)
             result = self.client_factory(identity.scope).save_decisions(
                 project_id, decisions_to_core(decisions), expected_revision
+            )
+            self.store.invalidate(identity.scope, project_id)
+            return document_to_web(result)
+
+    def submit_clarifications(
+        self,
+        identity: WorkspaceIdentity,
+        project_id: str,
+        decisions: dict,
+        expected_revision: int,
+        questionnaire_id: str,
+        notes: str = "",
+    ) -> dict:
+        with self.store.locked(project_id):
+            self.store.get(identity.scope, project_id)
+            result = self.client_factory(identity.scope).submit_clarifications(
+                project_id,
+                questionnaire_id,
+                decisions_to_core(decisions),
+                expected_revision,
+                notes,
             )
             self.store.invalidate(identity.scope, project_id)
             return document_to_web(result)

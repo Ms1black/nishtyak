@@ -124,7 +124,7 @@ const saveText = computed(() => {
     <div class="panel__footer">
       <p v-if="error" class="panel__error" role="alert">{{ error }}</p>
       <BaseButton
-        v-if="saveState === 'error'"
+        v-if="saveState === 'error' && !needsInput"
         block
         variant="tonal"
         :loading="isRefreshing"

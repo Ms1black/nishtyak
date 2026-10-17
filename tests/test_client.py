@@ -180,3 +180,44 @@ def test_wait_returns_one_human_question_after_server_attempt_budget(monkeypatch
     }
     monkeypatch.setattr(client, "job", lambda _job_id: result)
     assert client.wait(PROJECT_ID) == result
+
+
+def test_batch_submission_uses_one_mutation_with_notes_and_revision(monkeypatch):
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    requests = []
+    expected = {"revision": 4, "decisions": {"analysis_id": "c" * 20}}
+
+    def request(method, path, body=None):
+        requests.append((method, path, json.loads(body)))
+        return expected
+
+    monkeypatch.setattr(client, "_request", request)
+    result = client.submit_clarifications(
+        PROJECT_ID, "d" * 20, expected["decisions"], 3, "Это внутренний модуль лаборатории."
+    )
+    assert result == expected
+    assert requests == [
+        (
+            "POST",
+            f"/v1/projects/{PROJECT_ID}/clarifications",
+            {
+                "questionnaire_id": "d" * 20,
+                "expected_revision": 3,
+                "decisions": expected["decisions"],
+                "notes": "Это внутренний модуль лаборатории.",
+            },
+        )
+    ]
+
+
+def test_wait_includes_the_single_final_review(monkeypatch):
+    client = LogicClient("http://127.0.0.1:8010", TOKEN, OWNER)
+    results = iter(
+        [
+            {"status": "succeeded", "automation": {"phase": "finalizing"}},
+            {"status": "succeeded", "automation": {"phase": "draft", "human_round": 1}},
+        ]
+    )
+    monkeypatch.setattr(client, "job", lambda _identifier: next(results))
+    monkeypatch.setattr("nishtyak_client.client.time.sleep", lambda _seconds: None)
+    assert client.wait(PROJECT_ID)["automation"]["phase"] == "draft"

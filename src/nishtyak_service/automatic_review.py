@@ -4,7 +4,7 @@ import os
 import re
 import threading
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import PurePosixPath
 
 from nishtyak_core import ArchiveReader
@@ -237,6 +237,272 @@ class AutomaticProjectReview:
         except (ValueError, OSError):
             return True
 
+    def prepare_pass(
+        self,
+        record: JobRecord,
+        report: AnalysisReport,
+        *,
+        plan: PackagePlan,
+        aspects: tuple[str, ...],
+        pass_id: str,
+    ) -> dict:
+        return self.assist_once(record, report, plan, aspects, stage="pre_human", pass_id=pass_id)
+
+    def finalize(
+        self,
+        record: JobRecord,
+        report: AnalysisReport,
+        *,
+        plan: PackagePlan,
+        aspects: tuple[str, ...] = (),
+        pass_id: str,
+    ) -> dict:
+        return self.assist_once(record, report, plan, aspects, stage="post_human", pass_id=pass_id)
+
+    def assist_once(
+        self,
+        record: JobRecord,
+        report: AnalysisReport,
+        plan: PackagePlan,
+        aspects: tuple[str, ...],
+        *,
+        stage: str,
+        pass_id: str,
+    ) -> dict:
+        """One idempotent project-wide review; caller holds the project operation lease."""
+        if stage not in {"pre_human", "post_human"}:
+            raise ValueError("Invalid project review stage")
+        if not isinstance(pass_id, str) or re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", pass_id) is None:
+            raise ValueError("Invalid project review identity")
+        if set(aspects) - {"entrypoint", "packages", "description", "environment"}:
+            raise ValueError("Unsupported automatic advisory aspect")
+        result = self._project_review(record, report)
+        previous = result["project_pass_results"].get(pass_id)
+        if previous is not None:
+            return self._pass_outcome(result, previous)
+        outcome = {
+            "stage": stage,
+            "attempted": False,
+            "status": "skipped",
+            "reason": None,
+            "retryable": False,
+        }
+        maximum = 2 if stage == "pre_human" else 1
+        started = time.monotonic()
+        budget_before = result["project_budgets_ms"][stage]
+        result["budget_used_ms"] = budget_before
+        requested = self._requested_aspects(plan, aspects, module_limit=200)
+        if stage == "post_human":
+            # This final consistency check is useful even when the human fixed every gap.
+            requested = list(dict.fromkeys((*requested, "environment")))
+            if not (plan.decisions and plan.decisions.description.strip()):
+                requested = list(dict.fromkeys((*requested, "description")))
+        for key in requested:
+            state = result["aspects"].setdefault(
+                key, {"status": "pending", "attempts": 0, "max_attempts": 2}
+            )
+            if stage == "post_human":
+                state["max_attempts"] = 3
+            if state["status"] != "resolved":
+                state.update(status="pending", reason=None)
+        try:
+            if result["project_passes"][stage] >= maximum:
+                outcome["reason"] = "project_attempt_budget_exhausted"
+                return self._pass_outcome(result, outcome)
+            if not self.enabled or not record.automatic_review_eligible:
+                outcome["reason"] = "advisor_unavailable"
+                return self._pass_outcome(result, outcome)
+            remaining = self.budget_seconds - budget_before / 1000
+            if remaining <= 0.2:
+                outcome["reason"] = "review_deadline"
+                return self._pass_outcome(result, outcome)
+            context = self._pass_context(record, report, plan, requested, result, stage)
+            if not requested:
+                outcome["reason"] = "static_sufficient"
+                return self._pass_outcome(result, outcome)
+            remaining -= time.monotonic() - started
+            if remaining <= 0.2:
+                outcome["reason"] = "review_deadline"
+                return self._pass_outcome(result, outcome)
+            self.repository.consume_rate(record.owner_id, "advice-daily", 10, 86400)
+            self.repository.consume_rate("_service", "advice-global-daily", 100, 86400)
+            passes_left = maximum - result["project_passes"][stage]
+            attempt_budget = remaining / passes_left
+            result["project_passes"][stage] += 1
+            for key in requested:
+                result["aspects"][key]["attempts"] += 1
+            outcome.update(attempted=True, status="unavailable", reason="review_interrupted")
+            # Reserve before invoking the provider. A restarted coordinator cannot replay it.
+            result["project_pass_results"][pass_id] = dict(outcome)
+            result["project_budgets_ms"][stage] = min(
+                15000, budget_before + round(attempt_budget * 1000)
+            )
+            self.repository.save_review(record, report.analysis_id, result)
+            response = ProjectAdviceJobRunner(wall_time_seconds=attempt_budget).run(
+                context, "repair"
+            )
+            ProjectAdvisoryService(DeepSeekClient(DeepSeekConfig.from_env())).validate_result(
+                response, context, "repair"
+            )
+            self._apply_answers(result, response, context, requested, started)
+            result["rounds"] = result.get("rounds", 0) + response.get("rounds", 0)
+            result["tool_calls"] = result.get("tool_calls", 0) + response.get("tool_calls", 0)
+            unresolved = [
+                key for key in requested if result["aspects"][key]["status"] != "resolved"
+            ]
+            outcome.update(
+                status="ready" if response["status"] == "ok" else "unavailable",
+                reason=response.get("reason") or ("aspects_unresolved" if unresolved else None),
+                retryable=response["status"] != "unavailable"
+                and bool(unresolved)
+                and result["project_passes"][stage] < maximum,
+            )
+        except ServiceError as error:
+            outcome.update(
+                status="unavailable",
+                reason="review_quota" if error.status == 429 else "review_unavailable",
+            )
+        except Exception:
+            outcome.update(
+                status="unavailable",
+                reason="invalid_or_unavailable_answer",
+                retryable=outcome["attempted"] and result["project_passes"][stage] < maximum,
+            )
+        finally:
+            for key in requested:
+                state = result["aspects"][key]
+                if state["status"] != "resolved":
+                    state.update(
+                        status="exhausted"
+                        if result["project_passes"][stage] >= maximum
+                        else "unavailable"
+                        if outcome["status"] == "unavailable" or not outcome["attempted"]
+                        else "pending",
+                        reason=state.get("reason") or outcome["reason"] or "no_grounded_answer",
+                    )
+            result["project_budgets_ms"][stage] = min(
+                15000, budget_before + round((time.monotonic() - started) * 1000)
+            )
+            result["budget_used_ms"] = result["project_budgets_ms"][stage]
+            result["elapsed_ms"] = sum(result["project_budgets_ms"].values())
+            result["status"] = (
+                "ready"
+                if result["paragraphs"] or result["entrypoint"] or result["packages"]
+                else outcome["status"]
+            )
+            result["reason"] = outcome["reason"]
+            result["project_pass_results"][pass_id] = dict(outcome)
+            self.repository.save_review(record, report.analysis_id, result)
+        return self._pass_outcome(result, outcome)
+
+    def _project_review(self, record: JobRecord, report: AnalysisReport) -> dict:
+        cached = self._cached(record, report.analysis_id) or {}
+        result = {
+            "status": "unavailable",
+            "provider": "deepseek",
+            "analysis_id": report.analysis_id,
+            "policy": self.policy,
+            "targeted": True,
+            "paragraphs": [],
+            "entrypoint": None,
+            "packages": {},
+            "aspects": {},
+            **cached,
+        }
+        source_job = cached.get("_source_job_id", cached.get("project_job_id"))
+        if source_job != record.job_id:
+            # Identical source may reuse grounded facts after explicit reanalysis, but
+            # its new questionnaire and final author answers own a fresh review budget.
+            result.update(
+                project_job_id=record.job_id,
+                project_passes={"pre_human": 0, "post_human": 0},
+                project_budgets_ms={"pre_human": 0, "post_human": 0},
+                project_pass_results={},
+                budget_used_ms=0,
+                elapsed_ms=0,
+                rounds=0,
+                tool_calls=0,
+                usage=None,
+            )
+            result.pop("budget_reserved_ms", None)
+            for state in result["aspects"].values():
+                state.update(attempts=0, max_attempts=2)
+                if state.get("status") != "resolved":
+                    state.update(status="pending", reason=None)
+        result["project_job_id"] = record.job_id
+        legacy_attempts = max(
+            (state.get("attempts", 0) for state in cached.get("aspects", {}).values()), default=0
+        )
+        result.setdefault("project_passes", {"pre_human": min(2, legacy_attempts), "post_human": 0})
+        result.setdefault(
+            "project_budgets_ms",
+            {
+                "pre_human": min(
+                    15000,
+                    cached.get("budget_used_ms", 0) + cached.get("budget_reserved_ms", 0),
+                ),
+                "post_human": 0,
+            },
+        )
+        result.setdefault("project_pass_results", {})
+        return result
+
+    @staticmethod
+    def _pass_outcome(result: dict, outcome: dict) -> dict:
+        return {**outcome, "project_passes": dict(result["project_passes"])}
+
+    def _pass_context(self, record, report, plan, requested, result, stage):
+        from nishtyak_core.advisors.project_context import ProjectTextFilter
+
+        context = self._context(record, report, plan)
+        groups = tuple(
+            dict.fromkeys("packages" if key.startswith("package:") else key for key in requested)
+        )
+        modules = tuple(key.split(":", 1)[1] for key in requested if key.startswith("package:"))
+        feedback = {
+            key: result["aspects"][key].get("reason") or "not_resolved" for key in requested
+        }
+        document = context.focused(groups, modules, feedback).to_dict()
+        summary = document["facts"]["summary"]
+        summary["review_stage"] = stage
+        summary["effective_requirements"] = list(plan.requirements[:100])
+        summary["effective_python"] = plan.python_version
+        summary["effective_run"] = asdict(plan.run_spec) if plan.run_spec else None
+        summary["effective_environment_status"] = (plan.automatic_resolution or {}).get("status")
+        if stage == "post_human":
+            decisions = asdict(plan.decisions) if plan.decisions else {}
+            # Validated choices are evidence, never instructions or authority to execute.
+            summary["saved_author_decisions"] = self._bounded_decisions(decisions)
+            flow = self.repository.read_automation(record) or {}
+            notes = flow.get("internal_clarification_notes", flow.get("clarification_notes", ""))
+            if isinstance(notes, str):
+                summary["author_clarification_notes"] = notes[:6000]
+        document = ProjectTextFilter().redact_value(document)
+        SafeProjectContext._fit_document(document)
+        return SafeProjectContext.from_dict(document)
+
+    @staticmethod
+    def _bounded_decisions(decisions: dict) -> dict:
+        values = {}
+        for key, value in decisions.items():
+            if isinstance(value, str):
+                values[key] = value[:1000]
+            elif isinstance(value, dict):
+                values[key] = {
+                    str(name)[:200]: {
+                        str(field)[:100]: str(item)[:300] if item is not None else None
+                        for field, item in content.items()
+                    }
+                    if isinstance(content, dict)
+                    else str(content)[:300]
+                    for name, content in list(value.items())[:30]
+                }
+            elif isinstance(value, (list, tuple)):
+                values[key] = [str(item)[:300] for item in value[:30]]
+            elif isinstance(value, bool) or value is None:
+                values[key] = value
+        return values
+
     def _ensure_aspects(
         self, record: JobRecord, report: AnalysisReport, plan: PackagePlan, aspects: tuple[str, ...]
     ) -> None:
@@ -379,7 +645,9 @@ class AutomaticProjectReview:
             self.repository.save_review(record, report.analysis_id, result)
 
     @staticmethod
-    def _requested_aspects(plan: PackagePlan, aspects: tuple[str, ...]) -> list[str]:
+    def _requested_aspects(
+        plan: PackagePlan, aspects: tuple[str, ...], *, module_limit: int = 20
+    ) -> list[str]:
         requested = []
         if "entrypoint" in aspects and plan.run_spec is None:
             requested.append("entrypoint")
@@ -401,7 +669,7 @@ class AutomaticProjectReview:
                 and candidate.module.isidentifier()
                 and set(candidate.evidence_ids).intersection(evidence)
             }
-            requested.extend("package:" + module for module in sorted(modules)[:20])
+            requested.extend("package:" + module for module in sorted(modules)[:module_limit])
         return requested
 
     def _apply_answers(self, result, response, context, pending, started) -> None:
@@ -413,7 +681,18 @@ class AutomaticProjectReview:
             ]
             if explanations:
                 result["aspects"]["environment"]["explanation"] = "\n".join(explanations)[:2000]
-            result["aspects"]["environment"]["reason"] = "authored_constraints_require_confirmation"
+            final_review = context.facts["summary"].get("review_stage") == "post_human"
+            already_resolved = (
+                context.facts["summary"].get("effective_environment_status") == "ready"
+            )
+            result["aspects"]["environment"].update(
+                status="resolved" if final_review and already_resolved else "pending",
+                reason=None
+                if final_review and already_resolved
+                else "environment_unresolved"
+                if final_review
+                else "authored_constraints_require_confirmation",
+            )
         if "description" in pending:
             paragraphs = self._paragraphs(response, context)
             if paragraphs:

@@ -58,7 +58,7 @@ class SafeProjectContext:
         """Focus a repair on the unresolved facts without extending tool permissions."""
         if set(aspects) - {"entrypoint", "packages", "description", "environment"}:
             raise ValueError("Unknown advisory aspect")
-        if len(modules) > 20 or any(not item.isidentifier() for item in modules):
+        if len(modules) > 200 or any(not item.isidentifier() for item in modules):
             raise ValueError("Invalid advisory import modules")
         facts = {
             **self.facts,

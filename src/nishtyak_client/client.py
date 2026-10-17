@@ -108,7 +108,7 @@ class LogicClient:
             job = self.job(job_id)
             automation = job.get("automation")
             preparing = (
-                automation.get("phase") in {"static", "assisting", "validating"}
+                automation.get("phase") in {"static", "assisting", "validating", "finalizing"}
                 if automation is not None
                 else any(
                     (job.get(key) or {}).get("status") in {"pending", "running"}
@@ -145,6 +145,24 @@ class LogicClient:
             "POST",
             self._project_path(project_id) + "/plan",
             self._json(decisions) if decisions else None,
+        )
+
+    def submit_clarifications(
+        self,
+        project_id: str,
+        questionnaire_id: str,
+        decisions: dict,
+        expected_revision: int,
+        notes: str = "",
+    ) -> dict:
+        body = {
+            "questionnaire_id": questionnaire_id,
+            "expected_revision": expected_revision,
+            "decisions": decisions,
+            "notes": notes,
+        }
+        return self._request(
+            "POST", self._project_path(project_id) + "/clarifications", self._json(body)
         )
 
     def preparation(self, project_id: str) -> dict:

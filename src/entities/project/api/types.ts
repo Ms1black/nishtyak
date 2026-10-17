@@ -3,6 +3,7 @@ import type {
   AnalysisOptions,
   DependencyLock,
   DecisionsDocument,
+  ClarificationSubmission,
   FileContent,
   PackagePlan,
   Project,
@@ -23,6 +24,7 @@ export interface ProjectApi {
     decisions: AnalysisDecisions,
     expectedRevision: number,
   ): Promise<DecisionsDocument>
+  submitClarifications(projectId: string, answers: ClarificationSubmission): Promise<DecisionsDocument>
   plan(projectId: string, decisions: AnalysisDecisions): Promise<PackagePlan>
   buildArchive(
     projectId: string,

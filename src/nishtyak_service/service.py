@@ -46,7 +46,12 @@ class LogicService:
         return {
             "automatic_review": self.automatic_review.capabilities(),
             "automatic_resolution": self.automatic_resolution.capabilities(),
-            "automation": {"enabled": self.settings.automatic_resolution, "max_attempts": 2},
+            "automation": {
+                "enabled": self.settings.automatic_resolution,
+                "max_attempts": 2,
+                "max_human_rounds": 1,
+                "max_final_attempts": 1,
+            },
         }
 
     def review_pending(self) -> None:
@@ -95,6 +100,32 @@ class LogicService:
             )
             self.automatic_resolution.queue_if_changed(record, plan)
             self.automation.queue_if_changed(record, plan)
+        self.repository.get_project(owner, project_id)
+        return result
+
+    def submit_clarifications(
+        self,
+        owner: str,
+        project_id: str,
+        decisions: UserDecisions,
+        expected_revision: int,
+        questionnaire_id: str,
+        notes: str = "",
+    ) -> dict:
+        self.repository.consume_rate(owner, "plan", 30)
+        with self.repository.operation(owner, project_id) as record:
+            report = self.repository.read_report(record)
+            plan = self._prepare(report, decisions, record)
+            state = self.automation.submission_state(record, plan, questionnaire_id, notes=notes)
+            result = self.repository.save_decisions(
+                owner,
+                project_id,
+                report.analysis_id,
+                expected_revision,
+                asdict(plan.decisions),
+                automation_state=state,
+            )
+            self.automatic_resolution.queue_if_changed(record, plan)
         self.repository.get_project(owner, project_id)
         return result
 
@@ -169,7 +200,7 @@ class LogicService:
                 raise ServiceError(
                     409,
                     "PREPARATION_NEEDS_INPUT",
-                    "Answer the preparation question and save decisions first",
+                    "Submit the preparation questionnaire before building the package",
                 )
             try:
                 snapshot = ArchiveReader().from_path(self.repository.archive_path(project_id))

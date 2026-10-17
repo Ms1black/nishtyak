@@ -255,7 +255,7 @@ class SQLiteJobRepository:
                 """SELECT p.* FROM projects p JOIN automation_flows f
                 ON f.project_id = p.project_id AND f.job_id = p.job_id
                 WHERE p.status = 'succeeded' AND p.deleted = 0 AND p.expires_at > ?
-                AND (f.phase = 'static' OR (f.phase IN ('assisting', 'validating')
+                AND (f.phase IN ('static', 'finalizing') OR (f.phase IN ('assisting', 'validating')
                 AND f.updated_at < ?)) ORDER BY p.created_at LIMIT 8""",
                 (time.time(), time.time() - 60),
             ).fetchall()
@@ -272,7 +272,7 @@ class SQLiteJobRepository:
         return json.loads(row["result_json"]) if row is not None else None
 
     def save_automation(self, record: JobRecord, result: dict) -> None:
-        payload = bounded_json(result, 64 * 1024).decode("ascii")
+        payload = bounded_json(result, 128 * 1024).decode("ascii")
         with self._transaction() as connection:
             current = self._accessible(
                 connection.execute(
@@ -353,6 +353,7 @@ class SQLiteJobRepository:
         if row is None:
             return None
         result = json.loads(row["result_json"])
+        result["_source_job_id"] = row["job_id"]
         if (
             reuse_policy is not None
             and row["job_id"] != record.job_id
@@ -423,6 +424,8 @@ class SQLiteJobRepository:
         analysis_id: str,
         expected_revision: int,
         decisions: dict,
+        *,
+        automation_state: dict | None = None,
     ) -> dict:
         self._validate_owner(owner_id)
         self._validate_identifier(project_id)
@@ -432,6 +435,11 @@ class SQLiteJobRepository:
             raise ServiceError(422, "DECISIONS_INVALID", "Decisions must be an object")
         try:
             payload = bounded_json(decisions, 256 * 1024).decode("ascii")
+            automation_payload = (
+                bounded_json(automation_state, 128 * 1024).decode("ascii")
+                if automation_state is not None
+                else None
+            )
         except (ValueError, TypeError, RecursionError):
             raise ServiceError(
                 422, "DECISIONS_INVALID", "Decision document exceeds its limits"
@@ -457,6 +465,24 @@ class SQLiteJobRepository:
                 updated_at = excluded.updated_at""",
                 (project_id, analysis_id, revision + 1, payload, time.time()),
             )
+            if automation_state is not None:
+                job = connection.execute(
+                    "SELECT job_id FROM projects WHERE project_id = ?", (project_id,)
+                ).fetchone()
+                connection.execute(
+                    """INSERT INTO automation_flows
+                    (project_id, job_id, phase, result_json, updated_at) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(project_id) DO UPDATE SET job_id = excluded.job_id,
+                    phase = excluded.phase, result_json = excluded.result_json,
+                    updated_at = excluded.updated_at""",
+                    (
+                        project_id,
+                        job["job_id"],
+                        automation_state["phase"],
+                        automation_payload,
+                        time.time(),
+                    ),
+                )
             return self._decision_document(
                 analysis_id,
                 connection.execute(

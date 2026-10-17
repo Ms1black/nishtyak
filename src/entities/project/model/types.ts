@@ -92,7 +92,12 @@ export interface AutomationQuestion {
 }
 
 export interface ProjectAutomation {
-  phase: 'static' | 'assisting' | 'validating' | 'needs_input' | 'ready' | 'draft'
+  phase: 'static' | 'assisting' | 'validating' | 'finalizing' | 'needs_input' | 'ready' | 'draft'
+  stage?: 'pre_human' | 'post_human' | 'complete'
+  humanRound?: 0 | 1
+  finalAttempt?: 0 | 1
+  questionnaireId?: string | null
+  questions?: AutomationQuestion[]
   aspect?: AutomationAspect
   attempt?: number
   maxAttempts?: number
@@ -162,6 +167,13 @@ export interface DecisionsDocument {
   revision: number
   decisions: AnalysisDecisions | null
   updatedAt: string | null
+}
+
+export interface ClarificationSubmission {
+  questionnaireId: string
+  expectedRevision: number
+  decisions: AnalysisDecisions
+  notes?: string
 }
 
 export type PlanState = 'blocked' | 'draft' | 'ready_to_verify'

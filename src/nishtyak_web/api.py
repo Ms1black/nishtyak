@@ -38,6 +38,11 @@ class SaveBody(StrictBody):
     decisions: dict
 
 
+class ClarificationsBody(SaveBody):
+    questionnaireId: Annotated[str, Field(pattern=r"^[a-f0-9]{20}$")]
+    notes: Annotated[str, Field(max_length=6000)] = ""
+
+
 class ArchiveBody(StrictBody):
     includeDockerfile: bool = False
     lockId: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
@@ -327,6 +332,17 @@ def create_app(
     @app.post("/api/projects/{project_id}/plan")
     def plan(request: Request, project_id: ProjectId, body: dict | None = None):
         return browser.plan(request.state.identity, project_id, body)
+
+    @app.post("/api/projects/{project_id}/clarifications")
+    def submit_clarifications(request: Request, project_id: ProjectId, body: ClarificationsBody):
+        return browser.submit_clarifications(
+            request.state.identity,
+            project_id,
+            body.decisions,
+            body.expectedRevision,
+            body.questionnaireId,
+            body.notes,
+        )
 
     @app.get("/api/projects/{project_id}/preparation")
     def preparation(request: Request, project_id: ProjectId):

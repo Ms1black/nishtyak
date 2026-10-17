@@ -25,6 +25,7 @@ from .dto import (
     AnalysisOptionsDTO,
     AuthorEnvironmentDTO,
     BundleDTO,
+    ClarificationsDTO,
     DecisionDocumentDTO,
     DecisionsDTO,
     ErrorDTO,
@@ -326,6 +327,24 @@ def create_app(settings: Settings, service: LogicService | None = None) -> FastA
             project_id,
             body.decisions.to_core(),
             body.expected_revision,
+        )
+
+    @app.post(
+        "/v1/projects/{project_id}/clarifications",
+        response_model=DecisionDocumentDTO,
+        responses=ERROR_RESPONSES,
+    )
+    async def submit_clarifications(
+        request: Request, project_id: ProjectId, body: ClarificationsDTO
+    ) -> dict[str, Any]:
+        return await run_in_threadpool(
+            logic.submit_clarifications,
+            request.state.owner_id,
+            project_id,
+            body.decisions.to_core(),
+            body.expected_revision,
+            body.questionnaire_id,
+            body.notes,
         )
 
     @app.post(

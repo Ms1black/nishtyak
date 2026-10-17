@@ -132,10 +132,16 @@ def automation_to_web(value: dict | None) -> dict | None:
         "attempt": value.get("attempt", 0),
         "maxAttempts": value.get("max_attempts", 2),
         "reason": value.get("reason"),
+        "stage": value.get("stage", "pre_human"),
+        "humanRound": value.get("human_round", 0),
+        "finalAttempt": value.get("final_attempt", 0),
+        "questionnaireId": value.get("questionnaire_id"),
     }
-    question = value.get("question")
-    if question is not None:
-        result["question"] = {
+    questions = value.get("questions")
+    if questions is None:
+        questions = [value["question"]] if value.get("question") else []
+    result["questions"] = [
+        {
             "id": question["id"],
             "aspect": question.get("aspect", value.get("aspect")),
             "kind": question["kind"],
@@ -144,6 +150,10 @@ def automation_to_web(value: dict | None) -> dict | None:
             "candidateIds": question.get("candidate_ids", []),
             "declarationId": question.get("declaration_id"),
         }
+        for question in questions
+    ]
+    if result["questions"]:
+        result["question"] = result["questions"][0]
     return result
 
 
@@ -243,7 +253,7 @@ def analysis_to_web(project_id: str, job: dict, preparation: dict | None = None)
     resolution = job.get("automatic_resolution")
     automation = plan.get("automation") or job.get("automation")
     preparing = (
-        automation.get("phase") in {"static", "assisting", "validating"}
+        automation.get("phase") in {"static", "assisting", "validating", "finalizing"}
         if automation is not None
         else any(
             (item or {}).get("status") in {"pending", "running"} for item in (review, resolution)

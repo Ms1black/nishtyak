@@ -773,6 +773,115 @@ paths:
           description: Insufficient Storage
       security:
       - ServiceToken: []
+  /v1/projects/{project_id}/clarifications:
+    post:
+      summary: Submit Clarifications
+      operationId: submit_clarifications_v1_projects__project_id__clarifications_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          title: Project Id
+      - name: X-Owner-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClarificationsDTO'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionDocumentDTO'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unauthorized
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Not Found
+        '408':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Timeout
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Request Entity Too Large
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Unprocessable Entity
+        '429':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Too Many Requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Internal Server Error
+        '503':
+          headers:
+            Retry-After:
+              schema:
+                type: string
+              description: Retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Service Unavailable
+        '507':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDTO'
+          description: Insufficient Storage
+      security:
+      - ServiceToken: []
   /v1/projects/{project_id}/plan:
     post:
       summary: Plan
@@ -1971,6 +2080,31 @@ components:
       additionalProperties: false
       type: object
       title: BundleDTO
+    ClarificationsDTO:
+      properties:
+        expected_revision:
+          type: integer
+          maximum: 9007199254740991.0
+          minimum: 0.0
+          title: Expected Revision
+        decisions:
+          $ref: '#/components/schemas/DecisionsDTO'
+        questionnaire_id:
+          type: string
+          pattern: ^[a-f0-9]{20}$
+          title: Questionnaire Id
+        notes:
+          type: string
+          maxLength: 6000
+          title: Notes
+          default: ''
+      additionalProperties: false
+      type: object
+      required:
+      - expected_revision
+      - decisions
+      - questionnaire_id
+      title: ClarificationsDTO
     DecisionDocumentDTO:
       properties:
         analysis_id:

@@ -17,6 +17,7 @@ import {
 import { ApiError, sessionGeneration } from '@/shared/api'
 import { useTeamStore } from '@/entities/team'
 import { debounce } from '@/shared/lib'
+import { mergeDecisionChanges, type ClarificationAnswers } from './clarifications'
 
 export type WizardStep = 1 | 2 | 3
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
@@ -53,11 +54,12 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   let savedVersion = -1
   let autoBuildRequested = false
   let syncing: { epoch: number; promise: Promise<boolean> } | null = null
+  let submittedQuestionnaire: string | null = null
 
   const isAnalyzing = computed(() => analysis.value?.status === 'analyzing')
   const automation = computed(() => plan.value?.automation ?? lastAutomation.value ?? analysis.value?.automation ?? null)
   const isAutomating = computed(() =>
-    ['static', 'assisting', 'validating'].includes(automation.value?.phase ?? ''),
+    ['static', 'assisting', 'validating', 'finalizing'].includes(automation.value?.phase ?? ''),
   )
   const isPreparingEnvironment = computed(() =>
     automation.value
@@ -190,7 +192,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function sync(): Promise<boolean> {
-    if (!canEdit.value || !project.value || !decisions.value) return false
+    if (!canEdit.value || !project.value || !decisions.value || automation.value?.phase === 'needs_input') return false
     if (syncing?.epoch === epoch) return syncing.promise
     const requestEpoch = epoch
     const projectId = project.value.id
@@ -233,32 +235,70 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
 
   function update(changes: Partial<AnalysisDecisions>) {
     if (!canEdit.value || !decisions.value || isBusy.value) return
+    const waitingForBatch = automation.value?.phase === 'needs_input'
     decisions.value = { ...decisions.value, ...changes }
     editVersion += 1
     plan.value = null
     lock.value = null
     invalidateArchive()
-    saveState.value = 'saving'
-    scheduleSync()
+    saveState.value = waitingForBatch ? 'idle' : 'saving'
+    if (!waitingForBatch) scheduleSync()
   }
 
-  async function answerQuestion(changes: Partial<AnalysisDecisions>) {
-    if (!canEdit.value || !decisions.value || isBusy.value || automation.value?.phase !== 'needs_input') return
-    const merged = { ...changes }
-    if (changes.packages) merged.packages = { ...decisions.value.packages, ...changes.packages }
-    if (changes.declarationActions) {
-      merged.declarationActions = { ...decisions.value.declarationActions, ...changes.declarationActions }
-    }
+  async function answerQuestions(answer: ClarificationAnswers) {
+    const current = automation.value
+    const questionnaireId = current?.questionnaireId
+    if (
+      !canEdit.value || !project.value || !decisions.value || isBusy.value ||
+      current?.phase !== 'needs_input' || !questionnaireId || submittedQuestionnaire === questionnaireId ||
+      current.humanRound === 1 || current.stage === 'post_human'
+    ) return
     autoBuildRequested = true
-    update(merged)
     scheduleSync.cancel()
     const requestEpoch = epoch
+    const projectId = project.value.id
     isRefreshing.value = true
+    saveState.value = 'saving'
     try {
-      await sync()
+      if (syncing?.epoch === requestEpoch) await syncing.promise
+      if (epoch !== requestEpoch || automation.value?.questionnaireId !== questionnaireId) return
+      const snapshot = mergeDecisionChanges(snapshotDecisions(), answer.changes)
+      const doc = await projectApi.submitClarifications(projectId, {
+        questionnaireId,
+        expectedRevision: revision.value,
+        decisions: snapshot,
+        notes: answer.notes.trim(),
+      })
+      if (epoch !== requestEpoch) return
+      submittedQuestionnaire = questionnaireId
+      decisions.value = doc.decisions ?? snapshot
+      revision.value = doc.revision
+      editVersion += 1
+      savedVersion = editVersion
+      lock.value = null
+      invalidateArchive()
+      const finalizing: ProjectAutomation = {
+        ...current, phase: 'finalizing', stage: 'post_human', humanRound: 1,
+        questions: [], question: null,
+      }
+      lastAutomation.value = finalizing
+      plan.value = plan.value ? { ...plan.value, automation: finalizing } : null
+      saveState.value = 'saved'
+      savedAt.value = new Date()
+      error.value = null
+      const nextPlan = await projectApi.plan(projectId, snapshotDecisions())
+      if (epoch !== requestEpoch) return
+      plan.value = nextPlan
+    } catch (cause) {
+      if (epoch === requestEpoch) {
+        const committed = submittedQuestionnaire === questionnaireId
+        if (!committed) saveState.value = cause instanceof ApiError && cause.status === 409 ? 'conflict' : 'error'
+        error.value = message(cause, committed ? 'analysis.errors.load' : 'analysis.panel.saveError')
+      }
     } finally {
       if (epoch === requestEpoch) {
         isRefreshing.value = false
+        scheduleResolutionPoll()
         await continueAutomaticBuild()
       }
     }
@@ -270,7 +310,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function refreshPlan() {
-    if (!canEdit.value || !project.value || !decisions.value || isBusy.value) return
+    if (!canEdit.value || !project.value || !decisions.value || isBusy.value || automation.value?.phase === 'needs_input') return
     const requestEpoch = epoch
     scheduleSync.cancel()
     isRefreshing.value = true
@@ -315,7 +355,11 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     error.value = null
     scheduleSync.cancel()
     try {
-      if (!(await sync()) || epoch !== requestEpoch) return
+      if (
+        (savedVersion !== editVersion || saveState.value === 'error' || saveState.value === 'conflict') &&
+        !(await sync())
+      ) return
+      if (epoch !== requestEpoch) return
       if (!plan.value || plan.value.state === 'blocked' || plan.value.automation?.phase === 'needs_input') return
       if (isPreparingEnvironment.value || isAutomating.value) {
         autoBuildRequested = true
@@ -365,7 +409,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
   }
 
   async function resolve(target: { pythonVersion: string; platform: TargetPlatform }) {
-    if (!canEdit.value || !project.value || !decisions.value || isBusy.value) return
+    if (!canEdit.value || !project.value || !decisions.value || isBusy.value || automation.value?.phase === 'needs_input') return
     const requestEpoch = epoch
     isResolving.value = true
     error.value = null
@@ -396,6 +440,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     clearTimeout(resolutionTimer)
     scheduleSync.cancel()
     syncing = null
+    submittedQuestionnaire = null
     editVersion = 0
     savedVersion = -1
     autoBuildRequested = false
@@ -455,7 +500,7 @@ export const useUploadWizardStore = defineStore('upload-wizard', () => {
     openProject,
     loadAnalysis,
     update,
-    answerQuestion,
+    answerQuestions,
     reloadDecisions,
     refreshPlan,
     setPackage,

@@ -10,6 +10,7 @@ const { api, projects, team } = vi.hoisted(() => ({
     getAnalysis: vi.fn(),
     getDecisions: vi.fn(),
     saveDecisions: vi.fn(),
+    submitClarifications: vi.fn(),
     plan: vi.fn(),
     getLock: vi.fn(),
     buildArchive: vi.fn(),
@@ -77,6 +78,17 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+function batchAutomation(): PackagePlan['automation'] {
+  return {
+    phase: 'needs_input', stage: 'pre_human', humanRound: 0,
+    questionnaireId: 'questionnaire-batch',
+    questions: [
+      { id: 'first', aspect: 'dependencies', kind: 'package_mapping', module: 'first' },
+      { id: 'second', aspect: 'dependencies', kind: 'package_mapping', module: 'second' },
+    ],
+  }
+}
+
 describe('upload wizard request coordination', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -94,6 +106,11 @@ describe('upload wizard request coordination', () => {
         updatedAt: '2026-10-16T12:00:00Z',
       }),
     )
+    api.submitClarifications.mockImplementation(async (_id: string, answers: { decisions: AnalysisDecisions; expectedRevision: number }) => ({
+      revision: answers.expectedRevision + 1,
+      decisions: answers.decisions,
+      updatedAt: '2026-10-16T12:00:00Z',
+    }))
     api.buildArchive.mockImplementation(async (id: string) => ({
       ...project(id),
       archive: { status: 'ready', sizeBytes: 500 },
@@ -367,7 +384,7 @@ describe('upload wizard request coordination', () => {
     expect(store.isBusy).toBe(true)
     expect(store.canBuild).toBe(false)
     expect(store.automation?.question).toBeUndefined()
-    await store.answerQuestion({ packages: { custom: 'requests' } })
+    await store.answerQuestions({ changes: { packages: { custom: 'requests' } }, notes: '' })
     expect(api.saveDecisions).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(2000)
     expect(store.step).toBe(3)
@@ -393,121 +410,109 @@ describe('upload wizard request coordination', () => {
     expect(api.buildArchive).not.toHaveBeenCalled()
   })
 
-  it('saves a focused package answer and automatically resumes the full preparation cycle', async () => {
+  it('submits the entire questionnaire once and waits for the final pass before building', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
       ...plan(decisions),
-      automation: decisions.packages.custom
-        ? { phase: 'ready' }
-        : {
-            phase: 'needs_input', aspect: 'dependencies', attempt: 2, maxAttempts: 2,
-            question: { id: 'package-custom', aspect: 'dependencies', kind: 'package_mapping', module: 'custom' },
-          },
+      automation: api.submitClarifications.mock.calls.length ? {
+        phase: 'finalizing', stage: 'post_human', humanRound: 1, finalAttempt: 1, questions: [],
+      } : batchAutomation(),
     }))
     const store = useUploadWizardStore()
-    await store.openProject(project('answer'), { autoBuild: true })
-    expect(store.canBuild).toBe(false)
-    await store.answerQuestion({ packages: { custom: 'requests' } })
-    expect(store.decisions?.packages).toEqual({ custom: 'requests' })
-    expect(store.step).toBe(3)
-    expect(store.canBuild).toBe(true)
-    expect(api.buildArchive).toHaveBeenCalledOnce()
-  })
-
-  it('stops an explicit build if revalidation discovers a server question while saving', async () => {
-    const store = useUploadWizardStore()
-    await store.openProject(project('late-question'))
-    expect(store.canBuild).toBe(true)
-    api.plan.mockImplementationOnce(async (_id: string, decisions: AnalysisDecisions) => ({
-      ...plan(decisions), automation: {
-        phase: 'needs_input', aspect: 'dependencies',
-        question: { id: 'late', aspect: 'dependencies', kind: 'package_mapping', module: 'custom' },
-      },
-    }))
-    await store.build()
-    expect(store.canBuild).toBe(false)
-    expect(api.buildArchive).not.toHaveBeenCalled()
-  })
-
-  it('asks one server question at a time and retains the preparation request across subsequent answers', async () => {
-    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => {
-      const module = !decisions.packages.first ? 'first' : !decisions.packages.second ? 'second' : null
-      return {
-        ...plan(decisions),
-        automation: module ? {
-          phase: 'needs_input', aspect: 'dependencies', attempt: 2, maxAttempts: 2,
-          question: { id: `package-${module}`, aspect: 'dependencies', kind: 'package_mapping', module },
-        } : { phase: 'ready' },
-      }
+    await store.openProject(project('batch'), { autoBuild: true })
+    store.update({ packages: { retained: 'pandas' }, versions: { retained: '>=2' } })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    await store.answerQuestions({
+      changes: {
+        packages: { first: 'requests', second: 'numpy' },
+        versions: { second: '>=1.26' },
+        declarationActions: { declared: { action: 'replace', requirement: 'numpy>=1.26' } },
+      }, notes: 'Both scripts use the same input table.',
     })
-    const store = useUploadWizardStore()
-    await store.openProject(project('two-questions'), { autoBuild: true })
-    expect(store.automation?.question?.module).toBe('first')
-    await store.answerQuestion({ packages: { first: 'requests' } })
-    expect(store.automation?.question?.module).toBe('second')
+    expect(api.submitClarifications).toHaveBeenCalledOnce()
+    const submitted = api.submitClarifications.mock.calls[0]![1]
+    expect(submitted.questionnaireId).toBe('questionnaire-batch')
+    expect(submitted.decisions.packages).toEqual({ retained: 'pandas', first: 'requests', second: 'numpy' })
+    expect(submitted.decisions.versions).toEqual({ retained: '>=2', second: '>=1.26' })
+    expect(submitted.notes).toContain('same input table')
+    expect(store.automation?.phase).toBe('finalizing')
+    expect(store.canBuild).toBe(false)
+    await store.answerQuestions({ changes: {}, notes: '' })
+    expect(api.submitClarifications).toHaveBeenCalledOnce()
     expect(api.buildArchive).not.toHaveBeenCalled()
-    await store.answerQuestion({ packages: { second: 'numpy' } })
-    expect(store.decisions?.packages).toEqual({ first: 'requests', second: 'numpy' })
-    expect(store.step).toBe(3)
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: { phase: 'ready', stage: 'complete', humanRound: 1, questions: [] },
+    }))
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(api.saveDecisions).not.toHaveBeenCalled()
     expect(api.buildArchive).toHaveBeenCalledOnce()
+    expect(store.step).toBe(3)
   })
 
-  it('resumes after an advanced correction to a server question without requiring a separate build click', async () => {
+  it('accepts a blank questionnaire and exports the final honest draft without another question round', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
-      ...plan(decisions),
-      automation: decisions.packages.custom ? { phase: 'ready' } : {
-        phase: 'needs_input', aspect: 'dependencies',
-        question: { id: 'custom', aspect: 'dependencies', kind: 'text' },
-      },
+      ...plan(decisions), automation: api.submitClarifications.mock.calls.length
+        ? { phase: 'draft', stage: 'complete', humanRound: 1, questions: [] }
+        : batchAutomation(),
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('unknown'), { autoBuild: true })
+    await store.answerQuestions({ changes: {}, notes: '' })
+    expect(api.submitClarifications).toHaveBeenCalledOnce()
+    expect(api.submitClarifications.mock.calls[0]![1].decisions.packages).toEqual({})
+    expect(store.automation?.questions).toEqual([])
+    expect(store.automation?.phase).toBe('draft')
+    expect(store.step).toBe(3)
+    expect(api.buildArchive).toHaveBeenCalledOnce()
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+  })
+
+  it('does not turn advanced edits into a submission or autosave before the batch submit', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: batchAutomation(),
     }))
     const store = useUploadWizardStore()
     await store.openProject(project('advanced'), { autoBuild: true })
-    store.update({ packages: { custom: 'requests' } })
-    await vi.advanceTimersByTimeAsync(500)
-    expect(store.step).toBe(3)
-    expect(api.buildArchive).toHaveBeenCalledOnce()
+    store.setPackage('first', 'requests')
+    store.update({ declarationActions: { declared: { action: 'replace', requirement: 'numpy>=1.26' } } })
+    await vi.advanceTimersByTimeAsync(5000)
+    await store.refreshPlan()
+    await store.build()
+    await store.resolve({ pythonVersion: '3.11', platform: 'linux-x86_64' })
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.submitClarifications).not.toHaveBeenCalled()
+    expect(api.resolve).not.toHaveBeenCalled()
+    expect(api.buildArchive).not.toHaveBeenCalled()
+    expect(store.decisions?.packages).toEqual({ first: 'requests' })
+    expect(store.canBuild).toBe(false)
   })
 
-  it('replaces a declared version constraint through declaration actions before resuming', async () => {
+  it('can clear a package or version override while collecting the questionnaire', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
-      ...plan(decisions),
-      automation: decisions.declarationActions['numpy-declaration'] ? { phase: 'ready' } : {
-        phase: 'needs_input', aspect: 'environment', attempt: 2, maxAttempts: 2,
-        question: { id: 'numpy-version', aspect: 'environment', kind: 'version_constraint', declarationId: 'numpy-declaration' },
-      },
+      ...plan(decisions), automation: batchAutomation(),
     }))
     const store = useUploadWizardStore()
-    await store.openProject(project('constraint'), { autoBuild: true })
-    await store.answerQuestion({ declarationActions: { 'numpy-declaration': { action: 'replace', requirement: 'numpy>=1.26' } } })
-    expect(api.saveDecisions.mock.calls[0]![1].declarationActions).toEqual({
-      'numpy-declaration': { action: 'replace', requirement: 'numpy>=1.26' },
-    })
+    await store.openProject(project('clear-overrides'))
+    store.setPackage('first', 'requests')
+    store.setVersion('first', '>=2')
+    store.setPackage('first', '')
+    store.setVersion('first', '')
+    expect(store.decisions?.packages).toEqual({})
     expect(store.decisions?.versions).toEqual({})
-    expect(store.step).toBe(3)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(api.saveDecisions).not.toHaveBeenCalled()
   })
 
-  it('exports an honest server draft without being blocked by obsolete nested resolution state', async () => {
+  it('discards a submitted batch response after the user changes sessions', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
-      ...plan(decisions), automation: { phase: 'draft' }, automaticResolution: { status: 'needs_input' },
+      ...plan(decisions), automation: batchAutomation(),
     }))
     const store = useUploadWizardStore()
-    await store.openProject(project('draft'), { autoBuild: true })
-    expect(store.step).toBe(3)
-    expect(store.plan?.automation?.phase).toBe('draft')
-  })
-
-  it('discards a focused-answer save result after the user changes sessions', async () => {
-    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
-      ...plan(decisions), automation: {
-        phase: 'needs_input', aspect: 'dependencies',
-        question: { id: 'custom', aspect: 'dependencies', kind: 'package_mapping', module: 'custom' },
-      },
-    }))
-    const store = useUploadWizardStore()
-    await store.openProject(project('old-question'), { autoBuild: true })
+    await store.openProject(project('private'), { autoBuild: true })
     const saved = deferred<{ revision: number; decisions: AnalysisDecisions; updatedAt: null }>()
-    api.saveDecisions.mockReturnValueOnce(saved.promise)
-    const answering = store.answerQuestion({ packages: { custom: 'requests' } })
-    const snapshot = api.saveDecisions.mock.calls[0]![1] as AnalysisDecisions
+    api.submitClarifications.mockReturnValueOnce(saved.promise)
+    const answering = store.answerQuestions({ changes: { packages: { first: 'requests' } }, notes: '' })
+    const snapshot = api.submitClarifications.mock.calls[0]![1].decisions as AnalysisDecisions
     resetIntegrationSession()
     saved.resolve({ revision: 3, decisions: snapshot, updatedAt: null })
     await answering
@@ -517,26 +522,61 @@ describe('upload wizard request coordination', () => {
     expect(api.buildArchive).not.toHaveBeenCalled()
   })
 
-  it('keeps the current server question visible when saving an answer fails', async () => {
-    api.getAnalysis.mockImplementation(async (id: string) => ({
-      ...analysis(id), automation: {
-        phase: 'needs_input', aspect: 'dependencies',
-        question: { id: 'previous', aspect: 'dependencies', kind: 'package_mapping', module: 'previous' },
-      },
-    }))
+  it('keeps the whole current questionnaire after a failed atomic submission', async () => {
     api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
-      ...plan(decisions), automation: {
-        phase: 'needs_input', aspect: 'dependencies',
-        question: { id: 'current', aspect: 'dependencies', kind: 'package_mapping', module: 'current' },
-      },
+      ...plan(decisions), automation: batchAutomation(),
     }))
     const store = useUploadWizardStore()
     await store.openProject(project('save-error'), { autoBuild: true })
-    api.saveDecisions.mockRejectedValueOnce(new ApiError(503, 'Unavailable'))
-    await store.answerQuestion({ packages: { current: 'requests' } })
-    expect(store.automation?.question?.id).toBe('current')
+    api.submitClarifications.mockRejectedValueOnce(new ApiError(503, 'Unavailable'))
+    await store.answerQuestions({ changes: { packages: { first: 'requests' } }, notes: '' })
+    expect(store.automation?.questionnaireId).toBe('questionnaire-batch')
+    expect(store.automation?.questions).toHaveLength(2)
+    expect(store.decisions?.packages).toEqual({})
     expect(store.saveState).toBe('error')
+    expect(store.isBusy).toBe(false)
+    expect(api.saveDecisions).not.toHaveBeenCalled()
     expect(api.buildArchive).not.toHaveBeenCalled()
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: { phase: 'draft', stage: 'complete', humanRound: 1, questions: [] },
+    }))
+    await store.answerQuestions({ changes: { packages: { first: 'requests' } }, notes: '' })
+    expect(api.submitClarifications).toHaveBeenCalledTimes(2)
+    expect(api.buildArchive).toHaveBeenCalledOnce()
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+  })
+
+  it('retries a plan read after a committed batch without submitting or saving the answers again', async () => {
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: { phase: 'draft', stage: 'complete', humanRound: 1, questions: [] },
+    }))
+    api.plan.mockImplementationOnce(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: batchAutomation(),
+    }))
+    api.plan.mockRejectedValueOnce(new ApiError(503, 'Plan temporarily unavailable'))
+    const store = useUploadWizardStore()
+    await store.openProject(project('retry-plan'), { autoBuild: true })
+    await store.answerQuestions({ changes: {}, notes: 'Unknown' })
+    expect(store.saveState).toBe('saved')
+    expect(store.isAutomating).toBe(true)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(api.submitClarifications).toHaveBeenCalledOnce()
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(api.buildArchive).toHaveBeenCalledOnce()
+    expect(store.step).toBe(3)
+  })
+
+  it('does not let a viewer submit the questionnaire', async () => {
+    team.canEditProjects = false
+    api.plan.mockImplementation(async (_id: string, decisions: AnalysisDecisions) => ({
+      ...plan(decisions), automation: batchAutomation(),
+    }))
+    const store = useUploadWizardStore()
+    await store.openProject(project('read-only'))
+    await store.answerQuestions({ changes: {}, notes: 'not allowed' })
+    expect(api.submitClarifications).not.toHaveBeenCalled()
+    expect(api.saveDecisions).not.toHaveBeenCalled()
+    expect(store.canBuild).toBe(false)
   })
 
   it('keeps a resolver outage usable as an automatically exported draft', async () => {

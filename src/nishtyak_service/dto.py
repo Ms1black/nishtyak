@@ -142,6 +142,11 @@ class SaveDecisionsDTO(StrictDTO):
     decisions: DecisionsDTO
 
 
+class ClarificationsDTO(SaveDecisionsDTO):
+    questionnaire_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{20}$")]
+    notes: Annotated[str, StringConstraints(max_length=6000)] = ""
+
+
 class DecisionDocumentDTO(StrictDTO):
     analysis_id: AnalysisId
     revision: Annotated[int, Field(ge=0)]

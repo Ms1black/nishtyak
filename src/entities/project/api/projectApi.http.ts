@@ -22,6 +22,8 @@ export const projectHttpApi: ProjectApi = {
   saveDecisions: (projectId, decisions, expectedRevision) =>
     apiClient.put(`/projects/${projectId}/decisions`, { expectedRevision, decisions }),
 
+  submitClarifications: (projectId, answers) => apiClient.post(`/projects/${projectId}/clarifications`, answers),
+
   plan: (projectId, decisions) => apiClient.post(`/projects/${projectId}/plan`, decisions),
 
   buildArchive: (projectId, options) => apiClient.post(`/projects/${projectId}/archive`, options),

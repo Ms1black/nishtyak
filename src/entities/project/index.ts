@@ -24,6 +24,7 @@ export type {
   RunSpec,
   AnalysisDecisions,
   DecisionsDocument,
+  ClarificationSubmission,
   PlanState,
   PackagePlan,
   DependencyLock,

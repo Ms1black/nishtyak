@@ -603,3 +603,74 @@ def test_upload_automatically_prepares_python_and_pins_without_author_answers(ga
     tag = json.loads(service.store.get(scope, project["id"])["archive_tag"])
     assert tag["lock"] == plan["automaticResolution"]["lockId"]
     assert client.get(prefix + "/decisions").json()["decisions"] is None
+
+
+def test_one_clarification_batch_crosses_gateway_and_finishes_once(gateway, monkeypatch):
+    client, browser, http = gateway
+    logic = http.app.state.logic
+    logic.settings = replace(logic.settings, automatic_resolution=True)
+    logic.repository.settings = logic.settings
+    calls = []
+
+    def review(record, report, *, plan, aspects, pass_id):
+        calls.append(("prepare", pass_id))
+        return {"attempted": True, "status": "unavailable", "reason": "no_grounded_answer"}
+
+    def finalize(record, report, *, plan, aspects, pass_id):
+        calls.append(("finalize", pass_id))
+        return {"attempted": True, "status": "unavailable", "reason": "no_grounded_answer"}
+
+    monkeypatch.setattr(logic.automatic_review, "needs_description", lambda *args: False)
+    monkeypatch.setattr(logic.automatic_review, "prepare_pass", review)
+    monkeypatch.setattr(logic.automatic_review, "finalize", finalize)
+    project = upload(client, {"main.py": "import unknown_first\nimport unknown_second\nprint(1)\n"})
+    identifier = project["id"]
+    owner = WorkspaceIdentity("local", "local", "local").scope
+    deadline = time.monotonic() + 5
+    while logic.repository.get_project(owner, identifier).status in {"queued", "running"}:
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    logic.review_pending()
+    prefix = "/api/projects/" + identifier
+    plan = client.post(prefix + "/plan").json()
+    flow = plan["automation"]
+    assert flow["phase"] == "needs_input" and flow["attempt"] == 2
+    assert {question["module"] for question in flow["questions"]} == {
+        "unknown_first",
+        "unknown_second",
+    }
+    body = {
+        "questionnaireId": flow["questionnaireId"],
+        "expectedRevision": 0,
+        "decisions": plan["decisions"],
+        "notes": "Не знаю названий этих библиотек, сохраните ограничения.",
+    }
+    assert (
+        client.post(prefix + "/clarifications", json={**body, "notes": "x" * 6001}).status_code
+        == 422
+    )
+    stale = client.post(prefix + "/clarifications", json={**body, "expectedRevision": 9})
+    assert stale.status_code == 409 and stale.json()["code"] == "DECISIONS_REVISION_CONFLICT"
+    assert client.get(prefix + "/decisions").json()["revision"] == 0
+    assert client.post(prefix + "/plan").json()["automation"]["humanRound"] == 0
+    response = client.post(prefix + "/clarifications", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["revision"] == 1
+    progress = client.get(prefix + "/analysis").json()
+    assert progress["status"] == "analyzing" and progress["automation"]["phase"] == "finalizing"
+    assert client.post(prefix + "/archive", json={}).status_code == 409
+    repeated = client.post(prefix + "/clarifications", json={**body, "expectedRevision": 1})
+    assert repeated.status_code == 409 and repeated.json()["code"] == "CLARIFICATIONS_STALE"
+    logic.review_pending()
+    completed = client.post(prefix + "/plan").json()
+    assert completed["automation"]["phase"] == "draft"
+    assert completed["automation"]["stage"] == "complete"
+    assert completed["automation"]["humanRound"] == completed["automation"]["finalAttempt"] == 1
+    assert completed["automation"]["questions"] == []
+    assert body["notes"] not in json.dumps(completed)
+    assert client.post(prefix + "/archive", json={}).status_code == 200
+    assert zipfile.is_zipfile(io.BytesIO(client.get(prefix + "/archive").content))
+    for _ in range(2):
+        logic.review_pending()
+        assert client.post(prefix + "/plan").json()["automation"]["phase"] == "draft"
+    assert [call[0] for call in calls] == ["prepare", "prepare", "finalize"]
