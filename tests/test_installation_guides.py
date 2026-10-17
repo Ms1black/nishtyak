@@ -6,6 +6,7 @@ import pytest
 
 from nishtyak_core import ReproducibilityService, SnapshotBuilder
 from nishtyak_core.exporting import BundleWriter
+from nishtyak_core.installation import EnvironmentInstructions
 from nishtyak_core.locking import (
     DependencyLock,
     LockExporter,
@@ -177,3 +178,116 @@ def test_explicit_export_target_is_used_for_the_readme_and_docker_eligibility():
     assert "Activate.ps1" in text
     assert "выбранная среда не Linux" in text
     assert "Dockerfile" not in {file.path for file in generated.files}
+
+
+@pytest.mark.parametrize("receipt", [{}, {"status": "checked"}, {"status": "unavailable"}])
+def test_audited_archive_retains_pyproject_without_installing_unchecked_build_packages(
+    tmp_path, receipt
+):
+    manifest = (
+        '[build-system]\nrequires=["bad-provider==1.0"]\n'
+        'build-backend="bad_provider.build"\n'
+        '[project]\nname="experiment"\nversion="0.1"\n'
+    )
+    snapshot, service, plan = prepare({"pyproject.toml": manifest}, root="research")
+    plan = replace(plan, automatic_resolution={"package_safety": receipt})
+    target = ResolutionTarget("3.11", "linux-x86_64")
+    lock = DependencyLock(
+        "a" * 64, plan.analysis_id, resolution_input_id(plan, target), target, "", ()
+    )
+    plan = replace(
+        plan, automatic_resolution={"package_safety": receipt, "safety_lock_id": lock.id}
+    )
+    generated = LockExporter().attach(
+        service.render(plan, snapshot=snapshot), plan, lock, snapshot=snapshot
+    )
+    BundleWriter().write(snapshot, plan, generated, tmp_path / "package.zip")
+    with zipfile.ZipFile(tmp_path / "package.zip") as archive:
+        text = archive.read("README.md").decode()
+        assert archive.read("project/research/pyproject.toml").decode() == manifest
+        assert "python -m pip install --no-deps" not in text
+        assert "pip install ./project" not in text
+        assert "build-system.requires" in text
+        assert "изолированную среду сборки" in text
+        assert "--only-binary=:all: --require-hashes -r requirements.lock.txt" in text
+        dockerfile = archive.read("Dockerfile").decode()
+        assert "--require-hashes -r requirements.lock.txt" in dockerfile
+        assert "pip install ./project" not in dockerfile
+
+
+@pytest.mark.parametrize("filename", ["environment.yml", "environment.yaml"])
+@pytest.mark.parametrize("platform", ["linux-x86_64", "windows-x86_64"])
+def test_audited_conda_archive_keeps_unchecked_yaml_but_only_recommends_generated_pip_lock(
+    tmp_path, filename, platform
+):
+    manifest = (
+        "name: author\nchannels: [conda-forge]\ndependencies:\n"
+        "  - python=3.11\n  - pip\n  - pip:\n    - bad-provider==1.0\n"
+    )
+    snapshot, service, plan = prepare({filename: manifest}, root="research package")
+    plan = replace(plan, automatic_resolution={"package_safety": {"status": "checked"}})
+    target = ResolutionTarget("3.11", platform)
+    lock = DependencyLock(
+        "a" * 64, plan.analysis_id, resolution_input_id(plan, target), target, "", ()
+    )
+    generated = LockExporter().attach(
+        service.render(plan, snapshot=snapshot, target_platform=platform),
+        plan,
+        lock,
+        snapshot=snapshot,
+    )
+    BundleWriter().write(snapshot, plan, generated, tmp_path / "package.zip")
+    with zipfile.ZipFile(tmp_path / "package.zip") as archive:
+        text = archive.read("README.md").decode()
+        assert archive.read("project/research package/" + filename).decode() == manifest
+        assert "conda env create" not in text
+        assert "conda activate" not in text
+        assert "каналы Conda" in text
+        assert "отдельная проверка исходного YAML" in text
+        assert "--only-binary=:all: --require-hashes -r requirements.lock.txt" in text
+
+
+def test_audited_author_dockerfile_is_retained_without_build_or_run_recommendations(tmp_path):
+    dockerfile = "FROM python:3.11-slim\nRUN pip install bad-provider==1.0\n"
+    snapshot, service, plan = prepare(
+        {"Dockerfile": dockerfile, "environment.yml": "dependencies: [python=3.11]\n"}
+    )
+    plan = replace(plan, automatic_resolution={"package_safety": {"status": "checked"}})
+    generated = service.render(plan, snapshot=snapshot)
+    BundleWriter().write(snapshot, plan, generated, tmp_path / "package.zip")
+    with zipfile.ZipFile(tmp_path / "package.zip") as archive:
+        text = archive.read("README.md").decode()
+        assert archive.read("project/Dockerfile").decode() == dockerfile
+        assert "## Dockerfile автора" in text
+        assert "базовый образ, команды RUN" in text
+        assert "docker build" not in text
+        assert "docker run" not in text
+        assert "conda env create" not in text
+        assert "python -m pip install -r requirements.txt" not in text
+        assert "транзитивных зависимостей" in text
+
+
+def test_absent_service_receipt_keeps_cli_manifest_installation_behavior():
+    snapshot, service, plan = prepare(
+        {
+            "pyproject.toml": '[project]\nname="experiment"\nversion="0.1"\n',
+            "environment.yml": "dependencies: [python=3.11]\n",
+        }
+    )
+    plan = replace(plan, automatic_resolution={"package_safety": None})
+    text = service.render(plan, snapshot=snapshot).get("README.md").decode()
+    assert "python -m pip install --no-deps ./project" in text
+    assert "conda env create" in text
+
+
+@pytest.mark.parametrize("platform", [None, "linux-x86_64", "windows-x86_64"])
+def test_audited_unlocked_requirements_do_not_offer_unchecked_transitive_installation(platform):
+    snapshot, _, plan = prepare({})
+    plan = replace(plan, automatic_resolution={"package_safety": {"status": "checked"}})
+    instructions = EnvironmentInstructions(plan, "3.11", platform, snapshot=snapshot)
+    text = "\n".join(instructions.installation())
+    assert "-m venv .venv" in text
+    assert "pip install" not in text
+    assert "транзитивных зависимостей" in text
+    assert "проверенный lock-файл" in text
+    assert "Выберите один способ" not in text

@@ -29,6 +29,8 @@ from .mapping import (
 )
 from .storage import ProjectStore
 
+ARCHIVE_SECURITY_POLICY = 1
+
 
 class BrowserService:
     def __init__(
@@ -458,6 +460,7 @@ class BrowserService:
                     "docker": "Dockerfile" in files,
                     "sha256": hashlib.sha256(content).hexdigest(),
                     "files": files,
+                    "security_policy": ARCHIVE_SECURITY_POLICY,
                 },
                 sort_keys=True,
             )
@@ -470,6 +473,12 @@ class BrowserService:
             if record["archive_tag"] is None:
                 raise LogicClientError(409, "ARCHIVE_NOT_BUILT", "Build the archive first")
             tag = json.loads(record["archive_tag"])
+            if tag.get("security_policy") != ARCHIVE_SECURITY_POLICY:
+                raise LogicClientError(
+                    409,
+                    "ARCHIVE_STALE",
+                    "Пересоберите архив: изменились правила проверки зависимостей и установки.",
+                )
             client = self.client_factory(identity.scope)
             if (
                 tag["analysis"] != self._report(record)["analysis_id"]
@@ -566,7 +575,10 @@ class BrowserService:
         report = job.get("analysis")
         status = analysis_status(report, job["status"])
         archive = {"status": "unavailable" if status in {"analyzing", "failed"} else "not_built"}
-        if record["archive_tag"] is not None:
+        if (
+            record["archive_tag"] is not None
+            and json.loads(record["archive_tag"]).get("security_policy") == ARCHIVE_SECURITY_POLICY
+        ):
             tag = json.loads(record["archive_tag"])
             archive = {
                 "status": "ready",

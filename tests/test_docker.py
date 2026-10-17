@@ -44,6 +44,23 @@ def test_module_command_uses_exec_form(plan):
     assert 'CMD ["python", "-m", "lab"]' in content
 
 
+def test_service_template_needs_audited_lock_for_transitive_dependencies(plan):
+    audited = replace(plan, automatic_resolution={"package_safety": {"status": "checked"}})
+    assert "проверенный lock" in DockerfileGenerator().skip_reason(audited)
+    assert "Dockerfile" not in {
+        file.path for file in ReproducibilityService().render(audited).files
+    }
+    locked = replace(
+        audited,
+        automatic_resolution={
+            **audited.automatic_resolution,
+            "safety_lock_id": "a" * 64,
+        },
+    )
+    assert DockerfileGenerator().generate(locked).path == "Dockerfile"
+    assert DockerfileGenerator().generate(replace(audited, requirements=())).path == "Dockerfile"
+
+
 @pytest.mark.parametrize(
     "changes",
     [

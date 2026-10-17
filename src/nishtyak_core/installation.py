@@ -35,6 +35,7 @@ class EnvironmentInstructions:
         self.platform = platform
         self.locked = locked
         self.generated_paths = generated_paths
+        self.audited = (plan.automatic_resolution or {}).get("package_safety") is not None
         if snapshot is not None and snapshot.fingerprint != plan.fingerprint:
             raise ValueError("Documentation snapshot belongs to a different package plan")
         self.manifests = self._manifests(snapshot)
@@ -103,11 +104,30 @@ class EnvironmentInstructions:
         conda = next((item for item in self.manifests if item.kind == "conda"), None)
         lines = [
             "Откройте терминал в корне распакованного архива. "
-            "Выберите один способ подготовки среды; pip, Conda и Docker "
-            "не нужно последовательно устанавливать в одно окружение.",
+            + (
+                "Ниже описана отдельная pip-среда и границы проверки исходных конфигураций."
+                if self.audited
+                else "Выберите один способ подготовки среды; pip, Conda и Docker "
+                "не нужно последовательно устанавливать в одно окружение."
+            ),
             "",
         ]
-        if conda is not None and conda.valid is not False:
+        if conda is not None and self.audited:
+            lines.extend(
+                [
+                    "### Conda — исходная конфигурация для проверки",
+                    "",
+                    f"Файл `project/{conda.path}` сохранён. Проверка PyPI-зависимостей по OSV "
+                    "и созданный pip-lock не охватывают каналы Conda, полный набор пакетов "
+                    "этой среды и её секцию pip. Перед созданием Conda-среды нужна отдельная "
+                    "проверка исходного YAML и всех устанавливаемых зависимостей.",
+                    "",
+                    "Ниже приведён отдельный pip-вариант для найденных Python-зависимостей. "
+                    "Он не заменяет исходную Conda-среду и её системные пакеты.",
+                    "",
+                ]
+            )
+        if conda is not None and conda.valid is not False and not self.audited:
             lines.extend(
                 [
                     "### Conda — среда из конфигурации автора",
@@ -139,7 +159,7 @@ class EnvironmentInstructions:
                     ]
                 )
         else:
-            if conda is not None:
+            if conda is not None and not self.audited:
                 lines.extend(
                     [
                         f"`project/{conda.path}` сохранён, но его структура или зависимости "
@@ -174,6 +194,17 @@ class EnvironmentInstructions:
             if pyproject.valid is False:
                 lines.append(
                     "TOML не удалось корректно разобрать; команда установки пакета не сформирована."
+                )
+            elif pyproject.installable and self.audited:
+                lines.append(
+                    "Исходная конфигурация сохранена для отдельной проверки. "
+                    "Проверка PyPI-зависимостей по OSV и созданный pip-lock не охватывают "
+                    "build-system.requires, изолированную среду сборки и выполняемые "
+                    "сборочным backend действия. Даже отключение runtime-зависимостей "
+                    "не отключает установку сборочных пакетов. Команда установки самого "
+                    "проекта не сформирована; используйте подготовленную pip-среду и "
+                    "запуск исходников ниже. Если проект требует сборки, сначала отдельно "
+                    "проверьте её зависимости и действия."
                 )
             elif pyproject.installable:
                 directory = posixpath.dirname("project/" + pyproject.path)
@@ -211,6 +242,18 @@ class EnvironmentInstructions:
             if self.locked
             else "-r requirements.txt"
         )
+        installation = [] if self.audited and not self.locked else [install]
+        limitation = (
+            [
+                "",
+                "`requirements.txt` остаётся черновиком: полный набор транзитивных "
+                "зависимостей ещё не разрешён и не проверен по OSV. Среду можно создать, "
+                "но команда установки не сформирована. Сначала нужны отдельный подбор "
+                "версий и проверка всех пакетов; затем используйте проверенный lock-файл.",
+            ]
+            if self.audited and not self.locked
+            else []
+        )
         if self.platform and self.platform.startswith("windows"):
             return [
                 "Windows, PowerShell:",
@@ -219,8 +262,9 @@ class EnvironmentInstructions:
                 f"py -{version} --version",
                 f"py -{version} -m venv .venv",
                 ".\\.venv\\Scripts\\Activate.ps1",
-                install,
+                *installation,
                 "```",
+                *limitation,
             ]
         commands = [
             "Linux:" if self.platform and self.platform.startswith("linux") else "Linux / macOS:",
@@ -229,8 +273,9 @@ class EnvironmentInstructions:
             f"python{version} --version",
             f"python{version} -m venv .venv",
             ". .venv/bin/activate",
-            install,
+            *installation,
             "```",
+            *limitation,
         ]
         if self.platform is None:
             commands.extend(
@@ -242,7 +287,7 @@ class EnvironmentInstructions:
                     f"py -{version} --version",
                     f"py -{version} -m venv .venv",
                     ".\\.venv\\Scripts\\Activate.ps1",
-                    install,
+                    *installation,
                     "```",
                 ]
             )
@@ -276,6 +321,17 @@ class EnvironmentInstructions:
             ]
         original = next((item for item in self.manifests if item.kind == "Dockerfile"), None)
         if original is not None:
+            if self.audited:
+                return [
+                    "## Dockerfile автора",
+                    "",
+                    f"Исходный `project/{original.path}` сохранён без изменений. "
+                    "Проверка PyPI-зависимостей по OSV и созданный pip-lock не охватывают "
+                    "базовый образ, команды RUN и зависимости, устанавливаемые этим "
+                    "Dockerfile. Перед сборкой или запуском нужна отдельная проверка "
+                    "его содержимого и контекста COPY; команды не сформированы.",
+                    "",
+                ]
             directory = posixpath.dirname("project/" + original.path)
             return [
                 "## Dockerfile автора",

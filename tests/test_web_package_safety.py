@@ -13,7 +13,7 @@ from test_client import PROJECT_ID, safety_report
 from nishtyak_client import LogicClientError
 from nishtyak_web.auth import WorkspaceIdentity
 from nishtyak_web.config import WebSettings
-from nishtyak_web.service import BrowserService
+from nishtyak_web.service import ARCHIVE_SECURITY_POLICY, BrowserService
 
 
 @pytest.fixture
@@ -53,6 +53,7 @@ def cached_package(tmp_path):
                 "lock": lock_id,
                 "sha256": archive_tag,
                 "files": ["README.md", "requirements.txt", "project/main.py"],
+                "security_policy": ARCHIVE_SECURITY_POLICY,
             }
         )
         service.store.save_archive(identity.scope, PROJECT_ID, tag, content)
@@ -106,6 +107,24 @@ def test_manual_unlocked_requirements_cannot_bypass_the_gate(cached_package):
         service.download(identity, PROJECT_ID)
     assert caught.value.code == "PACKAGE_MALICIOUS"
     core.package_safety.assert_called_once_with(PROJECT_ID, lock_id=None)
+
+
+def test_old_installation_instructions_require_rebuild_without_deleting_archive(cached_package):
+    service, identity, core, content, _, source = cached_package()
+    record = service.store.get(identity.scope, PROJECT_ID)
+    tag = json.loads(record["archive_tag"])
+    del tag["security_policy"]
+    service.store.save_archive(identity.scope, PROJECT_ID, json.dumps(tag), content)
+    with pytest.raises(LogicClientError) as caught:
+        service.download(identity, PROJECT_ID)
+    assert caught.value.code == "ARCHIVE_STALE"
+    assert (service.store.root / PROJECT_ID / "bundle.zip").read_bytes() == content
+    assert (service.store.root / PROJECT_ID / "source.zip").read_bytes() == source
+    assert (
+        service._project(service.store.get(identity.scope, PROJECT_ID))["archive"]["status"]
+        == "not_built"
+    )
+    core.package_safety.assert_not_called()
 
 
 def test_safety_receipt_for_another_lock_does_not_authorize_the_cached_zip(cached_package):

@@ -29,6 +29,15 @@ class DockerfileGenerator:
     def _validate(self, plan: PackagePlan, *, target_platform: str | None = None) -> None:
         if plan.state != "ready_to_verify":
             raise ValueError("Dockerfile не добавлен: пакет ещё содержит нерешённые вопросы.")
+        resolution = plan.automatic_resolution or {}
+        if (
+            resolution.get("package_safety") is not None
+            and plan.requirements
+            and not resolution.get("safety_lock_id")
+        ):
+            raise ValueError(
+                "Dockerfile не добавлен: нужен проверенный lock всех устанавливаемых зависимостей."
+            )
         if plan.python_version is None or plan.run_spec is None:
             raise ValueError(
                 "Dockerfile не добавлен: не определены версия Python или команда запуска."

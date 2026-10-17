@@ -291,6 +291,13 @@ class LogicService:
                     else self.automatic_resolution.safety.inspect(plan.requirements)
                 )
                 self.automatic_resolution.safety.require_checked(safety)
+                plan = replace(
+                    plan,
+                    automatic_resolution={
+                        **(plan.automatic_resolution or {}),
+                        "safety_lock_id": lock.id if lock is not None else None,
+                    },
+                )
                 plan = self.automatic_resolution.safety.enrich(plan, safety)
                 generated = self.core.render(
                     plan,
