@@ -63,15 +63,6 @@ class ReleaseBuilder:
     )
     SOURCE_SUFFIXES = frozenset({".py", ".ts", ".vue", ".css", ".svg"})
     PUBLIC_SUFFIXES = frozenset({".svg", ".jpg", ".png", ".ico", ".woff", ".woff2"})
-    PUBLIC_EXAMPLES = frozenset(
-        {
-            "public/examples/manifest.json",
-            "public/examples/scientific-measurements.zip",
-            "public/examples/local-calibration.zip",
-            "public/examples/scientific-measurements-with-data.zip",
-            "public/examples/local-calibration-with-data.zip",
-        }
-    )
     EXCLUDED_PARTS = frozenset(
         {
             ".git",
@@ -92,7 +83,7 @@ class ReleaseBuilder:
 
     def collect(self) -> tuple[ReleaseFile, ...]:
         collected: list[ReleaseFile] = []
-        for relative in sorted(self.ROOT_FILES | self.DEPLOY_FILES | self.PUBLIC_EXAMPLES):
+        for relative in sorted(self.ROOT_FILES | self.DEPLOY_FILES):
             collected.append(self._read(relative))
         for directory in ("src", "public"):
             base = self.source / directory
@@ -126,7 +117,7 @@ class ReleaseBuilder:
             return False
         if path.parts[0] == "src":
             return path.suffix in self.SOURCE_SUFFIXES
-        return path.suffix in self.PUBLIC_SUFFIXES and relative not in self.PUBLIC_EXAMPLES
+        return path.suffix in self.PUBLIC_SUFFIXES
 
     def _read(self, relative: str) -> ReleaseFile:
         path = self.source / relative

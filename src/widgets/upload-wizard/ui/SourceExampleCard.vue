@@ -7,17 +7,6 @@ import { BaseCard } from '@/shared/ui'
   <BaseCard tag="aside" class="example">
     <h2 class="example__title">{{ $t('upload.example.title') }}</h2>
     <ArchiveTree root-name="scientific-measurements.zip" :items="['experiment.py', 'calculations.py']" />
-    <div class="example__downloads">
-      <span>{{ $t('upload.example.download') }}</span>
-      <a href="/examples/scientific-measurements.zip?raw=1" download>{{ $t('upload.example.scientific') }}</a>
-      <a href="/examples/local-calibration.zip?raw=1" download>{{ $t('upload.example.local') }}</a>
-    </div>
-    <p class="example__note">{{ $t('upload.example.note') }}</p>
-    <div class="example__downloads">
-      <a href="/examples/scientific-measurements-with-data.zip" download>{{ $t('upload.example.scientificWithData') }}</a>
-      <a href="/examples/local-calibration-with-data.zip" download>{{ $t('upload.example.localWithData') }}</a>
-      <p class="example__data-note">{{ $t('upload.example.dataNote') }}</p>
-    </div>
   </BaseCard>
 </template>
 
@@ -44,29 +33,4 @@ import { BaseCard } from '@/shared/ui'
   line-height: 1.2;
 }
 
-.example__note {
-  padding-top: 24px;
-  border-top: 1px solid var(--color-border-strong);
-  color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.example__downloads {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  font-size: 14px;
-}
-
-.example__downloads a {
-  color: var(--color-text);
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
-.example__data-note {
-  color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
 </style>

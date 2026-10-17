@@ -208,15 +208,7 @@ export const en: MessageSchema = {
       error: 'Could not replace the ZIP. The original project is kept — please retry.',
     },
     example: {
-      download: 'Download a raw project to try',
-      scientific: 'Code only: NumPy, pandas and a local module',
-      local: 'Code only: a local module, no external libraries',
-      scientificWithData: 'Example with data: NumPy/pandas',
-      localWithData: 'Example with data: local module',
-      dataNote: 'These additional ZIPs contain the same sources and a synthetic measurements.csv for the complete workflow. The service prepares README and dependency files.',
       title: 'Raw project',
-      sources: 'Project sources',
-      note: 'Only .py files are included. Data, dependency manifests and README are missing: the service shows what it can infer and what is still needed.',
     },
   },
   project: {

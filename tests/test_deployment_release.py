@@ -36,9 +36,7 @@ ReleaseBuilder = load_script("deployment_release", "tools/build_release.py").Rel
 def release_source(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
-    for relative in (
-        ReleaseBuilder.ROOT_FILES | ReleaseBuilder.DEPLOY_FILES | ReleaseBuilder.PUBLIC_EXAMPLES
-    ):
+    for relative in ReleaseBuilder.ROOT_FILES | ReleaseBuilder.DEPLOY_FILES:
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("runtime file\n")
@@ -57,6 +55,8 @@ def release_source(tmp_path):
         "src/__pycache__/app.pyc",
         "public/credentials/account.json",
         "public/unexpected.zip",
+        "public/examples/scientific-measurements.zip",
+        "public/examples/manifest.json",
         ".env",
         ".git/config",
         "docs/architecture.md",
@@ -83,7 +83,6 @@ def test_release_is_deterministic_and_has_only_runtime_files(release_source, tmp
         assert names == (
             ReleaseBuilder.ROOT_FILES
             | ReleaseBuilder.DEPLOY_FILES
-            | ReleaseBuilder.PUBLIC_EXAMPLES
             | {"src/app.py", "src/web/App.vue", "src/web/site.css", "public/favicon.svg"}
         )
         for member, item in zip(members, proof["files"], strict=True):

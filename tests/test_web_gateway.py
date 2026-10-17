@@ -212,7 +212,7 @@ def test_raw_upload_examples_export_without_manual_answers(
     gateway, archive_name, expected_requirements, local_module
 ):
     client, _, _ = gateway
-    content = (Path(__file__).resolve().parents[1] / "public/examples" / archive_name).read_bytes()
+    content = (Path(__file__).parent / "fixtures/examples" / archive_name).read_bytes()
     with zipfile.ZipFile(io.BytesIO(content)) as source:
         sources = {name: source.read(name) for name in source.namelist()}
     assert len(sources) == 2
