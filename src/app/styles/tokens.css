@@ -1,0 +1,53 @@
+:root {
+  color-scheme: dark;
+
+  --color-bg: #000;
+  --color-surface: #1a1a1a;
+  --color-surface-header: #212121;
+  --color-surface-raised: #262626;
+  --color-surface-hover: #1f1f1f;
+  --color-border: #2b2b2b;
+  --color-border-strong: #3d3d3d;
+
+  --color-text: #fff;
+  --color-text-secondary: #c2c2c2;
+  --color-text-muted: #8f8f8f;
+  --color-text-subtle: #6b6b6b;
+
+  --color-inverse-bg: #fff;
+  --color-inverse-text: #000;
+  --color-danger: #ff7a7a;
+  --color-success: #6ee69a;
+  --color-focus: #8ab4ff;
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'TikTok Sans', 'Inter', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  --container-max: 1440px;
+  --container-px: 64px;
+  --header-px: 48px;
+
+  --transition: 150ms ease;
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --container-px: 32px;
+    --header-px: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --container-px: 16px;
+    --header-px: 16px;
+  }
+}

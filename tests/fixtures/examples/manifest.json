@@ -1,0 +1,86 @@
+{
+  "schema_version": 3,
+  "kind": "raw-code-and-optional-synthetic-input-examples",
+  "updated_at": "2026-10-17T04:50:00+00:00",
+  "examples": [
+    {
+      "id": "scientific-measurements",
+      "archive_url": "/examples/scientific-measurements.zip?raw=1",
+      "archive_sha256": "02e2f7fad822b8bd8afd7a9493fadd964135ee9cb89a7f6faa4558b827534dcc",
+      "archive_bytes": 664,
+      "files": [
+        "calculations.py",
+        "experiment.py"
+      ],
+      "external_imports": [
+        "numpy",
+        "pandas"
+      ],
+      "intentionally_missing": [
+        "measurements.csv",
+        "README.md",
+        "requirements.txt",
+        "pyproject.toml",
+        "LICENSE"
+      ],
+      "verification": "static analysis only; input data and author environment intentionally absent"
+    },
+    {
+      "id": "local-calibration",
+      "archive_url": "/examples/local-calibration.zip?raw=1",
+      "archive_sha256": "4eb5b6bf61e9aedeb6230cdb40297383f6702f37ee505aa6996a1d9ee6b166c5",
+      "archive_bytes": 637,
+      "files": [
+        "calibration.py",
+        "experiment.py"
+      ],
+      "external_imports": [],
+      "intentionally_missing": [
+        "measurements.csv",
+        "README.md",
+        "requirements.txt",
+        "pyproject.toml",
+        "LICENSE"
+      ],
+      "verification": "static analysis only; input data and author environment intentionally absent"
+    },
+    {
+      "id": "scientific-measurements-with-data",
+      "archive_url": "/examples/scientific-measurements-with-data.zip?raw=1",
+      "archive_sha256": "6cb1570f048dac8a874644a17ffebfa271cc371f44ab10797ef45926952d9b33",
+      "archive_bytes": 810,
+      "files": [
+        "calculations.py",
+        "experiment.py",
+        "measurements.csv"
+      ],
+      "data_kind": "synthetic",
+      "intentionally_missing": [
+        "README.md",
+        "requirements.txt",
+        "pyproject.toml",
+        "LICENSE"
+      ],
+      "verification": "Trusted prepared input for a manual clean-environment reproduction, not an execution by the packaging service"
+    },
+    {
+      "id": "local-calibration-with-data",
+      "archive_url": "/examples/local-calibration-with-data.zip?raw=1",
+      "archive_sha256": "47b2cfe77ecdde936f8cdba9761dfa457421730a14a45815f57530c87c99374e",
+      "archive_bytes": 788,
+      "files": [
+        "calibration.py",
+        "experiment.py",
+        "measurements.csv"
+      ],
+      "data_kind": "synthetic",
+      "intentionally_missing": [
+        "README.md",
+        "requirements.txt",
+        "pyproject.toml",
+        "LICENSE"
+      ],
+      "verification": "Trusted prepared input for a manual clean-environment reproduction, not an execution by the packaging service"
+    }
+  ]
+}

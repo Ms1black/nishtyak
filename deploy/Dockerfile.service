@@ -1,0 +1,20 @@
+FROM docker:cli AS docker-client
+
+FROM python:3.11-slim AS builder
+WORKDIR /build
+COPY pyproject.toml LICENSE ./
+COPY src ./src
+RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels '.[service]'
+
+FROM python:3.11-slim AS http
+COPY --from=builder /wheels /wheels
+RUN python -m pip install --no-cache-dir --no-index --find-links /wheels 'nishtyak-core[service]' \
+    && rm -rf /wheels
+WORKDIR /app
+USER 65532:65532
+ENTRYPOINT ["nishtyak-service"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8010"]
+
+FROM http AS controller
+COPY --from=docker-client /usr/local/bin/docker /usr/local/bin/docker
+CMD ["dispatch"]

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nishtyak-core"
+version = "0.3.0"
+description = "Static reproducibility assistant for small Python projects"
+requires-python = ">=3.11"
+dependencies = ["packaging>=24", "stdlib-list>=0.11,<1"]
+
+[project.optional-dependencies]
+conda = ["PyYAML>=6"]
+resolve = ["uv==0.12.3"]
+web = [
+    "argon2-cffi>=25.1,<26",
+    "fastapi>=0.143,<1",
+    "uvicorn>=0.54,<1",
+    "python-multipart>=0.0.32,<1",
+]
+service = [
+    "uv==0.12.3",
+    "fastapi>=0.143,<1",
+    "uvicorn>=0.54,<1",
+    "python-multipart>=0.0.32,<1",
+    "PyYAML>=6",
+]
+dev = [
+    "argon2-cffi>=25.1,<26",
+    "pytest>=8",
+    "ruff>=0.11",
+    "PyYAML>=6",
+    "httpx>=0.28,<1",
+    "fastapi>=0.143,<1",
+    "uvicorn>=0.54,<1",
+    "python-multipart>=0.0.32,<1",
+]
+
+[project.scripts]
+nishtyak = "nishtyak_core.cli:main"
+nishtyak-service = "nishtyak_service.cli:main"
+nishtyak-web = "nishtyak_web.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["nishtyak_core*", "nishtyak_service*", "nishtyak_client*", "nishtyak_web*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

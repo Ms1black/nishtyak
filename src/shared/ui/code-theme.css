@@ -1,0 +1,51 @@
+/* Scoped by a shared wrapper so ordinary application text remains unchanged. */
+.syntax-content .hljs {
+  color: #dce2ec;
+}
+.syntax-content .hljs-comment,
+.syntax-content .hljs-quote {
+  color: #8893a5;
+  font-style: italic;
+}
+.syntax-content .hljs-keyword,
+.syntax-content .hljs-selector-tag,
+.syntax-content .hljs-literal {
+  color: #c6a0f6;
+}
+.syntax-content .hljs-string,
+.syntax-content .hljs-regexp {
+  color: #a6da95;
+}
+.syntax-content .hljs-number,
+.syntax-content .hljs-symbol,
+.syntax-content .hljs-bullet {
+  color: #f5a97f;
+}
+.syntax-content .hljs-title,
+.syntax-content .hljs-section {
+  color: #8aadf4;
+}
+.syntax-content .hljs-built_in,
+.syntax-content .hljs-type,
+.syntax-content .hljs-class {
+  color: #eed49f;
+}
+.syntax-content .hljs-attr,
+.syntax-content .hljs-attribute,
+.syntax-content .hljs-variable,
+.syntax-content .hljs-template-variable {
+  color: #91d7e3;
+}
+.syntax-content .hljs-meta {
+  color: #f5bde6;
+}
+.syntax-content .hljs-subst,
+.syntax-content .hljs-punctuation {
+  color: #cad3e1;
+}
+.syntax-content .hljs-addition {
+  color: #a6da95;
+}
+.syntax-content .hljs-deletion {
+  color: #ed8796;
+}
